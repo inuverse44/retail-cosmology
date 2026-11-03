@@ -7,6 +7,7 @@
 
 pub mod albers;
 pub mod jackknife;
+pub mod mesh;
 pub mod osm;
 pub mod popgrid;
 pub mod rng;

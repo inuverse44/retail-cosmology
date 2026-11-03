@@ -1,26 +1,41 @@
 //! OSM の店舗を選び出し、公式の店舗数と地域ごとに比べる。
 //!
-//! cargo run --release --bin osm_census -- 2026-11-01
+//! cargo run --release --bin osm_census -- 2026-11-01 [stores|trial]
+//!   stores：Coles と Woolworths（既定）、trial：トライアル
 //!
-//! 読むもの：data/osm/stores_<日付>.tsv、reference/official_store_counts.csv
-//! 書くもの：data/osm/stores_clean_<日付>.csv（重複を除いた店舗）
-//!           data/osm/near_pairs_<日付>.csv（重複とみなした組）
-//!           docs/tables/osm_census.tex（ノートに載せる表）
+//! 読むもの：data/osm/<名前>_<日付>.tsv、reference/official_store_counts.csv
+//! 書くもの：data/osm/<名前>_clean_<日付>.csv（重複を除いた店舗）
+//!           data/osm/near_pairs_<日付>.csv（stores）、data/osm/trial_near_pairs_<日付>.csv（trial）
+//!           docs/tables/osm_census.tex（stores）、docs/tables/osm_census_jp.tex（trial）
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use retail_cosmology::osm::{Chain, Element, classify, near_pairs, parse_tsv};
+use retail_cosmology::osm::{Chain, Element, classify, near_pairs, parse_tsv, trial_format};
 
 /// 同じチェーンの二点がこれより近ければ、同じ店を二重に描いたものとみなす [km]。
 const DUP_RADIUS_KM: f64 = 0.1;
 
 fn main() {
     let date = std::env::args().nth(1).expect("日付（YYYY-MM-DD）を渡す");
+    let ds = std::env::args().nth(2).unwrap_or_else(|| "stores".into());
+    let (chains, near_name, table_name): (&[Chain], String, &str) = match ds.as_str() {
+        "stores" => (
+            &[Chain::Coles, Chain::Woolworths],
+            format!("near_pairs_{date}.csv"),
+            "osm_census.tex",
+        ),
+        "trial" => (
+            &[Chain::Trial],
+            format!("trial_near_pairs_{date}.csv"),
+            "osm_census_jp.tex",
+        ),
+        _ => panic!("stores か trial を渡す"),
+    };
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let tsv = fs::read_to_string(root.join(format!("data/osm/stores_{date}.tsv")))
+    let tsv = fs::read_to_string(root.join(format!("data/osm/{ds}_{date}.tsv")))
         .expect("TSV がない。scripts/osm/fetch.sh を先に");
     let elements = parse_tsv(&tsv);
 
@@ -28,7 +43,7 @@ fn main() {
     let mut excluded: BTreeMap<(String, String), usize> = BTreeMap::new();
     let mut stores: Vec<(&Element, Chain)> = Vec::new();
     for e in &elements {
-        match classify(e) {
+        match classify(e).filter(|c| chains.contains(c)) {
             Some(c) => stores.push((e, c)),
             None => {
                 *excluded
@@ -91,15 +106,11 @@ fn main() {
         .unwrap();
     }
     fs::write(
-        root.join(format!("data/osm/stores_clean_{date}.csv")),
+        root.join(format!("data/osm/{ds}_clean_{date}.csv")),
         clean_csv,
     )
     .unwrap();
-    fs::write(
-        root.join(format!("data/osm/near_pairs_{date}.csv")),
-        near_csv,
-    )
-    .unwrap();
+    fs::write(root.join(format!("data/osm/{near_name}")), near_csv).unwrap();
 
     // 公式の数と並べる
     let official = fs::read_to_string(root.join("reference/official_store_counts.csv")).unwrap();
@@ -111,10 +122,8 @@ fn main() {
     );
     for line in official.lines().skip(1) {
         let f: Vec<&str> = line.split(',').collect();
-        let chain = if f[0] == "Coles" {
-            Chain::Coles
-        } else {
-            Chain::Woolworths
+        let Some(chain) = chains.iter().copied().find(|c| c.name() == f[0]) else {
+            continue;
         };
         let n_off: usize = f[2].parse().unwrap();
         let n_osm = osm.get(&(chain, f[1])).copied().unwrap_or(0);
@@ -168,11 +177,18 @@ fn main() {
     for ((shop, brand), n) in &excluded {
         println!("  {n:>4}  shop={shop:<12} brand={brand}");
     }
+    if chains.contains(&Chain::Trial) {
+        let mut formats: BTreeMap<&str, usize> = BTreeMap::new();
+        for (e, _) in &clean {
+            *formats.entry(trial_format(e)).or_default() += 1;
+        }
+        println!("名前からわかる業態：{formats:?}");
+    }
     fs::create_dir_all(root.join("docs/tables")).unwrap();
     fs::write(
-        root.join("docs/tables/osm_census.tex"),
+        root.join(format!("docs/tables/{table_name}")),
         format!(
-            "% cargo run --release --bin osm_census -- {date} が書いた表\n\\begin{{tabular}}{{llrrr}}\n\\toprule\nチェーン & 地域 & OSM & 公式 & OSM/公式 \\\\\n\\midrule\n{table}\\bottomrule\n\\end{{tabular}}\n"
+            "% cargo run --release --bin osm_census -- {date} {ds} が書いた表\n\\begin{{tabular}}{{llrrr}}\n\\toprule\nチェーン & 地域 & OSM & 公式 & OSM/公式 \\\\\n\\midrule\n{table}\\bottomrule\n\\end{{tabular}}\n"
         ),
     )
     .unwrap();

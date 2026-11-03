@@ -1,11 +1,16 @@
-//! Coles と Woolworths の二点相関関数を、二種類のランダムカタログで求め、jackknife で誤差をつける。
+//! 店舗の二点相関関数を、いくつかのランダムカタログで求め、jackknife で誤差をつける。
 //! 人口そのものの二点相関関数も、人口に比例して撒いた点で求める。
 //!
-//! cargo run --release --bin xi -- 2026-11-01 [--n-random 20000] [--n-pop 2000] [--depth 6] [--seed 1] [--tag 名前]
+//! cargo run --release --bin xi -- 2026-11-01 [--country au|jp] [--n-random 20000] [--n-pop 2000]
+//!                                            [--depth 6] [--seed 1] [--tag 名前]
 //!
-//! 読むもの：data/osm/stores_clean_<日付>.csv、data/abs/apgr25_1_0_0.tif
-//! 書くもの：data/xi/xi_<日付>[_名前].csv（値と jackknife の標準偏差）
-//!           data/xi/chi2_<日付>[_名前].txt（Landy–Szalay が 0 と合うかの χ²）
+//! au（既定）：Coles と Woolworths。人口は ABS の格子人口。基準は陸地・人が住む格子・人口。
+//!   読むもの：data/osm/stores_clean_<日付>.csv、data/abs/apgr25_1_0_0.tif
+//!   書くもの：data/xi/xi_<日付>[_名前].csv、data/xi/chi2_<日付>[_名前].txt
+//! jp：トライアル。人口は e-Stat の 1 km メッシュ。基準は人が住む格子・人口
+//!   （メッシュのファイルには人口 0 の陸地が載っていないので、陸地の基準は作れない）。
+//!   読むもの：data/osm/trial_clean_<日付>.csv、data/estat/tblT001140S*.txt
+//!   書くもの：data/xi/xi_jp_<日付>[_名前].csv、data/xi/chi2_jp_<日付>[_名前].txt
 
 use std::fmt::Write as _;
 use std::fs;
@@ -14,7 +19,8 @@ use std::time::Instant;
 
 use retail_cosmology::albers::Albers;
 use retail_cosmology::jackknife::{Estimate, JkCounts, Regions, chi2, gls_mean, jackknife};
-use retail_cosmology::popgrid::{PopGrid, population, uniform_land};
+use retail_cosmology::mesh::MeshGrid;
+use retail_cosmology::popgrid::PopGrid;
 use retail_cosmology::rng::SplitMix64;
 use retail_cosmology::{Bins, LatLon, Unit, chord2, km_to_chord2};
 
@@ -25,6 +31,7 @@ const MID_RANGE_KM: (f64, f64) = (7.0, 55.0);
 
 struct Args {
     date: String,
+    country: String,
     n_random: usize,
     n_pop: usize,
     depth: u32,
@@ -36,6 +43,7 @@ fn args() -> Args {
     let mut it = std::env::args().skip(1);
     let mut a = Args {
         date: it.next().expect("日付（YYYY-MM-DD）を渡す"),
+        country: "au".into(),
         n_random: 20_000,
         n_pop: 2_000,
         depth: 6,
@@ -45,6 +53,7 @@ fn args() -> Args {
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
+            "--country" => a.country = v,
             "--n-random" => a.n_random = v.parse().unwrap(),
             "--n-pop" => a.n_pop = v.parse().unwrap(),
             "--depth" => a.depth = v.parse().unwrap(),
@@ -69,6 +78,59 @@ fn chi2_sf_even(x: f64, dof: usize) -> f64 {
     (-h).exp() * s
 }
 
+/// ランダムカタログの格子の重み。
+#[derive(Clone, Copy)]
+enum Weight {
+    /// 陸地の格子すべてに等しい（オーストラリアだけ）
+    Land,
+    /// 人が住む格子（人口 > 0）すべてに等しい
+    Inhabited,
+    /// 格子の人口に比例
+    Population,
+}
+
+impl Weight {
+    fn name(self) -> &'static str {
+        match self {
+            Weight::Land => "land",
+            Weight::Inhabited => "inhabited",
+            Weight::Population => "population",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Weight::Land => "陸地",
+            Weight::Inhabited => "人が住む格子",
+            Weight::Population => "人口",
+        }
+    }
+
+    /// 格子の人口 v に対する重み（陸地の外は呼ばれない）
+    fn of(self, v: f64) -> f64 {
+        match self {
+            Weight::Land => 1.0,
+            Weight::Inhabited => (v > 0.0) as u8 as f64,
+            Weight::Population => v.max(0.0),
+        }
+    }
+}
+
+/// 人口の格子：オーストラリアは ABS の格子、日本は e-Stat のメッシュ。
+enum Grid {
+    Au(PopGrid),
+    Jp(MeshGrid),
+}
+
+impl Grid {
+    fn sample(&self, n: usize, w: Weight, rng: &mut SplitMix64) -> Vec<LatLon> {
+        match self {
+            Grid::Au(g) => g.sample(n, |v| w.of(v as f64), rng),
+            Grid::Jp(g) => g.sample(n, |v| w.of(v), rng),
+        }
+    }
+}
+
 /// 一つのカタログ：点、単位ベクトル、jackknife の領域の番号。
 struct Catalogue {
     unit: Vec<Unit>,
@@ -80,14 +142,45 @@ fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let t0 = Instant::now();
     let proj = Albers::epsg3577();
+    let jp = match a.country.as_str() {
+        "au" => false,
+        "jp" => true,
+        c => panic!("知らない国：{c}"),
+    };
+    let grid = if jp {
+        let g =
+            MeshGrid::read_dir(&root.join("data/estat")).expect("scripts/estat/fetch.sh を先に");
+        eprintln!("メッシュ {} 個、人口の合計 {:.0}", g.cells.len(), g.total());
+        Grid::Jp(g)
+    } else {
+        let g = PopGrid::read(&root.join("data/abs/apgr25_1_0_0.tif"))
+            .expect("scripts/abs/fetch.sh を先に");
+        assert_eq!(g.short_tiles, 0, "GeoTIFF のタイルを展開しきれなかった");
+        Grid::Au(g)
+    };
+    let baselines: &[Weight] = if jp {
+        &[Weight::Inhabited, Weight::Population]
+    } else {
+        &[Weight::Land, Weight::Inhabited, Weight::Population]
+    };
+    // jackknife の領域を作る平面座標。日本は北緯 36° で経度を縮めた正距円筒図法 [km] で足りる。
+    let xy_of = |p: &LatLon| -> (f64, f64) {
+        if jp {
+            (p.lon * 36f64.to_radians().cos() * 111.32, p.lat * 110.57)
+        } else {
+            proj.forward(p)
+        }
+    };
+    let prefix = if jp { "jp_" } else { "" };
+    let store_file = if jp { "trial_clean" } else { "stores_clean" };
 
-    let grid = PopGrid::read(&root.join("data/abs/apgr25_1_0_0.tif"))
-        .expect("scripts/abs/fetch.sh を先に");
-    assert_eq!(grid.short_tiles, 0, "GeoTIFF のタイルを展開しきれなかった");
-
-    let csv = fs::read_to_string(root.join(format!("data/osm/stores_clean_{}.csv", a.date)))
+    let csv = fs::read_to_string(root.join(format!("data/osm/{store_file}_{}.csv", a.date)))
         .expect("osm_census を先に");
-    let mut stores: Vec<(&str, Vec<LatLon>)> = vec![("Coles", vec![]), ("Woolworths", vec![])];
+    let mut stores: Vec<(&str, Vec<LatLon>)> = if jp {
+        vec![("TRIAL", vec![])]
+    } else {
+        vec![("Coles", vec![]), ("Woolworths", vec![])]
+    };
     for line in csv.lines().skip(1) {
         let f: Vec<&str> = line.splitn(6, ',').collect();
         let p = LatLon {
@@ -103,23 +196,43 @@ fn main() {
     }
 
     let mut rng = SplitMix64::new(a.seed);
-    let r_land = grid.sample(a.n_random, uniform_land, &mut rng);
-    let r_pop = grid.sample(a.n_random, population, &mut rng);
-    let pop_pts = grid.sample(a.n_pop, population, &mut rng);
+    // 乱数を引く順：オーストラリアでは「人が住む格子」を最後に引き、それより前の基準の乱数の列を
+    // この基準を足す前と同じに保つ（ノートの数字を再現できるように）。
+    let mut randoms: Vec<(Weight, Vec<LatLon>)> = Vec::new();
+    for w in baselines
+        .iter()
+        .filter(|w| jp || !matches!(w, Weight::Inhabited))
+    {
+        randoms.push((*w, grid.sample(a.n_random, *w, &mut rng)));
+    }
+    let pop_pts = grid.sample(a.n_pop, Weight::Population, &mut rng);
+    if !jp {
+        randoms.push((
+            Weight::Inhabited,
+            grid.sample(a.n_random, Weight::Inhabited, &mut rng),
+        ));
+    }
+    let r_pop = &randoms
+        .iter()
+        .find(|(w, _)| matches!(w, Weight::Population))
+        .unwrap()
+        .1;
 
     // jackknife の領域：人口に比例するランダムの点の数がそろうように分ける
-    let xy = |v: &[LatLon]| -> Vec<(f64, f64)> { v.iter().map(|p| proj.forward(p)).collect() };
-    let regions = Regions::build(&xy(&r_pop), a.depth);
+    let xy = |v: &[LatLon]| -> Vec<(f64, f64)> { v.iter().map(xy_of).collect() };
+    let regions = Regions::build(&xy(r_pop), a.depth);
     let k = regions.len();
     let cat = |v: &[LatLon]| Catalogue {
         unit: v.iter().map(Unit::from).collect(),
         region: xy(v).into_iter().map(|p| regions.assign(p)).collect(),
     };
-    let (c_land, c_pop, c_pp) = (cat(&r_land), cat(&r_pop), cat(&pop_pts));
+    let c_rand: Vec<(Weight, Catalogue)> = randoms.iter().map(|(w, v)| (*w, cat(v))).collect();
+    let c_pp = cat(&pop_pts);
     let c_stores: Vec<(&str, Catalogue)> = stores.iter().map(|(n, v)| (*n, cat(v))).collect();
     eprintln!(
-        "ランダム {} 点 ×2、人口の点 {}、領域 {k}、種 {}（{:.1} 秒）",
+        "ランダム {} 点 ×{}、人口の点 {}、領域 {k}、種 {}（{:.1} 秒）",
         a.n_random,
+        baselines.len(),
         a.n_pop,
         a.seed,
         t0.elapsed().as_secs_f64()
@@ -134,11 +247,16 @@ fn main() {
     // 計算する組：(標本, 基準) → 対の数
     let mut counts: Vec<(String, &str, JkCounts)> = Vec::new();
     for (name, c) in &c_stores {
-        counts.push((name.to_string(), "land", jk(c, &c_land)));
-        counts.push((name.to_string(), "population", jk(c, &c_pop)));
+        for (w, r) in &c_rand {
+            counts.push((name.to_string(), w.name(), jk(c, r)));
+        }
         eprintln!("{name}：数え終えた（{:.1} 秒）", t0.elapsed().as_secs_f64());
     }
-    counts.push(("population".into(), "land", jk(&c_pp, &c_land)));
+    for (w, r) in &c_rand {
+        if !matches!(w, Weight::Population) {
+            counts.push(("population".into(), w.name(), jk(&c_pp, r)));
+        }
+    }
     eprintln!("人口：数え終えた（{:.1} 秒）", t0.elapsed().as_secs_f64());
 
     let mut out = String::from("quantity,sample,random,r_lo_km,r_hi_km,value,sigma\n");
@@ -158,11 +276,14 @@ fn main() {
     };
     let mut chi2_txt = String::new();
     let first = bins.edges().iter().position(|e| *e >= CHI2_MIN_KM).unwrap();
-    let pop_land = &counts
-        .iter()
-        .find(|(s, r, _)| s == "population" && *r == "land")
-        .unwrap()
-        .2;
+    let pop_counts = |r: &str| {
+        &counts
+            .iter()
+            .find(|(s, rr, _)| s == "population" && *rr == r)
+            .unwrap()
+            .2
+    };
+    let label = |r: &str| baselines.iter().find(|w| w.name() == r).unwrap().label();
 
     let ed = bins.edges().to_vec();
     let mid: Vec<usize> = (0..bins.len())
@@ -205,16 +326,17 @@ fn main() {
         put("natural", s, r, &nat);
         put("dr_over_rr_minus_1", s, r, &drr);
 
-        if *r == "land" && s != "population" {
+        if *r != "population" && s != "population" {
             // 店と人口の比を、同じ領域を除いて計算し、まとめて jackknife にかける
+            let pc = pop_counts(r);
             let ratio = jackknife(k, |o| {
                 let a = c.pair_counts(o).landy_szalay();
-                let b = pop_land.pair_counts(o).landy_szalay();
+                let b = pc.pair_counts(o).landy_szalay();
                 a.iter().zip(&b).map(|(x, y)| x / y).collect()
             });
             put("ratio_to_population", s, r, &ratio);
             summaries.push(summarize(
-                &format!("{s} の ξ_LS ÷ 人口の ξ_LS（陸地が基準）"),
+                &format!("{s} の ξ_LS ÷ 人口の ξ_LS（{}が基準）", label(r)),
                 &ratio,
             ));
         }
@@ -248,12 +370,12 @@ fn main() {
     }
     fs::create_dir_all(root.join("data/xi")).unwrap();
     fs::write(
-        root.join(format!("data/xi/xi_{}{}.csv", a.date, a.tag)),
+        root.join(format!("data/xi/xi_{prefix}{}{}.csv", a.date, a.tag)),
         out,
     )
     .unwrap();
     fs::write(
-        root.join(format!("data/xi/chi2_{}{}.txt", a.date, a.tag)),
+        root.join(format!("data/xi/chi2_{prefix}{}{}.txt", a.date, a.tag)),
         chi2_txt,
     )
     .unwrap();
