@@ -30,9 +30,13 @@
 
 \section{動機}
 
-オーストラリアの小売は Coles と Woolworths の二社が大きな割合を占める。
-日本と比べて商品の入れ替わりが遅いこと、物流拠点から店舗までの距離が長いことが、店舗の配置に表れているかを調べたい。
-ここでは店舗の座標を銀河の位置に見立て、宇宙論で銀河の分布を測るときの二点相関関数を当てる。
+オーストラリアの食品スーパーは、Coles と Woolworths の二社が大きな割合を占める。
+現地で聞いた話では、商品の入れ替わりは日本よりずっと遅く、物流拠点から店舗までの距離は日本より長い。
+これを調べるうちに、日本とオーストラリアで店舗の並び方が統計的に同じかどうかが気になった。
+
+店舗の並び方を数で表すため、店舗を銀河に見立てる。
+宇宙論では、銀河がどれだけ集まっているかを二点相関関数で測る。
+このノートではその推定量を Coles と Woolworths の店舗の座標に当てる。
 
 \section{二点相関関数}
 
@@ -42,14 +46,23 @@
   \label{eq:xi-def}
 \end{equation}
 と書き、$\xi(r)$ を二点相関関数と呼ぶ。
-点が互いに独立に撒かれていれば（ポアソン過程）$\xi = 0$ である。
+点が互いに独立に撒かれていれば（ポアソン過程）、$\xi = 0$ である。
+$\xi(r) > 0$ なら、距離 $r$ だけ離れた店舗の組が、独立に撒いたときより多い。
+店舗がその距離で集まっているということである。
+$\xi(r) < 0$ なら、その距離の組は少なく、店舗は互いに離れて並ぶ。
 
 \section{推定量}
 
-データ $n_d$ 点と、同じ領域に一様に撒いたランダム $n_r$ 点を用意する。
-距離のビンごとに、データ同士の対の数 $DD$、データとランダムの対の数 $DR$、ランダム同士の対の数 $RR$ を数え、
-それぞれ全対数 $n_d(n_d-1)/2$, $n_d n_r$, $n_r(n_r-1)/2$ で割ったものを $dd$, $dr$, $rr$ とする。
-推定量は次の 4 つを実装した。
+店舗の組の数を数えるだけでは、$\xi$ は求まらない。
+組の数は店舗のある領域の形（海岸線や国境）にも左右されるからである。
+そこで、同じ領域に相関のない点を撒き、その点の組の数と比べる。
+この点の集まりをランダムカタログと呼ぶ。
+
+データを $n_d$ 点、ランダムカタログを $n_r$ 点とする。
+距離のビンごとに、三種類の組の数を数える。
+データ同士の組の数が $DD$、データとランダムの組の数が $DR$、ランダム同士の組の数が $RR$ である。
+組の総数はそれぞれ $n_d(n_d-1)/2$、$n_d n_r$、$n_r(n_r-1)/2$ と違うので、総数で割った $dd$、$dr$、$rr$ を使う。
+推定量は比べるために次の 4 つを実装した。
 \begin{align}
   \hat\xi_{\mathrm{N}}  &= \frac{dd}{rr} - 1, &
   \hat\xi_{\mathrm{DP}} &= \frac{dd}{dr} - 1, \\
@@ -63,8 +76,10 @@ $\hat\xi_{\mathrm{LS}}$ は Landy と Szalay \cite{LandySzalay1993} による。
 
 \section{toy model}
 
-相関のない点で、推定量が $0$ のまわりに散ることを確かめる。
-単位正方形に一様に $2000$ 点を撒いてデータとし、別に $8000$ 点を撒いてランダムとした（図~\ref{fig:toy}）。
+実装が正しければ、相関のない点に当てた推定量は $0$ のまわりに散るはずである。
+単位正方形に一様に $2000$ 点を撒いてデータとし、別に $8000$ 点を撒いてランダムカタログとした。
+図~\ref{fig:toy} のとおり、4 つの推定量はどれも $\pm 0.04$ の範囲で $0$ のまわりに散る。
+Hamilton と Landy--Szalay の値はほぼ重なり、natural は他の 3 つと違う揺れ方をする。
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.8\linewidth]{toy_poisson.pdf}
@@ -81,14 +96,18 @@ $\hat\xi_{\mathrm{LS}}$ は Landy と Szalay \cite{LandySzalay1993} による。
 店舗の座標は OpenStreetMap（OSM）\cite{OSM} から取り出した。
 OSM のデータは ODbL で公開されていて、出典を示せば研究に使える。
 取り出しには Overpass API を使い、2026年11月1日 0時（UTC）時点のデータを指定した。
-日付を固定しておけば、同じ問い合わせが同じ結果を返す。
-問い合わせは \href{\repourl/blob/main/scripts/osm/stores.overpassql}{\nolinkurl{scripts/osm/stores.overpassql}} にあり、州・特別地域の領域ごとに店舗を取り出すので、各店舗の州も同時に決まる。
+日付を固定したので、同じ問い合わせはいつ送っても同じ結果を返す。
+問い合わせは \href{\repourl/blob/main/scripts/osm/stores.overpassql}{\nolinkurl{scripts/osm/stores.overpassql}} にある。
+店舗を州・特別地域ごとに取り出すので、各店舗がどの州にあるかも同時にわかる。
 
-店舗として数えたのは、\code{shop=supermarket} のタグがあり、\code{brand} が次のどれかのものである。
-Coles は Coles・Coles Local・Coles Central、Woolworths は Woolworths・Woolworths Metro。
-選び方を各社の決算資料に合わせるため、Coles はスーパー全体を、Woolworths はスーパーと Metro の合計を数える（\ref{sec:official} 節）。
-同じチェーンで $100\,\mathrm{m}$ より近い二点は、同じ店を点（node）と建物の輪郭（way）で二重に描いたものとみなし、輪郭の方を残した。
-こうして落としたのは 7 組で、そのうち 5 組は $25\,\mathrm{m}$ 以内だった。
+店舗として数えたのは \code{shop=supermarket} のタグがついたもののうち、\code{brand} が次のどれかのものである。
+Coles では Coles・Coles Local・Coles Central、Woolworths では Woolworths・Woolworths Metro を数えた。
+各社の決算資料では、Coles はスーパー全体、Woolworths はスーパーと Metro の合計を数えているので、それに合わせた（\ref{sec:official} 節）。
+
+OSM では、同じ店が点（node）と建物の輪郭（way）の両方で描かれていることがある。
+そこで、同じチェーンの二点が $100\,\mathrm{m}$ より近ければ、同じ店とみなして一方を落とした。
+点と輪郭の組では輪郭を残し、同じ種類どうしの組では先に出た方を残した。
+こうして落とした店は 7 つで、そのうち 5 組は二点の距離が $25\,\mathrm{m}$ 以内だった。
 残った店舗を図~\ref{fig:stores} に示す。
 
 \begin{figure}[htbp]
@@ -103,7 +122,7 @@ Coles は Coles・Coles Local・Coles Central、Woolworths は Woolworths・Wool
 \subsection{公式の店舗数との比較}
 \label{sec:official}
 
-OSM がどれだけ店舗を拾えているかを、各社の決算資料にある 2026年6月28日時点の店舗数と比べた（表~\ref{tab:census}）。
+OSM がどれだけ店舗を拾えているかを確かめるため、各社の決算資料にある 2026年6月28日時点の店舗数と比べた（表~\ref{tab:census}）。
 Coles は Full Year Results Release の Appendix~1 \cite{ColesFY26}、Woolworths は F26 決算発表の Appendix~Six \cite{WoolworthsF26} の値である。
 地域の分け方は各社の表に合わせた。
 \begin{table}[htbp]
@@ -113,30 +132,39 @@ Coles は Full Year Results Release の Appendix~1 \cite{ColesFY26}、Woolworths
   \label{tab:census}
   \input{../docs/tables/osm_census.tex}
 \end{table}
-全国の合計では、Coles が 865 店対 870 店（$99.4\%$）、Woolworths が 1116 店対 1130 店（$98.8\%$）だった。
-地域ごとに見ても $96$--$103\%$ に収まる。
+全国の合計では、Coles は OSM が 865 店、公式が 870 店で、OSM は公式の $99.4\%$ だった。
+Woolworths は OSM が 1116 店、公式が 1130 店で、$98.8\%$ だった。
+地域ごとに見ても、OSM は公式の $96$--$103\%$ に収まる。
 
 \subsection{OpenStreetMap の限界}
 
-数がほぼ合うことは、OSM の店舗の位置が正しいことまでは保証しない。
-限界を次にまとめる。
+数がほぼ合っても、OSM の一つ一つの店が実在し、正しい位置にあるとは限らない。
+OSM を使うときの限界を次にまとめる。
 \begin{enumerate}
-  \item 比べられるのは地域ごとの数までである。
-    公式の資料は店舗ごとの一覧を載せていないので、閉店した店が OSM に残っていて、新しい店が抜けていれば、両者が打ち消し合って数だけは合ってしまう。
-  \item 時点が 4 か月ずれている。
-    Coles は 2027 年度に約 25 店の開店と約 3 店の閉店を予定している \cite{ColesFY26}。
-    OSM の数が公式を少し下回るのは、拾い漏れのほかに、この間の開店が描かれていないことにもよりうる。
-  \item 選び方で数が変わる。
-    \code{shop} のタグがない要素（Coles 5 件、Woolworths 5 件）、\code{shop=convenience} の Woolworths MetroGo（6 件）は数えていない。
-    Woolworths の公式の数に MetroGo が入っているかは資料からはわからない。
-  \item 重複の判定は距離だけで決めている。
-    $60\,\mathrm{m}$ と $97\,\mathrm{m}$ の組は、移転の前後の店が両方残っている可能性があり、地図で一つずつ確かめる必要がある。
-  \item 位置には数十 $\mathrm{m}$ から数百 $\mathrm{m}$ の幅がある。
-    点で描かれた店は入口やロゴの位置、輪郭で描かれた店は建物の中心になる。
-    ショッピングセンターの中の店は、センター全体の輪郭にかかることもある。
-    二点相関関数を $1\,\mathrm{km}$ より短い距離で測るときは、この幅が効く。
+  \item 公式の数と比べられるのは地域ごとの合計までである。
+    公式の資料には店舗ごとの一覧がない。
+    そのため、閉店した店が OSM に残り、新しい店が OSM から抜けていても、両者が打ち消し合えば合計は合ってしまう。
+  \item OSM と公式の時点が 4 か月ずれている。
+    6月28日より後に開いた店が OSM に描かれていれば、OSM の数は公式より多くなる。
+    その後に閉じた店が OSM から消されていれば、少なくなる。
+    Coles は 2027 年度（2026年6月29日から）に、約 25 店の開店と約 3 店の閉店を予定している \cite{ColesFY26}。
+    同じ割合で開くなら、6月28日から11月1日までの 4 か月で約 8 店が開く。
+  \item 選び方によって数が変わる。
+    \code{shop} のタグがない要素（Coles 5 件、Woolworths 5 件）は数えていない。
+    \code{shop=convenience} の Woolworths MetroGo（6 件）も数えていない。
+    Woolworths の公式の数に MetroGo が入っているかは、資料からはわからない。
+  \item 同じ店かどうかを二点の距離だけで決めている。
+    $60\,\mathrm{m}$ と $97\,\mathrm{m}$ の組は、移転の前後の店が両方とも OSM に残っているだけかもしれない。
+    地図で一つずつ確かめる必要がある。
+  \item 店の座標は描き方によって数十 $\mathrm{m}$ ずれる。
+    点で描かれた店では入口やロゴの位置、輪郭で描かれた店では建物の中心が座標になる。
+    ショッピングセンターの中の店では、センターの建物全体の中心が座標になっていることもありうる。
+    二点相関関数を $1\,\mathrm{km}$ より短い距離で測るときは、このずれで組が隣のビンに移り、結果が変わる。
 \end{enumerate}
-ランダムカタログ（陸地に一様に撒くか、人口で重みをつけるか）は、まだ決めていない。
+
+ランダムカタログをどう撒くかはまだ決めていない。
+陸地に一様に撒くと、店舗が都市に集まっていること自体が相関として出る。
+人口で重みをつけて撒くと、人口の分布では説明できない店舗の並び方だけが出る。
 
 \bibliographystyle{unsrtnat}
 \bibliography{references}
