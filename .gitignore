@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# 取得したデータはコミットしない（取得手順は README に書く）
+data/raw/*
+!data/raw/.gitkeep
+data/interim/
