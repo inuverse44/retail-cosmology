@@ -1,9 +1,117 @@
-//! jackknife で二点相関関数の誤差を見積もる。
-//!
-//! 領域を K 個に分け、対の数を「どの領域の点とどの領域の点の組か」ごとに数えておく。
-//! 領域 k を除いた対の数は、合計から領域 k を含む組を引けば求まるので、数え直さずに済む。
+//! Engine：対の数え上げ。距離のビンごとに DD, DR, RR を数える。
+//! jackknife のために、領域の組ごとにも数える（領域 k を除いた数は、数え直さずに求まる）。
 
-use crate::{Bins, PairCounts};
+use crate::contract::PairCounts;
+
+/// 距離のビン。`edges` は狭義単調増加で、ビン k は `[edges[k], edges[k+1])`。
+#[derive(Clone, Debug)]
+pub struct Bins {
+    edges: Vec<f64>,
+}
+
+impl Bins {
+    pub fn new(edges: Vec<f64>) -> Self {
+        assert!(edges.len() >= 2, "ビンの端は 2 つ以上");
+        assert!(
+            edges.windows(2).all(|w| w[0] < w[1]),
+            "ビンの端は狭義単調増加"
+        );
+        Self { edges }
+    }
+
+    /// `[lo, hi)` を `n` 等分する。
+    pub fn linear(lo: f64, hi: f64, n: usize) -> Self {
+        Self::new(
+            (0..=n)
+                .map(|k| lo + (hi - lo) * k as f64 / n as f64)
+                .collect(),
+        )
+    }
+
+    /// `[lo, hi)` を対数で `n` 等分する。
+    pub fn log(lo: f64, hi: f64, n: usize) -> Self {
+        let (a, b) = (lo.ln(), hi.ln());
+        Self::new(
+            (0..=n)
+                .map(|k| (a + (b - a) * k as f64 / n as f64).exp())
+                .collect(),
+        )
+    }
+
+    /// 端を単調増加の関数 `f` で写したビン。距離の代わりに、その単調な関数で数えるときに使う。
+    pub fn map(&self, f: impl Fn(f64) -> f64) -> Self {
+        Self::new(self.edges.iter().map(|e| f(*e)).collect())
+    }
+
+    pub fn len(&self) -> usize {
+        self.edges.len() - 1
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn edges(&self) -> &[f64] {
+        &self.edges
+    }
+
+    /// ビンの中点。
+    pub fn centers(&self) -> Vec<f64> {
+        self.edges.windows(2).map(|w| 0.5 * (w[0] + w[1])).collect()
+    }
+
+    /// 距離 `r` が入るビンの番号。範囲外なら `None`。
+    pub fn index(&self, r: f64) -> Option<usize> {
+        if !(r >= self.edges[0] && r < self.edges[self.edges.len() - 1]) {
+            return None;
+        }
+        // edges[k] <= r となる最大の k
+        Some(self.edges.partition_point(|&e| e <= r) - 1)
+    }
+}
+
+/// 同じカタログの中の対（i < j）を数える。DD と RR に使う。
+pub fn count_auto<P>(points: &[P], bins: &Bins, dist: impl Fn(&P, &P) -> f64) -> Vec<u64> {
+    let mut counts = vec![0u64; bins.len()];
+    for (i, a) in points.iter().enumerate() {
+        for b in &points[i + 1..] {
+            if let Some(k) = bins.index(dist(a, b)) {
+                counts[k] += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// 2 つのカタログの間の対を数える。DR と、Coles × Woolworths の相互相関に使う。
+pub fn count_cross<P>(a: &[P], b: &[P], bins: &Bins, dist: impl Fn(&P, &P) -> f64) -> Vec<u64> {
+    let mut counts = vec![0u64; bins.len()];
+    for p in a {
+        for q in b {
+            if let Some(k) = bins.index(dist(p, q)) {
+                counts[k] += 1;
+            }
+        }
+    }
+    counts
+}
+
+impl PairCounts {
+    pub fn compute<P>(
+        data: &[P],
+        randoms: &[P],
+        bins: &Bins,
+        dist: impl Fn(&P, &P) -> f64,
+    ) -> Self {
+        Self {
+            n_d: data.len(),
+            n_r: randoms.len(),
+            dd: count_auto(data, bins, &dist),
+            dr: count_cross(data, randoms, bins, &dist),
+            rr: count_auto(randoms, bins, &dist),
+        }
+    }
+}
 
 /// 平面を、与えた点の数が等しくなるように縦横交互に二等分して作る領域。
 /// 2^depth 個の領域ができる。
@@ -135,7 +243,7 @@ impl RegionCounts {
 }
 
 /// 同じカタログの中の対（i < j）を、領域の組ごとに数える。
-pub fn count_auto<P>(
+pub fn count_auto_by_region<P>(
     pts: &[P],
     reg: &[usize],
     k: usize,
@@ -154,7 +262,7 @@ pub fn count_auto<P>(
 }
 
 /// 2 つのカタログの間の対を、領域の組ごとに数える。
-pub fn count_cross<P>(
+pub fn count_cross_by_region<P>(
     a: &[P],
     ra: &[usize],
     b: &[P],
@@ -204,9 +312,9 @@ impl JkCounts {
         };
         Self {
             k,
-            dd: count_auto(data, rd, k, bins, &dist),
-            dr: count_cross(data, rd, randoms, rr_reg, k, bins, &dist),
-            rr: count_auto(randoms, rr_reg, k, bins, &dist),
+            dd: count_auto_by_region(data, rd, k, bins, &dist),
+            dr: count_cross_by_region(data, rd, randoms, rr_reg, k, bins, &dist),
+            rr: count_auto_by_region(randoms, rr_reg, k, bins, &dist),
             nd: count(rd),
             nr: count(rr_reg),
         }
@@ -231,115 +339,11 @@ impl JkCounts {
     }
 }
 
-/// jackknife の結果：全体での値、ビンごとの標準偏差、共分散行列（行ごと）。
-#[derive(Clone, Debug)]
-pub struct Estimate {
-    pub value: Vec<f64>,
-    pub sigma: Vec<f64>,
-    pub cov: Vec<Vec<f64>>,
-}
-
-/// 領域を一つずつ除いて `f(omit)` を計算し、jackknife の共分散を求める。
-/// C_ij = (K-1)/K Σ_k (f_k,i - f̄_i)(f_k,j - f̄_j)
-pub fn jackknife(k: usize, f: impl Fn(Option<usize>) -> Vec<f64>) -> Estimate {
-    let value = f(None);
-    let subs: Vec<Vec<f64>> = (0..k).map(|i| f(Some(i))).collect();
-    let nb = value.len();
-    let mean: Vec<f64> = (0..nb)
-        .map(|b| subs.iter().map(|s| s[b]).sum::<f64>() / k as f64)
-        .collect();
-    let fac = (k as f64 - 1.0) / k as f64;
-    let cov: Vec<Vec<f64>> = (0..nb)
-        .map(|i| {
-            (0..nb)
-                .map(|j| {
-                    fac * subs
-                        .iter()
-                        .map(|s| (s[i] - mean[i]) * (s[j] - mean[j]))
-                        .sum::<f64>()
-                })
-                .collect()
-        })
-        .collect();
-    let sigma = (0..nb).map(|i| cov[i][i].sqrt()).collect();
-    Estimate { value, sigma, cov }
-}
-
-/// 定数を共分散つきで当てはめた値（GLS の平均）と、その標準偏差。
-/// m = 1ᵀC⁻¹x / 1ᵀC⁻¹1、σ_m² = 1 / 1ᵀC⁻¹1。`hartlap` は C⁻¹ にかける補正因子。
-pub fn gls_mean(x: &[f64], cov: &[Vec<f64>], hartlap: f64) -> Option<(f64, f64)> {
-    let ones = vec![1.0; x.len()];
-    let cinv_x = solve(cov, x)?;
-    let cinv_1 = solve(cov, &ones)?;
-    let a: f64 = cinv_1.iter().sum::<f64>() * hartlap;
-    let b: f64 = cinv_x.iter().sum::<f64>() * hartlap;
-    Some((b / a, (1.0 / a).sqrt()))
-}
-
-/// C y = b を Cholesky 分解で解く。C が正定値でなければ None。
-pub fn solve(cov: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
-    let l = cholesky(cov)?;
-    let n = b.len();
-    let mut z = vec![0.0; n];
-    for i in 0..n {
-        z[i] = (b[i] - (0..i).map(|m| l[i][m] * z[m]).sum::<f64>()) / l[i][i];
-    }
-    let mut y = vec![0.0; n];
-    for i in (0..n).rev() {
-        y[i] = (z[i] - (i + 1..n).map(|m| l[m][i] * y[m]).sum::<f64>()) / l[i][i];
-    }
-    Some(y)
-}
-
-fn cholesky(cov: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
-    let n = cov.len();
-    let mut l = vec![vec![0.0; n]; n];
-    for i in 0..n {
-        for j in 0..=i {
-            let s: f64 = cov[i][j] - (0..j).map(|m| l[i][m] * l[j][m]).sum::<f64>();
-            if i == j {
-                if s <= 0.0 {
-                    return None;
-                }
-                l[i][i] = s.sqrt();
-            } else {
-                l[i][j] = s / l[j][j];
-            }
-        }
-    }
-    Some(l)
-}
-
-/// χ² = x^T C^{-1} x を、Cholesky 分解で解いて求める。C が正定値でなければ None。
-pub fn chi2(x: &[f64], cov: &[Vec<f64>]) -> Option<f64> {
-    let n = x.len();
-    let mut l = vec![vec![0.0; n]; n];
-    for i in 0..n {
-        for j in 0..=i {
-            let s: f64 = cov[i][j] - (0..j).map(|m| l[i][m] * l[j][m]).sum::<f64>();
-            if i == j {
-                if s <= 0.0 {
-                    return None;
-                }
-                l[i][i] = s.sqrt();
-            } else {
-                l[i][j] = s / l[j][j];
-            }
-        }
-    }
-    // L y = x を解くと χ² = |y|²
-    let mut y = vec![0.0; n];
-    for i in 0..n {
-        y[i] = (x[i] - (0..i).map(|m| l[i][m] * y[m]).sum::<f64>()) / l[i][i];
-    }
-    Some(y.iter().map(|v| v * v).sum())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rng::SplitMix64;
-    use crate::{Xy, euclid};
+    use crate::util::geo::{LatLon, Unit, Xy, chord2, euclid, great_circle_km, km_to_chord2};
+    use crate::util::rng::SplitMix64;
 
     fn uniform(n: usize, rng: &mut SplitMix64) -> Vec<Xy> {
         (0..n)
@@ -348,6 +352,46 @@ mod tests {
                 y: rng.next_f64(),
             })
             .collect()
+    }
+
+    #[test]
+    fn bins_index_is_half_open() {
+        let b = Bins::linear(0.0, 1.0, 4);
+        assert_eq!(b.index(0.0), Some(0));
+        assert_eq!(b.index(0.25), Some(1));
+        assert_eq!(b.index(0.999), Some(3));
+        assert_eq!(b.index(1.0), None);
+        assert_eq!(b.index(-0.1), None);
+        assert_eq!(b.index(f64::NAN), None);
+    }
+
+    #[test]
+    fn counts_by_hand() {
+        // 3 点：距離 1, 1, sqrt(2)
+        let p = [
+            Xy { x: 0.0, y: 0.0 },
+            Xy { x: 1.0, y: 0.0 },
+            Xy { x: 0.0, y: 1.0 },
+        ];
+        let b = Bins::new(vec![0.5, 1.2, 2.0]);
+        assert_eq!(count_auto(&p, &b, euclid), vec![2, 1]);
+        assert_eq!(count_cross(&p[..1], &p[1..], &b, euclid), vec![2, 0]);
+    }
+
+    #[test]
+    fn chord_bins_agree_with_great_circle() {
+        let mut rng = SplitMix64::new(3);
+        let pts: Vec<LatLon> = (0..300)
+            .map(|_| LatLon {
+                lat: -44.0 + 34.0 * rng.next_f64(),
+                lon: 113.0 + 41.0 * rng.next_f64(),
+            })
+            .collect();
+        let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
+        let bins = Bins::log(1.0, 4000.0, 12);
+        let a = count_auto(&pts, &bins, great_circle_km);
+        let b = count_auto(&units, &bins.map(km_to_chord2), chord2);
+        assert_eq!(a, b);
     }
 
     #[test]
@@ -395,65 +439,6 @@ mod tests {
             assert_eq!(fast.dd, direct.dd);
             assert_eq!(fast.dr, direct.dr);
             assert_eq!(fast.rr, direct.rr);
-        }
-    }
-
-    #[test]
-    fn gls_mean_of_correlated_pair() {
-        // 独立なら逆分散の重みつき平均になる
-        let cov = vec![vec![1.0, 0.0], vec![0.0, 4.0]];
-        let (m, s) = gls_mean(&[1.0, 2.0], &cov, 1.0).unwrap();
-        assert!((m - 1.2).abs() < 1e-12 && (s - (0.8f64).sqrt()).abs() < 1e-12);
-        // 完全に近い相関なら、平均の誤差はほとんど減らない
-        let cov = vec![vec![1.0, 0.999], vec![0.999, 1.0]];
-        let (_, s) = gls_mean(&[1.0, 1.0], &cov, 1.0).unwrap();
-        assert!(s > 0.99);
-    }
-
-    #[test]
-    fn chi2_of_diagonal_covariance() {
-        let cov = vec![vec![4.0, 0.0], vec![0.0, 1.0]];
-        assert!((chi2(&[2.0, 3.0], &cov).unwrap() - 10.0).abs() < 1e-12);
-        assert!(chi2(&[1.0], &[vec![-1.0]]).is_none());
-    }
-
-    #[test]
-    fn jackknife_sigma_matches_scatter_of_realizations() {
-        // 相関のない点を何度も撒き直したときの Landy–Szalay のばらつきと、
-        // 一回分のデータから jackknife で見積もった標準偏差を比べる。
-        let bins = Bins::linear(0.02, 0.2, 3);
-        let (nd, nr, k_depth, real) = (400, 800, 4, 60);
-        let mut rng = SplitMix64::new(11);
-        let mut ls_all: Vec<Vec<f64>> = Vec::new();
-        let mut sig_all: Vec<Vec<f64>> = Vec::new();
-        for _ in 0..real {
-            let data = uniform(nd, &mut rng);
-            let rand = uniform(nr, &mut rng);
-            let reg = Regions::build(
-                &rand.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
-                k_depth,
-            );
-            let rd: Vec<usize> = data.iter().map(|p| reg.assign((p.x, p.y))).collect();
-            let rr: Vec<usize> = rand.iter().map(|p| reg.assign((p.x, p.y))).collect();
-            let jk = JkCounts::compute(&data, &rd, &rand, &rr, reg.len(), &bins, euclid);
-            let est = jackknife(reg.len(), |o| jk.pair_counts(o).landy_szalay());
-            ls_all.push(est.value);
-            sig_all.push(est.sigma);
-        }
-        for b in 0..bins.len() {
-            let m = ls_all.iter().map(|v| v[b]).sum::<f64>() / real as f64;
-            let sd = (ls_all.iter().map(|v| (v[b] - m).powi(2)).sum::<f64>() / (real as f64 - 1.0))
-                .sqrt();
-            let jk = sig_all.iter().map(|v| v[b]).sum::<f64>() / real as f64;
-            // 60 回のばらつき自体に約 9% の揺らぎがあるので、比が 0.75〜1.33 なら合っているとみなす
-            let ratio = jk / sd;
-            eprintln!(
-                "bin {b}: jackknife {jk:.4}、撒き直したときのばらつき {sd:.4}、比 {ratio:.2}"
-            );
-            assert!(
-                (0.75..1.33).contains(&ratio),
-                "bin {b}: jackknife {jk:.4} vs 実際のばらつき {sd:.4}"
-            );
         }
     }
 }

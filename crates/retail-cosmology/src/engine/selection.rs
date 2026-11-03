@@ -1,40 +1,26 @@
-//! `scripts/osm/fetch.sh` が書いた TSV を読み、Coles と Woolworths（オーストラリア）、
-//! トライアル（日本）の店舗を選び出す。
+//! Engine：店の選び方。チェーンごとの規則で OSM の要素や公式サイトの店を選び、
+//! 決算資料の地域の分け方に寄せ、同じ店が二重に描かれたものを落とす。
 
-use crate::{LatLon, great_circle_km};
+use std::collections::HashSet;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Chain {
-    Coles,
-    Woolworths,
-    Trial,
-}
+use crate::contract::{Chain, OsmElement};
+use crate::util::geo::great_circle_km;
 
 /// トライアルの Wikidata の項目
 pub const TRIAL_QID: &str = "Q11321723";
 
-impl Chain {
-    pub fn name(self) -> &'static str {
-        match self {
-            Chain::Coles => "Coles",
-            Chain::Woolworths => "Woolworths",
-            Chain::Trial => "TRIAL",
-        }
-    }
-
-    /// 各社が決算資料で使う地域の分け方に、州・特別地域のコードを寄せる。
-    pub fn region(self, state: &str) -> &'static str {
-        match (self, state) {
-            (_, "AU-NSW" | "AU-ACT") => "NSW & ACT",
-            (_, "AU-QLD") => "QLD",
-            (_, "AU-SA" | "AU-NT") => "SA & NT",
-            (_, "AU-WA") => "WA",
-            (Chain::Coles, "AU-VIC" | "AU-TAS") => "VIC & TAS",
-            (Chain::Woolworths, "AU-VIC") => "VIC",
-            (Chain::Woolworths, "AU-TAS") => "TAS",
-            (Chain::Trial, s) => jp_region(s),
-            _ => "other",
-        }
+/// 各社が決算資料で使う地域の分け方に、州・都道府県のコードを寄せる。
+pub fn region(chain: Chain, state: &str) -> &'static str {
+    match (chain, state) {
+        (_, "AU-NSW" | "AU-ACT") => "NSW & ACT",
+        (_, "AU-QLD") => "QLD",
+        (_, "AU-SA" | "AU-NT") => "SA & NT",
+        (_, "AU-WA") => "WA",
+        (Chain::Coles, "AU-VIC" | "AU-TAS") => "VIC & TAS",
+        (Chain::Woolworths, "AU-VIC") => "VIC",
+        (Chain::Woolworths, "AU-TAS") => "TAS",
+        (Chain::Trial, s) => jp_region(s),
+        _ => "other",
     }
 }
 
@@ -56,19 +42,6 @@ fn jp_region(code: &str) -> &'static str {
     }
 }
 
-/// TSV の一行（店舗の候補）。
-#[derive(Clone, Debug)]
-pub struct Element {
-    pub kind: String,
-    pub id: u64,
-    pub pos: LatLon,
-    pub state: String,
-    pub shop: String,
-    pub brand: String,
-    pub wikidata: String,
-    pub name: String,
-}
-
 /// 選び方。
 ///
 /// Coles と Woolworths：`shop=supermarket` で、`brand` が次のどれか。
@@ -78,7 +51,7 @@ pub struct Element {
 /// トライアル：`shop` が小売の店を表すタグで、`brand:wikidata` がトライアルの項目であるか、
 /// `brand` か `name` がトライアルの名前で始まるもの。西友の店（トライアル西友）は除く。
 /// 公式の数（378 店）は西友を含まないので、それに合わせる。
-pub fn classify(e: &Element) -> Option<Chain> {
+pub fn classify(e: &OsmElement) -> Option<Chain> {
     if is_trial(e) {
         return Some(Chain::Trial);
     }
@@ -92,7 +65,7 @@ pub fn classify(e: &Element) -> Option<Chain> {
     }
 }
 
-fn is_trial(e: &Element) -> bool {
+fn is_trial(e: &OsmElement) -> bool {
     // `yes`（種類の決まっていない店）と `mall`（店の建物を描いたもの）も数える。
     // 同じ店が別に描かれていれば、近すぎる組として後で一方を落とす。
     const SHOPS: [&str; 8] = [
@@ -135,7 +108,7 @@ fn trial_name(s: &str) -> bool {
 }
 
 /// 名前からわかるトライアルの業態。名前に業態が書かれていなければ「不明」。
-pub fn trial_format(e: &Element) -> &'static str {
+pub fn trial_format(e: &OsmElement) -> &'static str {
     let s = format!("{} {}", e.brand, e.name);
     let up = s.to_ascii_uppercase();
     if s.contains("メガセンター") || up.contains("MEGACENTER") {
@@ -152,46 +125,11 @@ pub fn trial_format(e: &Element) -> &'static str {
     }
 }
 
-/// TSV を読む。`area` の行のあとに続く行に、その州のコードをつける。
-/// 州の境界にかかる way は二つの州に出ることがあるので、(種類, id) で最初の一つだけ残す。
-pub fn parse_tsv(text: &str) -> Vec<Element> {
-    let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut state = String::new();
-    for line in text.lines().skip(1) {
-        let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 {
-            continue;
-        }
-        if f[0] == "area" {
-            state = f[4].to_string();
-            continue;
-        }
-        let (Ok(id), Ok(lat), Ok(lon)) = (f[1].parse(), f[2].parse(), f[3].parse()) else {
-            continue;
-        };
-        if !seen.insert((f[0].to_string(), id)) {
-            continue;
-        }
-        out.push(Element {
-            kind: f[0].to_string(),
-            id,
-            pos: LatLon { lat, lon },
-            state: state.clone(),
-            shop: f[5].to_string(),
-            brand: f[6].to_string(),
-            wikidata: f[7].to_string(),
-            name: f[8].to_string(),
-        });
-    }
-    out
-}
-
 /// 同じチェーンで `radius_km` より近い組を返す。同じ店が node と way の両方で描かれている候補。
 pub fn near_pairs<'a>(
-    stores: &[(&'a Element, Chain)],
+    stores: &[(&'a OsmElement, Chain)],
     radius_km: f64,
-) -> Vec<(&'a Element, &'a Element, f64)> {
+) -> Vec<(&'a OsmElement, &'a OsmElement, f64)> {
     let mut out = Vec::new();
     for (i, (a, ca)) in stores.iter().enumerate() {
         for (b, cb) in &stores[i + 1..] {
@@ -206,9 +144,110 @@ pub fn near_pairs<'a>(
     out
 }
 
+/// 二重に描かれた店を落とした結果。`pairs` は近すぎた組（a, b, 距離 [km]、落とした方）。
+pub struct Dedup<'a> {
+    pub kept: Vec<(&'a OsmElement, Chain)>,
+    pub pairs: Vec<(&'a OsmElement, &'a OsmElement, f64, &'a OsmElement)>,
+}
+
+/// 同じチェーンで `radius_km` より近い組は同じ店とみなし、一方を落とす。
+/// way（建物の輪郭）を残して node を落とし、どちらも同じ種類なら後の方を落とす。
+pub fn deduplicate<'a>(stores: &[(&'a OsmElement, Chain)], radius_km: f64) -> Dedup<'a> {
+    let mut pairs = Vec::new();
+    let mut drop: HashSet<(String, u64)> = HashSet::new();
+    for (a, b, d) in near_pairs(stores, radius_km) {
+        let victim = if a.kind == "node" && b.kind != "node" {
+            a
+        } else {
+            b
+        };
+        drop.insert((victim.kind.clone(), victim.id));
+        pairs.push((a, b, d, victim));
+    }
+    let kept = stores
+        .iter()
+        .filter(|(e, _)| !drop.contains(&(e.kind.clone(), e.id)))
+        .copied()
+        .collect();
+    Dedup { kept, pairs }
+}
+
+/// 数える業態か。トライアルの名前の業態を数え、西友（トライアル西友）、ドラッグストア（トライウェル、TRIDRUG）、
+/// 別ブランド（タイヨー）、非表示の店を除く。決算資料のトライアルの店舗数（西友を含まない）に合わせる。
+pub fn is_trial_format(category: &str) -> bool {
+    let up = category.to_ascii_uppercase();
+    let excluded = category.contains("西友")
+        || category.contains("トライウェル")
+        || up.contains("TRIDRUG")
+        || category.contains("タイヨー")
+        || category == "非表示";
+    !excluded
+        && (category.contains("トライアル") || up.contains("TRIAL") || up.contains("TRIFOODS"))
+}
+
+const PREFECTURES: [&str; 47] = [
+    "北海道",
+    "青森県",
+    "岩手県",
+    "宮城県",
+    "秋田県",
+    "山形県",
+    "福島県",
+    "茨城県",
+    "栃木県",
+    "群馬県",
+    "埼玉県",
+    "千葉県",
+    "東京都",
+    "神奈川県",
+    "新潟県",
+    "富山県",
+    "石川県",
+    "福井県",
+    "山梨県",
+    "長野県",
+    "岐阜県",
+    "静岡県",
+    "愛知県",
+    "三重県",
+    "滋賀県",
+    "京都府",
+    "大阪府",
+    "兵庫県",
+    "奈良県",
+    "和歌山県",
+    "鳥取県",
+    "島根県",
+    "岡山県",
+    "広島県",
+    "山口県",
+    "徳島県",
+    "香川県",
+    "愛媛県",
+    "高知県",
+    "福岡県",
+    "佐賀県",
+    "長崎県",
+    "熊本県",
+    "大分県",
+    "宮崎県",
+    "鹿児島県",
+    "沖縄県",
+];
+
+/// 都道府県名 → ISO 3166-2 のコード（JP-01〜JP-47）
+pub fn prefecture_code(name: &str) -> Option<String> {
+    PREFECTURES
+        .iter()
+        .position(|p| *p == name)
+        .map(|i| format!("JP-{:02}", i + 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::access::stores::parse_tsv;
+    use crate::util::geo::LatLon;
 
     const SAMPLE: &str = "@type\t@id\t@lat\t@lon\tISO3166-2\tshop\tbrand\tbrand:wikidata\tname
 area\t1\t\t\tAU-ACT\t\t\t\tACT
@@ -219,14 +258,6 @@ area\t2\t\t\tAU-NSW\t\t\t\tNSW
 way\t11\t-35.2801\t149.1301\t\tsupermarket\tColes\tQ1108172\tColes Civic
 node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
 ";
-
-    #[test]
-    fn parse_assigns_state_and_drops_repeats() {
-        let e = parse_tsv(SAMPLE);
-        assert_eq!(e.len(), 4);
-        assert_eq!(e[1].state, "AU-ACT"); // way 11 は最初に出た ACT のまま
-        assert_eq!(e[3].state, "AU-NSW");
-    }
 
     #[test]
     fn classify_and_regions() {
@@ -241,13 +272,13 @@ node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
                 Some(Chain::Woolworths)
             ]
         );
-        assert_eq!(Chain::Coles.region("AU-TAS"), "VIC & TAS");
-        assert_eq!(Chain::Woolworths.region("AU-TAS"), "TAS");
-        assert_eq!(Chain::Woolworths.region("AU-ACT"), "NSW & ACT");
+        assert_eq!(region(Chain::Coles, "AU-TAS"), "VIC & TAS");
+        assert_eq!(region(Chain::Woolworths, "AU-TAS"), "TAS");
+        assert_eq!(region(Chain::Woolworths, "AU-ACT"), "NSW & ACT");
     }
 
-    fn el(shop: &str, brand: &str, qid: &str, name: &str) -> Element {
-        Element {
+    fn el(shop: &str, brand: &str, qid: &str, name: &str) -> OsmElement {
+        OsmElement {
             kind: "node".into(),
             id: 1,
             pos: LatLon {
@@ -264,7 +295,7 @@ node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
 
     #[test]
     fn classify_trial() {
-        let t = |e: Element| classify(&e) == Some(Chain::Trial);
+        let t = |e: OsmElement| classify(&e) == Some(Chain::Trial);
         assert!(t(el(
             "supermarket",
             "トライアル",
@@ -317,9 +348,9 @@ node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
             trial_format(&el("convenience", "", "", "TRIAL GO 千早駅前店")),
             "小型店"
         );
-        assert_eq!(Chain::Trial.region("JP-40"), "九州");
-        assert_eq!(Chain::Trial.region("JP-24"), "近畿");
-        assert_eq!(Chain::Trial.region("JP-47"), "九州");
+        assert_eq!(region(Chain::Trial, "JP-40"), "九州");
+        assert_eq!(region(Chain::Trial, "JP-24"), "近畿");
+        assert_eq!(region(Chain::Trial, "JP-47"), "九州");
     }
 
     #[test]
@@ -332,5 +363,22 @@ node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
         let p = near_pairs(&stores, 0.1);
         assert_eq!(p.len(), 1);
         assert_eq!((p[0].0.id, p[0].1.id), (10, 11));
+    }
+
+    #[test]
+    fn formats_and_prefectures() {
+        assert!(is_trial_format("スーパーセンタートライアル"));
+        assert!(is_trial_format("TRIAL GO"));
+        assert!(is_trial_format("TRIALsmart"));
+        assert!(is_trial_format("TRIFOODS GO"));
+        assert!(!is_trial_format("トライアル西友"));
+        assert!(!is_trial_format("ドラッグストアトライウェル"));
+        assert!(!is_trial_format("TRIDRUG GO"));
+        assert!(!is_trial_format("スーパーセンタータイヨー"));
+        assert!(!is_trial_format("非表示"));
+        assert_eq!(prefecture_code("北海道").as_deref(), Some("JP-01"));
+        assert_eq!(prefecture_code("福岡県").as_deref(), Some("JP-40"));
+        assert_eq!(prefecture_code("沖縄県").as_deref(), Some("JP-47"));
+        assert_eq!(prefecture_code("どこか"), None);
     }
 }

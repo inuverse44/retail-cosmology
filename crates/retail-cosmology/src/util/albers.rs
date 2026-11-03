@@ -1,7 +1,7 @@
 //! 楕円体の Albers 正積円錐図法（Snyder 1987, Map Projections — A Working Manual, pp. 101–102）。
 //! ABS の格子人口が使う EPSG:3577（GDA94 / Australian Albers）を、緯度・経度と行き来する。
 
-use crate::LatLon;
+use crate::util::geo::LatLon;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Albers {

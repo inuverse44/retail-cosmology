@@ -28,7 +28,9 @@ Rust のコードは、変わりやすさごとに層を分けている（[ADR 0
 | Manager | 使用例の手順（二点相関関数を測る、店舗の数を公式と比べる） | `src/manager/` |
 | Engine | 計算の規則（店の選び方、ランダムカタログ、対の数え上げ、推定量と誤差） | `src/engine/` |
 | ResourceAccess | 外のデータの読み書き（人口の格子、店のカタログ、公式の店舗数、結果） | `src/access/` |
-| Utility | 乱数、幾何、地図の投影 | `src/util/` |
+| Utility | 乱数、幾何、地図の投影、格子の形 | `src/util/` |
+
+層の間で受け渡すデータの形（データ契約）は `src/contract.rs` に置く。
 
 `scripts/` の描画とデータの取得は、Rust の層の外にある。描画のスクリプトは Rust が書いた結果を読むだけで、計算はしない。
 
@@ -55,6 +57,11 @@ cargo run --release --bin xi -- 2026-11-03 --country jp
 cargo run --release --bin xi -- 2026-11-03 --country jp --stores data/osm/trial_clean_2026-11-01.csv --tag osm
 uv run scripts/plot_compare.py 2026-11-01 2026-11-03   # docs/figures/xi_compare.{pdf,png}
 cd notes && latexmk -lualatex retail-cosmology.tex
+
+# コードの構成を変える前と後で、すべての出力が変わらないことを確かめる
+scripts/check_outputs.sh > before.txt   # 変える前
+scripts/check_outputs.sh > after.txt    # 変えた後
+diff before.txt after.txt
 ```
 
 ## データ
