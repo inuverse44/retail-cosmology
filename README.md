@@ -10,13 +10,27 @@
 ## 構成
 
 ```
-crates/retail-cosmology/  対の数え上げと推定量、OSM の店舗の選び出し（Rust）
-scripts/                  描画（Python, matplotlib）と OSM の取得（scripts/osm/）
+crates/retail-cosmology/  計算（Rust）。層の分け方は ADR 001
+scripts/                  描画（Python, matplotlib）とデータの取得（シェル）
 reference/                公式の店舗数と出典
 notes/                    ノート（TeX）
+docs/adr/                 設計判断の記録（ADR）
 docs/figures/             ノートに載せる図
+docs/tables/              ノートに載せる表（Rust が書く）
 data/                     取得したデータと計算結果（コミットしない）
 ```
+
+Rust のコードは、変わりやすさごとに層を分けている（[ADR 001](docs/adr/001-layering-by-volatility.md)）。呼ぶ向きは上から下だけ。
+
+| 層 | 役割 | 置き場所 |
+|---|---|---|
+| Client | 引数を読み、Manager を呼ぶ | `src/bin/` |
+| Manager | 使用例の手順（二点相関関数を測る、店舗の数を公式と比べる） | `src/manager/` |
+| Engine | 計算の規則（店の選び方、ランダムカタログ、対の数え上げ、推定量と誤差） | `src/engine/` |
+| ResourceAccess | 外のデータの読み書き（人口の格子、店のカタログ、公式の店舗数、結果） | `src/access/` |
+| Utility | 乱数、幾何、地図の投影 | `src/util/` |
+
+`scripts/` の描画とデータの取得は、Rust の層の外にある。描画のスクリプトは Rust が書いた結果を読むだけで、計算はしない。
 
 ## 動かす
 
