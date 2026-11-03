@@ -35,4 +35,4 @@ cd notes && latexmk -lualatex retail-cosmology.tex
 - 店舗の座標：[OpenStreetMap](https://www.openstreetmap.org)（© OpenStreetMap contributors、ODbL）。Overpass API で 2026-11-01T00:00:00Z 時点のデータを取り出す。選び方と限界はノートの「店舗データ」の節。
 - 公式の店舗数：[`reference/`](reference/README.md)。Coles と Woolworths の決算資料（2026年6月28日時点）。
 
-OSM から数えた店舗数は、Coles が 865／870 店、Woolworths が 1,116／1,130 店（公式との比）。
+OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）。
