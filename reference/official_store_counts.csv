@@ -1,0 +1,12 @@
+chain,region,count,as_at,source
+Coles,NSW & ACT,268,2026-06-28,coles_fy26
+Coles,QLD,189,2026-06-28,coles_fy26
+Coles,VIC & TAS,248,2026-06-28,coles_fy26
+Coles,SA & NT,61,2026-06-28,coles_fy26
+Coles,WA,104,2026-06-28,coles_fy26
+Woolworths,NSW & ACT,360,2026-06-28,wow_f26
+Woolworths,QLD,265,2026-06-28,wow_f26
+Woolworths,VIC,279,2026-06-28,wow_f26
+Woolworths,SA & NT,80,2026-06-28,wow_f26
+Woolworths,WA,115,2026-06-28,wow_f26
+Woolworths,TAS,31,2026-06-28,wow_f26

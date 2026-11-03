@@ -5,6 +5,7 @@
 \usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
 \usepackage{url}
+\usepackage{booktabs}
 \usepackage{hyperref}
 \hypersetup{
   colorlinks=true,
@@ -73,8 +74,69 @@ $\hat\xi_{\mathrm{LS}}$ は Landy と Szalay \cite{LandySzalay1993} による。
 \end{figure}
 
 \section{店舗データ}
+\label{sec:data}
 
-未定。取得元・取得日・ライセンスと、距離（大円距離）とランダムカタログ（オーストラリアの陸地に一様か、人口で重みをつけるか）の決め方をここに書く。
+\subsection{OpenStreetMap から取り出す}
+
+店舗の座標は OpenStreetMap（OSM）\cite{OSM} から取り出した。
+OSM のデータは ODbL で公開されていて、出典を示せば研究に使える。
+取り出しには Overpass API を使い、2026年11月1日 0時（UTC）時点のデータを指定した。
+日付を固定しておけば、同じ問い合わせが同じ結果を返す。
+問い合わせは \href{\repourl/blob/main/scripts/osm/stores.overpassql}{\nolinkurl{scripts/osm/stores.overpassql}} にあり、州・特別地域の領域ごとに店舗を取り出すので、各店舗の州も同時に決まる。
+
+店舗として数えたのは、\code{shop=supermarket} のタグがあり、\code{brand} が次のどれかのものである。
+Coles は Coles・Coles Local・Coles Central、Woolworths は Woolworths・Woolworths Metro。
+選び方を各社の決算資料に合わせるため、Coles はスーパー全体を、Woolworths はスーパーと Metro の合計を数える（\ref{sec:official} 節）。
+同じチェーンで $100\,\mathrm{m}$ より近い二点は、同じ店を点（node）と建物の輪郭（way）で二重に描いたものとみなし、輪郭の方を残した。
+こうして落としたのは 7 組で、そのうち 5 組は $25\,\mathrm{m}$ 以内だった。
+残った店舗を図~\ref{fig:stores} に示す。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{stores_osm.pdf}
+  \caption{OSM から取り出した Coles と Woolworths の店舗（2026年11月1日時点）。
+    店舗は東海岸と南東部の都市に集まり、内陸にはほとんどない。
+    \code{scripts/plot\_stores.py} で描いた。}
+  \label{fig:stores}
+\end{figure}
+
+\subsection{公式の店舗数との比較}
+\label{sec:official}
+
+OSM がどれだけ店舗を拾えているかを、各社の決算資料にある 2026年6月28日時点の店舗数と比べた（表~\ref{tab:census}）。
+Coles は Full Year Results Release の Appendix~1 \cite{ColesFY26}、Woolworths は F26 決算発表の Appendix~Six \cite{WoolworthsF26} の値である。
+地域の分け方は各社の表に合わせた。
+\begin{table}[htbp]
+  \centering
+  \caption{地域ごとの店舗数。OSM は 2026年11月1日、公式は 2026年6月28日時点。
+    \code{cargo run --release --bin osm\_census -- 2026-11-01} が書いた表。}
+  \label{tab:census}
+  \input{../docs/tables/osm_census.tex}
+\end{table}
+全国の合計では、Coles が 865 店対 870 店（$99.4\%$）、Woolworths が 1116 店対 1130 店（$98.8\%$）だった。
+地域ごとに見ても $96$--$103\%$ に収まる。
+
+\subsection{OpenStreetMap の限界}
+
+数がほぼ合うことは、OSM の店舗の位置が正しいことまでは保証しない。
+限界を次にまとめる。
+\begin{enumerate}
+  \item 比べられるのは地域ごとの数までである。
+    公式の資料は店舗ごとの一覧を載せていないので、閉店した店が OSM に残っていて、新しい店が抜けていれば、両者が打ち消し合って数だけは合ってしまう。
+  \item 時点が 4 か月ずれている。
+    Coles は 2027 年度に約 25 店の開店と約 3 店の閉店を予定している \cite{ColesFY26}。
+    OSM の数が公式を少し下回るのは、拾い漏れのほかに、この間の開店が描かれていないことにもよりうる。
+  \item 選び方で数が変わる。
+    \code{shop} のタグがない要素（Coles 5 件、Woolworths 5 件）、\code{shop=convenience} の Woolworths MetroGo（6 件）は数えていない。
+    Woolworths の公式の数に MetroGo が入っているかは資料からはわからない。
+  \item 重複の判定は距離だけで決めている。
+    $60\,\mathrm{m}$ と $97\,\mathrm{m}$ の組は、移転の前後の店が両方残っている可能性があり、地図で一つずつ確かめる必要がある。
+  \item 位置には数十 $\mathrm{m}$ から数百 $\mathrm{m}$ の幅がある。
+    点で描かれた店は入口やロゴの位置、輪郭で描かれた店は建物の中心になる。
+    ショッピングセンターの中の店は、センター全体の輪郭にかかることもある。
+    二点相関関数を $1\,\mathrm{km}$ より短い距離で測るときは、この幅が効く。
+\end{enumerate}
+ランダムカタログ（陸地に一様に撒くか、人口で重みをつけるか）は、まだ決めていない。
 
 \bibliographystyle{unsrtnat}
 \bibliography{references}

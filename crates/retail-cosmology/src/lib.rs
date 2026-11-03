@@ -5,6 +5,7 @@
 //! 距離の測り方は呼び出し側が関数で渡す（平面の toy model では [`euclid`]、
 //! 地表の店舗では [`great_circle_km`]）。
 
+pub mod osm;
 pub mod rng;
 
 /// 地球の平均半径 [km]（IUGG の平均半径 R1）。

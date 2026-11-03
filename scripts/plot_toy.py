@@ -1,7 +1,7 @@
 """toy model（相関なしの一様分布）で 4 つの推定量を比べる図を描く。
 
-    cargo run --release --bin toy > data/toy/poisson.csv
-    uv run scripts/plot_toy.py
+cargo run --release --bin toy > data/toy/poisson.csv
+uv run scripts/plot_toy.py
 """
 
 from pathlib import Path
