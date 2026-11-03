@@ -5,7 +5,9 @@
 //! 距離の測り方は呼び出し側が関数で渡す（平面の toy model では [`euclid`]、
 //! 地表の店舗では [`great_circle_km`]）。
 
+pub mod albers;
 pub mod osm;
+pub mod popgrid;
 pub mod rng;
 
 /// 地球の平均半径 [km]（IUGG の平均半径 R1）。
@@ -39,6 +41,29 @@ pub fn great_circle_km(a: &LatLon, b: &LatLon) -> f64 {
     2.0 * EARTH_RADIUS_KM * h.sqrt().min(1.0).asin()
 }
 
+/// 単位球面上の点（地心の単位ベクトル）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Unit(pub [f64; 3]);
+
+impl From<&LatLon> for Unit {
+    fn from(p: &LatLon) -> Self {
+        let (la, lo) = (p.lat.to_radians(), p.lon.to_radians());
+        Unit([la.cos() * lo.cos(), la.cos() * lo.sin(), la.sin()])
+    }
+}
+
+/// 弦の長さの 2 乗。大円距離の単調増加関数なので、ビンの端を [`km_to_chord2`] で写せば
+/// 三角関数を使わずに大円距離のビンで数えられる。
+pub fn chord2(a: &Unit, b: &Unit) -> f64 {
+    let d = [a.0[0] - b.0[0], a.0[1] - b.0[1], a.0[2] - b.0[2]];
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+}
+
+/// 大円距離 [km] → 単位球の弦の長さの 2 乗
+pub fn km_to_chord2(d: f64) -> f64 {
+    (2.0 * (d / (2.0 * EARTH_RADIUS_KM)).sin()).powi(2)
+}
+
 /// 距離のビン。`edges` は狭義単調増加で、ビン k は `[edges[k], edges[k+1])`。
 #[derive(Clone, Debug)]
 pub struct Bins {
@@ -62,6 +87,21 @@ impl Bins {
                 .map(|k| lo + (hi - lo) * k as f64 / n as f64)
                 .collect(),
         )
+    }
+
+    /// `[lo, hi)` を対数で `n` 等分する。
+    pub fn log(lo: f64, hi: f64, n: usize) -> Self {
+        let (a, b) = (lo.ln(), hi.ln());
+        Self::new(
+            (0..=n)
+                .map(|k| (a + (b - a) * k as f64 / n as f64).exp())
+                .collect(),
+        )
+    }
+
+    /// 端を単調増加の関数 `f` で写したビン。距離の代わりに、その単調な関数で数えるときに使う。
+    pub fn map(&self, f: impl Fn(f64) -> f64) -> Self {
+        Self::new(self.edges.iter().map(|e| f(*e)).collect())
     }
 
     pub fn len(&self) -> usize {
@@ -232,6 +272,22 @@ mod tests {
             },
         );
         assert!((d - std::f64::consts::FRAC_PI_2 * EARTH_RADIUS_KM).abs() < 1e-9);
+    }
+
+    #[test]
+    fn chord_bins_agree_with_great_circle() {
+        let mut rng = SplitMix64::new(3);
+        let pts: Vec<LatLon> = (0..300)
+            .map(|_| LatLon {
+                lat: -44.0 + 34.0 * rng.next_f64(),
+                lon: 113.0 + 41.0 * rng.next_f64(),
+            })
+            .collect();
+        let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
+        let bins = Bins::log(1.0, 4000.0, 12);
+        let a = count_auto(&pts, &bins, great_circle_km);
+        let b = count_auto(&units, &bins.map(km_to_chord2), chord2);
+        assert_eq!(a, b);
     }
 
     #[test]

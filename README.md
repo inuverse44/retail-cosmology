@@ -27,12 +27,16 @@ uv run scripts/plot_toy.py                             # docs/figures/toy_poisso
 scripts/osm/fetch.sh 2026-11-01                         # data/osm/stores_2026-11-01.tsv
 cargo run --release --bin osm_census -- 2026-11-01     # 公式の数と比べ、docs/tables/osm_census.tex を書く
 uv run scripts/plot_stores.py 2026-11-01               # docs/figures/stores_osm.{pdf,png}
+scripts/abs/fetch.sh                                   # data/abs/apgr25_1_0_0.tif（ABS の格子人口）
+cargo run --release --bin xi -- 2026-11-01             # data/xi/xi_2026-11-01.csv
+uv run scripts/plot_xi.py 2026-11-01                   # docs/figures/xi_stores.{pdf,png}
 cd notes && latexmk -lualatex retail-cosmology.tex
 ```
 
 ## データ
 
 - 店舗の座標：[OpenStreetMap](https://www.openstreetmap.org)（© OpenStreetMap contributors、ODbL）。Overpass API で 2026-11-01T00:00:00Z 時点のデータを取り出す。選び方と限界はノートの「店舗データ」の節。
+- 人口：オーストラリア統計局（ABS）の [2025 年の格子人口](https://www.abs.gov.au/statistics/people/population/regional-population/2024-25)（1 km 格子、EPSG:3577、CC BY 4.0）。ランダムカタログに使う。
 - 公式の店舗数：[`reference/`](reference/README.md)。Coles と Woolworths の決算資料（2026年6月28日時点）。
 
 OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）。
