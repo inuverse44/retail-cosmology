@@ -9,7 +9,8 @@
 //!   書くもの：data/xi/xi_<日付>[_名前].csv、data/xi/chi2_<日付>[_名前].txt
 //! jp：トライアル。人口は e-Stat の 1 km メッシュ。基準は人が住む格子・人口
 //!   （メッシュのファイルには人口 0 の陸地が載っていないので、陸地の基準は作れない）。
-//!   読むもの：data/osm/trial_clean_<日付>.csv、data/estat/tblT001140S*.txt
+//!   店は公式サイトから取ったもの（日付はサイトから取った日）。--stores で OSM の店などに替えられる。
+//!   読むもの：data/trial_site/trial_site_clean_<日付>.csv、data/estat/tblT001140S*.txt
 //!   書くもの：data/xi/xi_jp_<日付>[_名前].csv、data/xi/chi2_jp_<日付>[_名前].txt
 
 use std::fmt::Write as _;
@@ -32,6 +33,8 @@ const MID_RANGE_KM: (f64, f64) = (7.0, 55.0);
 struct Args {
     date: String,
     country: String,
+    /// 店のファイル（リポジトリの根からの相対パス）。空なら国ごとの既定
+    stores: String,
     n_random: usize,
     n_pop: usize,
     depth: u32,
@@ -44,6 +47,7 @@ fn args() -> Args {
     let mut a = Args {
         date: it.next().expect("日付（YYYY-MM-DD）を渡す"),
         country: "au".into(),
+        stores: String::new(),
         n_random: 20_000,
         n_pop: 2_000,
         depth: 6,
@@ -54,6 +58,7 @@ fn args() -> Args {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
             "--country" => a.country = v,
+            "--stores" => a.stores = v,
             "--n-random" => a.n_random = v.parse().unwrap(),
             "--n-pop" => a.n_pop = v.parse().unwrap(),
             "--depth" => a.depth = v.parse().unwrap(),
@@ -172,10 +177,15 @@ fn main() {
         }
     };
     let prefix = if jp { "jp_" } else { "" };
-    let store_file = if jp { "trial_clean" } else { "stores_clean" };
-
-    let csv = fs::read_to_string(root.join(format!("data/osm/{store_file}_{}.csv", a.date)))
-        .expect("osm_census を先に");
+    let store_path = if !a.stores.is_empty() {
+        a.stores.clone()
+    } else if jp {
+        format!("data/trial_site/trial_site_clean_{}.csv", a.date)
+    } else {
+        format!("data/osm/stores_clean_{}.csv", a.date)
+    };
+    let csv = fs::read_to_string(root.join(&store_path))
+        .unwrap_or_else(|_| panic!("{store_path} がない"));
     let mut stores: Vec<(&str, Vec<LatLon>)> = if jp {
         vec![("TRIAL", vec![])]
     } else {

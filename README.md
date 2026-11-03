@@ -31,6 +31,15 @@ scripts/abs/fetch.sh                                   # data/abs/apgr25_1_0_0.t
 cargo run --release --bin xi -- 2026-11-01             # data/xi/xi_2026-11-01.csv（jackknife の誤差つき）
 scripts/xi_robustness.sh 2026-11-01                    # 設定を変えて計算し直す（ノートの表 2）
 uv run scripts/plot_xi.py 2026-11-01                   # docs/figures/xi_stores.{pdf,png}
+# 日本（トライアル）
+scripts/osm/fetch.sh 2026-11-01 trial                  # data/osm/trial_2026-11-01.tsv
+cargo run --release --bin osm_census -- 2026-11-01 trial
+scripts/trial_site/fetch.sh                            # data/trial_site/<取得日>/（公式サイトの店舗）
+scripts/estat/fetch.sh                                 # data/estat/（e-Stat の 1 km メッシュ人口）
+cargo run --release --bin trial_census -- 2026-11-03 2026-11-01
+cargo run --release --bin xi -- 2026-11-03 --country jp
+cargo run --release --bin xi -- 2026-11-03 --country jp --stores data/osm/trial_clean_2026-11-01.csv --tag osm
+uv run scripts/plot_compare.py 2026-11-01 2026-11-03   # docs/figures/xi_compare.{pdf,png}
 cd notes && latexmk -lualatex retail-cosmology.tex
 ```
 
@@ -38,6 +47,8 @@ cd notes && latexmk -lualatex retail-cosmology.tex
 
 - 店舗の座標：[OpenStreetMap](https://www.openstreetmap.org)（© OpenStreetMap contributors、ODbL）。Overpass API で 2026-11-01T00:00:00Z 時点のデータを取り出す。選び方と限界はノートの「店舗データ」の節。
 - 人口：オーストラリア統計局（ABS）の [2025 年の格子人口](https://www.abs.gov.au/statistics/people/population/regional-population/2024-25)（1 km 格子、EPSG:3577、CC BY 4.0）。ランダムカタログに使う。
+- トライアルの店舗：公式サイトの[店舗検索](https://www.trial-net.co.jp/shops)（業態・緯度・経度・都道府県）。著作権はトライアルグループにあるので、取ったデータはコミットしない。
+- 日本の人口：e-Stat の令和2年国勢調査 1 km メッシュ（T001140、政府標準利用規約 第2.0版）。
 - 公式の店舗数：[`reference/`](reference/README.md)。Coles と Woolworths の決算資料（2026年6月28日時点）。
 
-OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）。
+OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）、トライアルが 232 店（公式 378 店）。

@@ -11,6 +11,7 @@ pub mod mesh;
 pub mod osm;
 pub mod popgrid;
 pub mod rng;
+pub mod trial_site;
 
 /// 地球の平均半径 [km]（IUGG の平均半径 R1）。
 pub const EARTH_RADIUS_KM: f64 = 6371.0088;
