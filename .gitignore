@@ -1,12 +1,19 @@
+/target
 .venv/
 __pycache__/
-*.pyc
-.pytest_cache/
+*.py[cod]
 .ruff_cache/
-.ipynb_checkpoints/
 .DS_Store
 
-# 取得したデータはコミットしない（取得手順は README に書く）
-data/raw/*
-!data/raw/.gitkeep
-data/interim/
+# 取得したデータと計算結果はコミットしない（作り方は README に書く）
+/data
+
+# TeX の中間ファイル（PDF はコミットする）
+notes/*.aux
+notes/*.bbl
+notes/*.blg
+notes/*.fdb_latexmk
+notes/*.fls
+notes/*.log
+notes/*.out
+notes/*.toc

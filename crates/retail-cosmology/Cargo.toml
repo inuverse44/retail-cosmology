@@ -1,0 +1,9 @@
+[package]
+name = "retail-cosmology"
+description = "店舗座標の二点相関関数（Landy-Szalay ほか）を数える"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true

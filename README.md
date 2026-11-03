@@ -1,33 +1,29 @@
 # retail-cosmology
 
-宇宙論で使う推定量を、オーストラリアの小売データにどこまで当てはめられるかを調べるリポジトリ。
+オーストラリアの Coles と Woolworths の店舗座標に、宇宙論で銀河の分布を測るときの二点相関関数（Landy–Szalay 推定量ほか）を当てる研究。
+小売に宇宙論をどこまで適用できるかを調べる。
 
-- 動機：[Trial Retail AI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai)
-- 理論の下書き（書きかけ）：
-  - https://inuverse.dev/posts/2026-04-12-retail/
-  - https://inuverse.dev/posts/2026-04-13-retail/
-
-## 問い
-
-小売のデータに宇宙論の推定量を当てはめたとき、何がそのまま使え、何が使えないか。
-使えないなら、どの前提（一様性・等方性・定常性など）が崩れているせいか。
+- 発表予定：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
+- 理論の下書き（書きかけ）：[Landy-Szalay推定量①](https://inuverse.dev/posts/2026-04-12-retail/)、[Landy-Szalay推定量②](https://inuverse.dev/posts/2026-04-13-retail/)
+- ノート：[`notes/retail-cosmology.pdf`](notes/retail-cosmology.pdf)
 
 ## 構成
 
 ```
-src/retail_cosmology/  推定量とデータ読み込みのコード
-notebooks/             試行錯誤
-data/raw/              取得したデータ（コミットしない）
-figures/               図
-docs/                  メモ・理論
-tests/                 テスト（toy model で推定量を検算する）
+crates/retail-cosmology/  対の数え上げと推定量（Rust）
+scripts/                  描画だけ（Python, matplotlib）
+notes/                    ノート（TeX）
+docs/figures/             ノートに載せる図
+data/                     取得したデータと計算結果（コミットしない）
 ```
 
-## セットアップ
+## 動かす
 
 ```sh
-uv sync
-uv run pytest
+cargo test
+cargo run --release --bin toy > data/toy/poisson.csv   # 先に mkdir -p data/toy
+uv run scripts/plot_toy.py                             # docs/figures/toy_poisson.{pdf,png}
+cd notes && latexmk -lualatex retail-cosmology.tex
 ```
 
 ## データ

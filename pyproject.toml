@@ -1,29 +1,18 @@
 [project]
-name = "retail-cosmology"
-version = "0.1.0"
-description = "宇宙論で使う推定量を、オーストラリアの小売データにどこまで当てはめられるかを調べる"
-readme = "README.md"
-authors = [
-    { name = "inuverse44", email = "205640602+inuverse44@users.noreply.github.com" }
-]
+name = "retail-cosmology-plots"
+version = "0.0.0"
+description = "retail-cosmology の図を描くスクリプト（計算は Rust 側）"
 requires-python = ">=3.14"
 dependencies = [
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
-    "pandas>=3.1.0",
-    "scipy>=1.18.1",
 ]
 
-[project.scripts]
-retail-cosmology = "retail_cosmology:main"
-
-[build-system]
-requires = ["uv_build>=0.12.10,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv]
+package = false
 
 [dependency-groups]
 dev = [
-    "pytest>=9.2.0",
     "ruff>=0.17.3",
 ]
 
@@ -32,6 +21,3 @@ line-length = 130
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
