@@ -28,7 +28,8 @@ scripts/osm/fetch.sh 2026-11-01                         # data/osm/stores_2026-1
 cargo run --release --bin osm_census -- 2026-11-01     # 公式の数と比べ、docs/tables/osm_census.tex を書く
 uv run scripts/plot_stores.py 2026-11-01               # docs/figures/stores_osm.{pdf,png}
 scripts/abs/fetch.sh                                   # data/abs/apgr25_1_0_0.tif（ABS の格子人口）
-cargo run --release --bin xi -- 2026-11-01             # data/xi/xi_2026-11-01.csv
+cargo run --release --bin xi -- 2026-11-01             # data/xi/xi_2026-11-01.csv（jackknife の誤差つき）
+scripts/xi_robustness.sh 2026-11-01                    # 設定を変えて計算し直す（ノートの表 2）
 uv run scripts/plot_xi.py 2026-11-01                   # docs/figures/xi_stores.{pdf,png}
 cd notes && latexmk -lualatex retail-cosmology.tex
 ```

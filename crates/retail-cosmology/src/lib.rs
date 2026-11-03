@@ -6,6 +6,7 @@
 //! 地表の店舗では [`great_circle_km`]）。
 
 pub mod albers;
+pub mod jackknife;
 pub mod osm;
 pub mod popgrid;
 pub mod rng;
