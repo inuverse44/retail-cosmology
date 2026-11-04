@@ -239,7 +239,7 @@ OSM では、同じ店が点（node）と建物の輪郭（way）の両方で描
 こうして落とした店は 7 つで、そのうち 5 組は二点の距離が $25\,\mathrm{m}$ 以内だった。
 残った店舗を図~\ref{fig:stores} に示す。
 
-\begin{figure}[htbp]
+\begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{stores_osm.pdf}
   \caption{OSM から取り出した Coles と Woolworths の店舗（2026年11月1日時点）。
@@ -254,7 +254,7 @@ OSM では、同じ店が点（node）と建物の輪郭（way）の両方で描
 OSM がどれだけ店舗を拾えているかを確かめるため、各社の決算資料にある 2026年6月28日時点の店舗数と比べた（表~\ref{tab:census}）。
 Coles は Full Year Results Release の Appendix~1 \cite{ColesFY26}、Woolworths は F26 決算発表の Appendix~Six \cite{WoolworthsF26} の値である。
 地域の分け方は各社の表に合わせた。
-\begin{table}[htbp]
+\begin{table}[t]
   \centering
   \caption{地域ごとの店舗数。OSM は 2026年11月1日、公式は 2026年6月28日時点。
     \code{cargo run --release --bin osm\_census -- 2026-11-01} が書いた表。}
@@ -319,7 +319,7 @@ OSM の店舗はすべて陸地の格子に入り、人口が $0$ の格子に�
 取ったデータの著作権はトライアルグループにあるので、リポジトリには載せていない。
 
 地方ごとの数を表~\ref{tab:trial} に示す。
-\begin{table}[htbp]
+\begin{table}[t]
   \centering
   \caption{トライアルの地方ごとの店舗数。サイトは 2026年11月3日、公式は 2026年6月末時点。
     OSM で一致は、サイトの店から $300\,\mathrm{m}$ 以内に OSM の店があった数。
@@ -353,7 +353,7 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 取ったデータの著作権は西友にあるので、リポジトリには載せていない。
 
 数えた店は 243 店で、決算説明資料の 243 店（2026年6月末）と一致した（表~\ref{tab:seiyu}）。
-\begin{table}[htbp]
+\begin{table}[t]
   \centering
   \caption{西友の地方ごとの店舗数。サイトは 2026年11月4日、公式は 2026年6月末時点。
     \code{cargo run --release --bin seiyu\_census -- 2026-11-04 2026-11-03} が書いた表。}
@@ -387,7 +387,7 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 計算は \code{cargo run --release --bin xi -- 2026-11-01} で行った。
 
 結果を図~\ref{fig:xi} に示す。
-\begin{figure}[htbp]
+\begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{xi_stores.pdf}
   \caption{店舗の二点相関関数。誤差棒は jackknife（64 領域）の標準偏差。
@@ -436,7 +436,7 @@ $R = 100\,\mathrm{km}$ で $8.0$--$31.7\,\mathrm{km}$ の 3 ビンをまとめ�
 
 結果が計算の設定に左右されないかを、設定を一つずつ変えて確かめた（表~\ref{tab:robust}）。
 変えたのは、ランダムカタログの点の数（$20{,}000 \to 50{,}000$）、人口の $\hat\xi$ に使う点の数（$2{,}000 \to 10{,}000$）、jackknife の領域の数（$64 \to 32, 16$）、乱数の種（$1 \to 2, 3$）である。
-\begin{table}[htbp]
+\begin{table}[t]
   \centering
   \caption{$8.0$--$50.2\,\mathrm{km}$ の 4 ビンをまとめた値と、$\hat\xi_{\mathrm{LS}}$（人口が基準）の $\chi^2$ の上側確率。
     16 領域では領域の数がビンの数に近く、$\chi^2$ を求められない。}
@@ -468,7 +468,7 @@ $R = 100\,\mathrm{km}$ で $8.0$--$31.7\,\mathrm{km}$ の 3 ビンをまとめ�
 \subsubsection{人口を基準にした場合}
 
 日本とオーストラリアの結果を図~\ref{fig:compare} に並べる。
-\begin{figure}[htbp]
+\begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{xi_compare.pdf}
   \caption{トライアル（日本）と Coles・Woolworths（オーストラリア）の比較。誤差棒は jackknife（64 領域）。
@@ -501,7 +501,7 @@ OSM は 4 割の店を拾い漏らしているが、上の結論は変わらな�
 \subsubsection{出店している地方を取り除いた場合}
 
 結果を図~\ref{fig:footprint} に示す。
-\begin{figure}[htbp]
+\begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{xi_footprint.pdf}
   \caption{選択関数を入れたランダムカタログに対する $\hat\xi_{\mathrm{LS}}$。誤差棒は jackknife（64 領域）。
@@ -549,7 +549,7 @@ $\chi^2$ は相関の符号を見ないので、模擬データの負の偏り�
 
 西友とトライアル、二社の相互相関の結果を図~\ref{fig:cross} にまとめる。
 計算はトライアルと西友の店のファイルを両方渡して行った（\code{cargo run --release --bin xi -- 2026-11-03 --country jp --stores <トライアル>,<西友> --cross TRIAL,SEIYU --footprint 50,100,200}）。
-\begin{figure}[htbp]
+\begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{xi_cross.pdf}
   \caption{西友と、トライアルと西友の相互相関。誤差棒は jackknife（64 領域）。
@@ -685,7 +685,7 @@ OSM から取った店の限界は \ref{sec:osm-limits} 節にまとめた。
 単位正方形に一様に $2000$ 点を撒いてデータとし、別に $8000$ 点を撒いてランダムカタログとした。
 図~\ref{fig:toy} のとおり、4 つの推定量はどれも $\pm 0.04$ の範囲で $0$ のまわりに散る。
 Hamilton と Landy--Szalay の値はほぼ重なり、natural は他の 3 つと違う揺れ方をする。
-\begin{figure}[htbp]
+\begin{figure}[t]
   \centering
   \includegraphics[width=0.8\linewidth]{toy_poisson.pdf}
   \caption{単位正方形のポアソン点に対する 4 つの推定量。
