@@ -3,7 +3,8 @@
 target/release/xi 2026-11-03 --country jp \
     --stores data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv \
     --cross TRIAL,SEIYU --footprint 50 --mock 50:1 --mock-density on --tag costlog 2> data/cost/mock_log_R50.txt
-cargo run --release --bin cost -- 50
+target/release/xi ...（上と同じ引数に --selection-grid on）2> data/cost/mock_log_R50_grid.txt
+cargo run --release --bin cost -- 50 40000
 uv run scripts/plot_cost.py
 
 書くもの：docs/figures/cost_breakdown.pdf、cost_selection.pdf、cost_pairs_grid.pdf（と png）
@@ -57,20 +58,30 @@ def stage_times(log: Path) -> list[tuple[str, float, str]]:
 
 
 def breakdown() -> None:
-    parts = stage_times(COST / "mock_log_R50.txt")
-    total = sum(p[1] for p in parts)
-    fig, ax = plt.subplots(figsize=(7, 1.6))
-    x = 0.0
-    for label, sec, color in parts:
-        ax.barh(0, sec, left=x, color=color, edgecolor="white", height=0.6)
-        ax.text(x + sec / 2, 0.45, label, ha="center", va="bottom", fontsize=8)
-        ax.text(x + sec / 2, 0, f"{sec:.1f} s", ha="center", va="center", fontsize=9, color="white")
-        x += sec
-    ax.set_xlim(0, total)
-    ax.set_ylim(-0.4, 0.9)
-    ax.set_yticks([])
-    ax.set_xlabel(f"time [s] (total {total:.1f} s, one mock, R = 50 km)")
-    for s in ("left", "right", "top"):
+    runs = [("exact S", COST / "mock_log_R50.txt"), ("S on 10 km cells", COST / "mock_log_R50_grid.txt")]
+    runs = [(n, p) for n, p in runs if p.exists()]
+    fig, ax = plt.subplots(figsize=(7, 0.9 + 0.8 * len(runs)))
+    xmax = 0.0
+    for row, (name, path) in enumerate(runs):
+        parts = stage_times(path)
+        total = sum(p[1] for p in parts)
+        xmax = max(xmax, total)
+        y = len(runs) - 1 - row
+        x = 0.0
+        for label, sec, color in parts:
+            ax.barh(y, sec, left=x, color=color, edgecolor="white", height=0.55)
+            if sec > 2.5:
+                ax.text(x + sec / 2, y, f"{sec:.1f}", ha="center", va="center", fontsize=8, color="white")
+            if row == 0:
+                ax.text(x + sec / 2, y + 0.38, label, ha="center", va="bottom", fontsize=7)
+            x += sec
+        ax.text(total + 0.6, y, f"{total:.1f} s", va="center", fontsize=9)
+    ax.set_yticks(range(len(runs)))
+    ax.set_yticklabels([n for n, _ in reversed(runs)], fontsize=8)
+    ax.set_xlim(0, xmax * 1.12)
+    ax.set_ylim(-0.5, len(runs) - 0.1)
+    ax.set_xlabel("time [s] (one mock, R = 50 km)")
+    for s in ("right", "top"):
         ax.spines[s].set_visible(False)
     save(fig, "cost_breakdown")
 

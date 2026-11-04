@@ -11,8 +11,9 @@ use std::time::Instant;
 use crate::access::{population, results, stores};
 use crate::engine::pair_count::{Bins, count_auto};
 use crate::engine::random_catalog::{Weight, sample};
-use crate::engine::selection_function::SmoothRatio;
+use crate::engine::selection_function::{SmoothRatio, Tabulated};
 use crate::manager::correlation::N_REF;
+use crate::util::geo::LatLon;
 use crate::util::geo::{Unit, chord2, km_to_chord2};
 use crate::util::grid::GridGeometry;
 use crate::util::rng::SplitMix64;
@@ -51,10 +52,8 @@ pub fn run(
         .iter()
         .map(Unit::from)
         .collect();
-    let probes: Vec<Unit> = sample(&grid, n_probe, Weight::Population, &mut rng)
-        .iter()
-        .map(Unit::from)
-        .collect();
+    let probes_ll: Vec<LatLon> = sample(&grid, n_probe, Weight::Population, &mut rng);
+    let probes: Vec<Unit> = probes_ll.iter().map(Unit::from).collect();
 
     let mut report = format!(
         "人が住む 1 km 格子 {n1}、10 km 格子 {n10}。参照の点 {N_REF}、人口に比例した試しの点 {n_probe}、R = {r_km} km\n"
@@ -85,6 +84,43 @@ pub fn run(
         put(&format!("{pre}sec_per_eval"), per_eval);
         put(&format!("{pre}acceptance"), acc);
         put(&format!("{pre}build_sec"), build_s);
+
+        // 粗い格子（約 10 km）で表にした S と、厳密な S の差（#12）
+        let tab = Tabulated::new(&sr, &grid.geometry);
+        let t = Instant::now();
+        let st: Vec<f64> = probes_ll.iter().map(|q| tab.eval(q)).collect();
+        let tab_s = t.elapsed().as_secs_f64();
+        let mut rel: Vec<f64> = s
+            .iter()
+            .zip(&st)
+            .filter(|(e, _)| **e > 0.0)
+            .map(|(e, a)| (a - e).abs() / e)
+            .collect();
+        rel.sort_by(f64::total_cmp);
+        let q = |f: f64| rel[((rel.len() - 1) as f64 * f).round() as usize];
+        let abs_max = s
+            .iter()
+            .zip(&st)
+            .map(|(e, a)| (a - e).abs())
+            .fold(0.0, f64::max)
+            / max_s;
+        put(&format!("{pre}tab_cells"), tab.n_cells() as f64);
+        put(&format!("{pre}tab_sec"), tab_s);
+        put(&format!("{pre}tab_rel_median"), q(0.5));
+        put(&format!("{pre}tab_rel_p95"), q(0.95));
+        put(&format!("{pre}tab_rel_max"), q(1.0));
+        put(&format!("{pre}tab_abs_max_over_smax"), abs_max);
+        writeln!(
+            report,
+            "{chain}：10 km 格子の表：S を求めた格子 {}、時間 {:.2} 秒（厳密 {:.2} 秒）。相対誤差 中央値 {:.4}、95% 点 {:.4}、最大 {:.4}。誤差の最大 ÷ S_max {:.4}",
+            tab.n_cells(),
+            tab_s,
+            per_eval * n_probe as f64,
+            q(0.5),
+            q(0.95),
+            q(1.0),
+            abs_max
+        )?;
         writeln!(
             report,
             "{chain}（{} 店）：S を 1 回求めるとき、調べる点 平均 {:.0}、足し合わせる点 平均 {:.0}、1 回 {:.3} ミリ秒。残る割合 {:.3}（2 万点に要る候補 {:.0}）",

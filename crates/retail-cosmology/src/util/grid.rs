@@ -59,6 +59,45 @@ impl GridGeometry {
         }
     }
 
+    /// 点が入る約 10 km の粗い格子の番号と、その中心の緯度・経度。
+    /// メッシュでは 2 次メッシュ（3 次メッシュ 10×10 個、緯度 5 分・経度 7.5 分）、Albers では 1 km の格子 10×10 個。
+    /// Albers で格子の範囲の外なら None。
+    pub fn coarse_cell(&self, p: &LatLon) -> Option<(u64, LatLon)> {
+        match self {
+            GridGeometry::Albers {
+                width,
+                height,
+                x0,
+                y0,
+                dx,
+                dy,
+                proj,
+            } => {
+                let (x, y) = proj.forward(p);
+                let col = ((x - x0) / dx).floor();
+                let row = ((y0 - y) / dy).floor();
+                if col < 0.0 || row < 0.0 || col >= *width as f64 || row >= *height as f64 {
+                    return None;
+                }
+                let (bc, br) = ((col / 10.0).floor(), (row / 10.0).floor());
+                let key = br as u64 * 1_000_000 + bc as u64;
+                let center = proj.inverse(x0 + (bc * 10.0 + 5.0) * dx, y0 - (br * 10.0 + 5.0) * dy);
+                Some((key, center))
+            }
+            GridGeometry::Mesh { .. } => {
+                let key = code_of(p) / 100;
+                let (lat0, lon0) = code_to_sw(key * 100);
+                Some((
+                    key,
+                    LatLon {
+                        lat: lat0 + 2.5 / 60.0,
+                        lon: lon0 + 3.75 / 60.0,
+                    },
+                ))
+            }
+        }
+    }
+
     /// 点が入る格子の番号。格子の外（メッシュでは載っていない格子）なら None。
     pub fn cell_of(&self, p: &LatLon) -> Option<usize> {
         match self {
@@ -145,6 +184,25 @@ mod tests {
         );
         let (lat, lon) = code_to_sw(53394611);
         assert!(lat <= 35.681 && 35.681 < lat + DLAT && lon <= 139.767 && 139.767 < lon + DLON);
+    }
+
+    #[test]
+    fn coarse_cell_is_the_second_level_mesh() {
+        // 東京駅は 2 次メッシュ 533946。中心はその 2 次メッシュの中にあり、同じ番号を返す。
+        let g = GridGeometry::Mesh {
+            sw: Vec::new(),
+            index: HashMap::new(),
+        };
+        let p = LatLon {
+            lat: 35.681,
+            lon: 139.767,
+        };
+        let (key, c) = g.coarse_cell(&p).unwrap();
+        assert_eq!(key, 533946);
+        assert_eq!(code_of(&c) / 100, key);
+        let (lat0, lon0) = code_to_sw(key * 100);
+        assert!((c.lat - (lat0 + 2.5 / 60.0)).abs() < 1e-12);
+        assert!((c.lon - (lon0 + 3.75 / 60.0)).abs() < 1e-12);
     }
 
     #[test]

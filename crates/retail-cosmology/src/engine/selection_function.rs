@@ -3,7 +3,11 @@
 //! 「どの地方に、人口あたりどれだけ出店しているか」が基準に入り、R より短い距離の店どうしの並び方だけが残る。
 //! 人口の密度は、人口に比例して撒いた点（参照の点）で表す。
 
-use crate::util::geo::{Unit, chord2, km_to_chord2};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
+use crate::util::grid::GridGeometry;
 use crate::util::spatial::UnitGrid;
 
 /// ガウス関数を打ち切る位置（標準偏差の何倍か）
@@ -73,6 +77,42 @@ impl SmoothRatio {
     }
 }
 
+/// 選択関数を約 10 km の粗い格子ごとに一度だけ求め、格子の中では同じ値を返す（#12）。
+/// S は幅 R（50 km 以上）でならした関数なので、格子の中ではほとんど変わらない、という近似。
+/// 格子の値は、初めて聞かれたときに格子の中心で求めて覚えておく。
+pub struct Tabulated<'a> {
+    sr: &'a SmoothRatio,
+    geometry: &'a GridGeometry,
+    cache: RefCell<HashMap<u64, f64>>,
+}
+
+impl<'a> Tabulated<'a> {
+    pub fn new(sr: &'a SmoothRatio, geometry: &'a GridGeometry) -> Self {
+        Self {
+            sr,
+            geometry,
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// 点 p が入る粗い格子の S。粗い格子の外なら、その点で厳密に求める。
+    pub fn eval(&self, p: &LatLon) -> f64 {
+        match self.geometry.coarse_cell(p) {
+            Some((key, center)) => *self
+                .cache
+                .borrow_mut()
+                .entry(key)
+                .or_insert_with(|| self.sr.eval(&Unit::from(&center))),
+            None => self.sr.eval(&Unit::from(p)),
+        }
+    }
+
+    /// これまでに S を求めた粗い格子の数。
+    pub fn n_cells(&self) -> usize {
+        self.cache.borrow().len()
+    }
+}
+
 /// 重み `w` をつけた点で、ln ρ の重みつき平均。重みにはさらに ρ^γ を掛ける（`log_rho` は ln ρ）。
 pub fn mean_log_density(log_rho: &[f64], w: &[f64], gamma: f64) -> f64 {
     let (mut num, mut den) = (0.0, 0.0);
@@ -122,6 +162,45 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn tabulated_returns_the_exact_value_at_the_cell_centre() {
+        // 同じ粗い格子の点はすべて、その格子の中心で厳密に求めた値になり、計算は格子ごとに 1 回。
+        use crate::util::grid::GridGeometry;
+        use std::collections::HashMap;
+        let mut rng = SplitMix64::new(12);
+        let mk = |n: usize, rng: &mut SplitMix64| -> Vec<Unit> {
+            (0..n)
+                .map(|_| {
+                    Unit::from(&LatLon {
+                        lat: 35.0 + rng.next_f64(),
+                        lon: 139.0 + rng.next_f64(),
+                    })
+                })
+                .collect()
+        };
+        let refs = mk(5000, &mut rng);
+        let stores = mk(300, &mut rng);
+        let sr = SmoothRatio::new(&stores, &refs, 30.0);
+        let g = GridGeometry::Mesh {
+            sw: Vec::new(),
+            index: HashMap::new(),
+        };
+        let tab = Tabulated::new(&sr, &g);
+        let a = LatLon {
+            lat: 35.681,
+            lon: 139.767,
+        };
+        let b = LatLon {
+            lat: 35.70,
+            lon: 139.80,
+        }; // 同じ 2 次メッシュ 533946
+        let (_, c) = g.coarse_cell(&a).unwrap();
+        let exact = sr.eval(&Unit::from(&c));
+        assert_eq!(tab.eval(&a), exact);
+        assert_eq!(tab.eval(&b), exact);
+        assert_eq!(tab.n_cells(), 1);
     }
 
     #[test]

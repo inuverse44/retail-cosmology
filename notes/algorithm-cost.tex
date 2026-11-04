@@ -35,6 +35,8 @@
 人口が大都市に集中しているため、近くの点だけを調べる工夫をしても、1 回の計算は参照の点のおよそ 4 割を調べる。
 そのため 1 回の計算量は参照の点の数にほぼ比例し、全体では参照の点の数の 2 乗に比例する項が残る。
 選択関数を 10 km の格子ごとに一度だけ求めておけば、この計算回数は数十分の一になると見積もれる。
+これを実装すると、模擬データ 1 個は 64.3 秒から 9.9 秒になった。
+結果の差はランダムカタログを撒き直したときの揺らぎより小さかった。
 \end{abstract}
 
 \tableofcontents
@@ -53,6 +55,7 @@
 \ref{sec:pairs} 節では対の数え上げの計算量を表す。
 \ref{sec:total} 節では実測した定数を入れて全体の時間を見積もり、実測と比べる。
 \ref{sec:faster} 節では計算量のオーダーを下げる方法を述べる。
+\ref{sec:implemented} 節ではそのうち二つを実装した結果を示す。
 
 \section{模擬データ 1 個の工程}
 \label{sec:steps}
@@ -72,7 +75,8 @@
   \centering
   \includegraphics[width=\linewidth]{cost_breakdown.pdf}
   \caption{模擬データ 1 個（$R = 50\,\mathrm{km}$、人の密集地への寄り方もそろえる、種 1）の工程ごとの時間。
-    \code{xi} の標準エラー出力の時刻（\code{data/cost/mock\_log\_R50.txt}）の差から求めた。
+    上は今の方法、下は \ref{sec:implemented} 節で選択関数を 10 km 格子の表にし、基準の RR を一度だけ数えるようにしたもの。
+    \code{xi} の標準エラー出力の時刻（\code{data/cost/mock\_log\_R50.txt}、\code{mock\_log\_R50\_grid.txt}）の差から求めた。
     緑は選択関数を求める工程、茶は対を数える工程。
     \code{scripts/plot\_cost.py} で描いた。}
   \label{fig:breakdown}
@@ -323,7 +327,83 @@ $L$ は格子の数である。
 
 選択関数を 10 km 格子で求め、同じ RR を数え直さないようにすると、式~\eqref{eq:total} の残りは、工程 3 と 4 の RR（約 6 秒）と、$S_R$ の表（約 1 秒）になる。
 模擬データ 1 個は 64 秒から 10 秒程度になると見積もれる。
-これは式からの見積もりで、まだ実装して測ってはいない。
+このうち、選択関数の表と、1 個の模擬データの中で基準の RR を一度だけ数えることを実装した（\ref{sec:implemented} 節）。
+
+\section{実装した結果}
+\label{sec:implemented}
+
+選択関数の表と、基準の RR の使い回しを実装した。
+選択関数の表は \code{xi} に \code{--selection-grid on} を渡したときだけ使う。
+既定では今までどおり各点で厳密に求めるので、本体のノートの数字は変わらない。
+基準の RR は 1 回の実行の中で一度だけ数えるようにした。
+数える組は同じなので、すべての出力は変更の前と 1 バイトも変わらなかった（\code{scripts/check\_outputs.sh} の 29 個）。
+
+\subsection{時間}
+
+模擬データ 1 個の時間は 64.3 秒から 9.9 秒になった（図~\ref{fig:breakdown} の下の棒）。
+選択関数を求める工程 1 と 3 は、合わせて 53.4 秒から約 3 秒になった。
+残りの大半は RR の数え上げである。
+6 個ずつ同時に走らせると、模擬データ 100 個は 5 分 39 秒で終わった（今の方法では 34 分）。
+
+\subsection{点ごとの誤差}
+
+人口に比例して撒いた 4 万点で、表の値と厳密な値を比べた（表~\ref{tab:tab-error}）。
+相対誤差の中央値は 0.5--1.5\%、95\% 点は 2--11\% だった。
+相対誤差の最大は $S_R$ がほぼ $0$ の所で大きくなるので、$S_{\max}$ で割った誤差の最大も示した。
+棄却法で効くのは $S_R / S_{\max}$ なので、こちらの方が意味のある目安になる。
+\begin{table}[t]
+  \centering
+  \caption{10 km 格子の表で求めた $S_R$ と、厳密な $S_R$ の差。人口に比例して撒いた 4 万点で求めた（\code{cargo run --release --bin cost -- R 40000}）。}
+  \label{tab:tab-error}
+  \small
+  \begin{tabular}{llrrr}
+    \toprule
+    $R$ & チェーン & 相対誤差の中央値 & 相対誤差の 95\% 点 & 誤差の最大 $/ S_{\max}$ \\
+    \midrule
+    $50\,\mathrm{km}$ & トライアル & 0.015 & 0.055 & 0.114 \\
+    $50\,\mathrm{km}$ & 西友 & 0.009 & 0.114 & 0.080 \\
+    $100\,\mathrm{km}$ & トライアル & 0.005 & 0.019 & 0.026 \\
+    $100\,\mathrm{km}$ & 西友 & 0.005 & 0.050 & 0.030 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{結果の差}
+
+実際の店で、乱数の種を 1 から 5 に変えて、厳密な方法と表の方法の両方で計算した（表~\ref{tab:tab-result}）。
+二つの方法の差の平均はどの量でも $0.005$ より小さかった。
+これは、種を変えたときの揺らぎ（$0.005$--$0.030$）と同じか、それより小さい。
+本体のノートの jackknife の誤差（$0.06$--$0.11$）よりは一桁小さい。
+\begin{table}[t]
+  \centering
+  \caption{選択関数を入れた $\hat\xi_{\mathrm{LS}}$ と $\hat\xi_{\times}$ の、$8\,\mathrm{km}$ から $R/2$ までのビンをまとめた値。
+    種 1--5 の平均 $\pm$ 標準偏差と、表の方法から厳密な方法を引いた差の平均。}
+  \label{tab:tab-result}
+  \small
+  \begin{tabular}{llrrr}
+    \toprule
+    $R$ & 量 & 厳密 & 表 & 差の平均 \\
+    \midrule
+    $50\,\mathrm{km}$ & トライアル & $+0.121 \pm 0.005$ & $+0.121 \pm 0.006$ & $-0.0004$ \\
+    $50\,\mathrm{km}$ & 西友 & $+0.087 \pm 0.023$ & $+0.087 \pm 0.023$ & $+0.0000$ \\
+    $50\,\mathrm{km}$ & 相互相関 & $-0.172 \pm 0.007$ & $-0.171 \pm 0.006$ & $+0.0010$ \\
+    $100\,\mathrm{km}$ & トライアル & $+0.242 \pm 0.030$ & $+0.245 \pm 0.029$ & $+0.0032$ \\
+    $100\,\mathrm{km}$ & 西友 & $+0.050 \pm 0.007$ & $+0.050 \pm 0.006$ & $-0.0000$ \\
+    $100\,\mathrm{km}$ & 相互相関 & $-0.209 \pm 0.005$ & $-0.214 \pm 0.005$ & $-0.0044$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+模擬データの分布も比べた。
+$R = 50\,\mathrm{km}$ で、密集地への寄り方もそろえた模擬データを表の方法で 100 個作った。
+相互相関の値は平均 $-0.018$、標準偏差 $0.036$、最小 $-0.115$ で、厳密な方法の 100 個（平均 $-0.018$、標準偏差 $0.036$、最小 $-0.114$）とほぼ同じだった。
+西友とトライアルの $\hat\xi_{\mathrm{LS}}$ も、平均と標準偏差が $0.001$ 以内で一致した。
+同じ種でも、二つの方法の模擬データ 1 個ずつの値は $0.01$--$0.02$ ほど違う。
+表の値で候補を残すかを決めるので、撒かれる点そのものが変わるためである。
+模擬データでは分布だけを使うので、この違いは問題にならない。
+
+以上から、模擬データを作るときは表の方法を使ってよい。
+本体のノートの、実際の店の数字は厳密な方法のまま残す。
 
 \section{結論}
 \label{sec:conclusion}
@@ -332,6 +412,7 @@ $L$ は格子の数である。
 人口が大都市に集中しているため、近くの点だけを調べる工夫をしても、1 回の計算は参照の点の約 4 割を調べる。
 そのため $\gamma$ を決める計算は参照の点の数の 2 乗に比例し、ランダムカタログを撒く計算は候補の数と参照の点の数の積に比例する。
 選択関数を 10 km 格子で一度だけ求めれば、$S_R$ を求める回数は約 47 分の 1 になる。
+実装すると、模擬データ 1 個は 64.3 秒から 9.9 秒になり、結果の差はランダムカタログの揺らぎより小さかった。
 対の数え上げは $O(N_{\mathrm{r}}^2)$ で、ビンが国全体の距離を覆うので、組の数は減らせない。
 ただし、模擬データの間で変わらない RR は一度数えれば足りる。
 
@@ -350,9 +431,17 @@ target/release/xi 2026-11-03 --country jp --stores $S \
 target/release/xi 2026-11-03 --country jp --stores $S \
   --cross TRIAL,SEIYU --footprint 50 \
   --tag costreal 2> data/cost/real_log_R50.txt
+target/release/xi 2026-11-03 --country jp --stores $S \
+  --cross TRIAL,SEIYU --footprint 50 --mock 50:1 \
+  --mock-density on --selection-grid on \
+  --tag costlog 2> data/cost/mock_log_R50_grid.txt
 cargo run --release --bin cost -- 50 40000
+cargo run --release --bin cost -- 100 40000
+scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 \
+  density,grid
 uv run scripts/plot_cost.py
 \end{verbatim}
+表~\ref{tab:tab-result} は \code{xi} を \code{--footprint 50,100 --seed s} で、\code{--selection-grid on} を付ける場合と付けない場合について走らせて求めた。
 時間は Apple M1 の Mac で、1 つのスレッドで測った（ほかの計算を止めた状態）。
 別の計算機では $t_{\mathrm{v}}$ と $t_{\mathrm{p}}$ が変わるが、回数と組の数は変わらない。
 
