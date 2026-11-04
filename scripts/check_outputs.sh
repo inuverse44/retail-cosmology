@@ -14,23 +14,26 @@ $b/toy > data/toy/poisson.csv
 $b/osm_census 2026-11-01 > "$log/osm_census_stores.txt"
 $b/osm_census 2026-11-01 trial > "$log/osm_census_trial.txt"
 $b/trial_census 2026-11-03 2026-11-01 > "$log/trial_census.txt"
+$b/seiyu_census 2026-11-04 2026-11-03 > "$log/seiyu_census.txt"
 $b/xi 2026-11-01 2>/dev/null
 $b/xi 2026-11-01 --depth 5 --tag k32 2>/dev/null
 $b/xi 2026-11-03 --country jp 2>/dev/null
 $b/xi 2026-11-03 --country jp --stores data/osm/trial_clean_2026-11-01.csv --tag osm 2>/dev/null
 $b/xi 2026-11-03 --country jp --footprint 50 --tag fpcheck 2>/dev/null
 $b/xi 2026-11-03 --country jp --footprint 50 --mock 50:1 --tag mockcheck 2>/dev/null
+$b/xi 2026-11-03 --country jp --stores data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv --cross TRIAL,SEIYU --tag crosscheck 2>/dev/null
 shasum -a 256 \
   data/toy/poisson.csv \
   data/osm/stores_clean_2026-11-01.csv data/osm/near_pairs_2026-11-01.csv \
   data/osm/trial_clean_2026-11-01.csv data/osm/trial_near_pairs_2026-11-01.csv \
-  data/trial_site/trial_site_clean_2026-11-03.csv \
-  docs/tables/osm_census.tex docs/tables/osm_census_jp.tex docs/tables/trial_site_census.tex \
+  data/trial_site/trial_site_clean_2026-11-03.csv data/seiyu_site/seiyu_site_clean_2026-11-04.csv \
+  docs/tables/osm_census.tex docs/tables/osm_census_jp.tex docs/tables/trial_site_census.tex docs/tables/seiyu_site_census.tex \
   data/xi/xi_2026-11-01.csv data/xi/chi2_2026-11-01.txt \
   data/xi/xi_2026-11-01_k32.csv data/xi/chi2_2026-11-01_k32.txt \
   data/xi/xi_jp_2026-11-03.csv data/xi/chi2_jp_2026-11-03.txt \
   data/xi/xi_jp_2026-11-03_osm.csv data/xi/chi2_jp_2026-11-03_osm.txt \
   data/xi/xi_jp_2026-11-03_fpcheck.csv data/xi/chi2_jp_2026-11-03_fpcheck.txt \
-  data/xi/xi_jp_2026-11-03_mockcheck.csv data/xi/chi2_jp_2026-11-03_mockcheck.txt
-(cd "$log" && shasum -a 256 osm_census_stores.txt osm_census_trial.txt trial_census.txt)
+  data/xi/xi_jp_2026-11-03_mockcheck.csv data/xi/chi2_jp_2026-11-03_mockcheck.txt \
+  data/xi/xi_jp_2026-11-03_crosscheck.csv data/xi/chi2_jp_2026-11-03_crosscheck.txt
+(cd "$log" && shasum -a 256 osm_census_stores.txt osm_census_trial.txt trial_census.txt seiyu_census.txt)
 rm -r "$log"

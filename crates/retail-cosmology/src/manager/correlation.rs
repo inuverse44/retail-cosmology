@@ -1,5 +1,6 @@
 //! 使用例：店舗の二点相関関数を、いくつかのランダムカタログで測り、jackknife で誤差をつける。
 //! 人口そのものの二点相関関数も、人口に比例して撒いた点で測る。
+//! `cross` を渡すと、二つのチェーンの相互相関関数（Landy–Szalay）も測る。
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -8,7 +9,7 @@ use std::time::Instant;
 use crate::access::{population, results, stores};
 use crate::contract::PopulationGrid;
 use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
-use crate::engine::pair_count::{Bins, JkCounts, Regions};
+use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
 use crate::engine::selection_function::SmoothRatio;
 use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
@@ -27,7 +28,7 @@ pub struct Params {
     pub date: String,
     /// au（Coles と Woolworths、ABS の格子人口）か jp（トライアル、e-Stat のメッシュ）
     pub country: String,
-    /// 店のファイル（リポジトリの根からの相対パス）。空なら国ごとの既定
+    /// 店のファイル（リポジトリの根からの相対パス）。カンマで区切って複数渡せる。空なら国ごとの既定
     pub stores: String,
     pub n_random: usize,
     pub n_pop: usize,
@@ -40,6 +41,8 @@ pub struct Params {
     /// 帰無仮説の模擬データ：(R [km], 種)。実際の店から幅 R の選択関数を作り、それに従って店と同じ数の点を
     /// 独立に撒いて、店の代わりに使う（短い距離の相関がない店）。選択関数の方法の確かめに使う。
     pub mock: Option<(f64, u64)>,
+    /// 相互相関を測る二つのチェーンの名前（例：TRIAL と SEIYU）。None なら測らない
+    pub cross: Option<(String, String)>,
 }
 
 impl Params {
@@ -55,6 +58,7 @@ impl Params {
             tag: String::new(),
             footprint: Vec::new(),
             mock: None,
+            cross: None,
         }
     }
 }
@@ -90,7 +94,7 @@ fn dataset(root: &Path, p: &Params) -> Result<Dataset, Box<dyn std::error::Error
             Dataset {
                 grid: population::read_estat(&root.join("data/estat"))?,
                 store_path: String::new(),
-                chains: vec!["TRIAL"],
+                chains: vec!["TRIAL", "SEIYU"],
                 prefix: "jp_",
             }
         }
@@ -122,16 +126,32 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut stores: Vec<(&str, Vec<LatLon>)> = ds.chains.iter().map(|c| (*c, Vec::new())).collect();
-    for (chain, pos) in stores::read_selected(&root.join(&ds.store_path))
-        .map_err(|e| format!("{} がない：{e}", ds.store_path))?
-    {
-        stores
-            .iter_mut()
-            .find(|(c, _)| *c == chain)
-            .unwrap()
-            .1
-            .push(pos);
+    for path in ds.store_path.split(',') {
+        for (chain, pos) in
+            stores::read_selected(&root.join(path)).map_err(|e| format!("{path} がない：{e}"))?
+        {
+            stores
+                .iter_mut()
+                .find(|(c, _)| *c == chain)
+                .ok_or_else(|| format!("{path} に知らないチェーン：{chain}"))?
+                .1
+                .push(pos);
+        }
     }
+    // 店のファイルに出てこないチェーンは測らない
+    stores.retain(|(_, v)| !v.is_empty());
+    let cross_pair: Option<(usize, usize)> = match &p.cross {
+        None => None,
+        Some((a, b)) => {
+            let idx = |n: &str| {
+                stores
+                    .iter()
+                    .position(|(c, _)| *c == n)
+                    .ok_or_else(|| format!("相互相関の {n} の店がない"))
+            };
+            Some((idx(a)?, idx(b)?))
+        }
+    };
 
     if let Some((r_km, mock_seed)) = p.mock {
         let mut rng_m = SplitMix64::new(mock_seed ^ 0x4D0C_C0DE_0000_0000);
@@ -226,22 +246,34 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
 
     // 選択関数：店の密度と人口の密度を幅 R でならした比 S を、人口に掛けてランダムカタログを撒く。
     // 乱数はほかの基準とは別の列から引き、選択関数を使わないときの結果を変えない。
+    // 選択関数つきのランダムカタログ：(R [km], チェーンの番号, カタログ)。相互相関でも使う
+    let mut fp_cats: Vec<(f64, usize, Catalogue)> = Vec::new();
     if !p.footprint.is_empty() {
         let mut rng_fp = SplitMix64::new(p.seed ^ 0xF007_9417_0000_0000);
         let refs: Vec<Unit> = sample(grid, N_REF, Weight::Population, &mut rng_fp)
             .iter()
             .map(Unit::from)
             .collect();
+        // 1 つ目のチェーンは rng_fp の列をそのまま使い、2 つ目以降はチェーンごとに別の列を使う。
+        // チェーンを足しても、ほかのチェーンのランダムカタログ（と結果）が変わらないようにするため。
+        let mut rng_more: Vec<SplitMix64> = (1..c_stores.len())
+            .map(|i| SplitMix64::new(p.seed ^ 0xF007_9417_0000_0000 ^ ((i as u64) << 24)))
+            .collect();
         for r_km in &p.footprint {
-            for (name, c) in &c_stores {
+            for (i, (name, c)) in c_stores.iter().enumerate() {
                 let sr = SmoothRatio::new(&c.unit, &refs, *r_km);
+                let rng_c = if i == 0 {
+                    &mut rng_fp
+                } else {
+                    &mut rng_more[i - 1]
+                };
                 let sel = sample_selected(
                     grid,
                     p.n_random,
                     Weight::Population,
                     |q| sr.eval(&Unit::from(q)),
                     2 * p.n_random,
-                    &mut rng_fp,
+                    rng_c,
                 );
                 eprintln!(
                     "{name}：選択関数 R = {r_km} km、候補 {} 点から {} 点（上限を超えた候補 {}）（{:.1} 秒）",
@@ -250,13 +282,62 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                     sel.clipped,
                     t0.elapsed().as_secs_f64()
                 );
-                counts.push((
-                    name.to_string(),
-                    format!("footprint_{r_km}"),
-                    jk(c, &cat(&sel.points)),
-                ));
+                let rc = cat(&sel.points);
+                counts.push((name.to_string(), format!("footprint_{r_km}"), jk(c, &rc)));
+                fp_cats.push((*r_km, i, rc));
             }
         }
+    }
+
+    // 相互相関：基準が共通なら、チェーンごとに数えた DR と RR を使い回して D1D2 だけを数える。
+    // 選択関数つきでは、チェーンごとの選択関数で撒いた R1、R2 を使う。
+    let mut cross_counts: Vec<(String, String, JkCross)> = Vec::new();
+    if let Some((ia, ib)) = cross_pair {
+        let (na, ca) = &c_stores[ia];
+        let (nb, cb) = &c_stores[ib];
+        let label = format!("{na}x{nb}");
+        let find = |n: &str, r: &str| {
+            &counts
+                .iter()
+                .find(|(s, rr, _)| s == n && rr == r)
+                .unwrap()
+                .2
+        };
+        for (w, _) in &c_rand {
+            let jc = JkCross::from_shared(
+                (&ca.unit, &ca.region),
+                (&cb.unit, &cb.region),
+                find(na, w.name()),
+                find(nb, w.name()),
+                &cbins,
+                chord2,
+            );
+            cross_counts.push((label.clone(), w.name().to_string(), jc));
+        }
+        for r_km in &p.footprint {
+            let get = |i: usize| {
+                &fp_cats
+                    .iter()
+                    .find(|(r, j, _)| r == r_km && *j == i)
+                    .unwrap()
+                    .2
+            };
+            let (ra, rb) = (get(ia), get(ib));
+            let jc = JkCross::compute(
+                (&ca.unit, &ca.region),
+                (&cb.unit, &cb.region),
+                (&ra.unit, &ra.region),
+                (&rb.unit, &rb.region),
+                k,
+                &cbins,
+                chord2,
+            );
+            cross_counts.push((label.clone(), format!("footprint_{r_km}"), jc));
+        }
+        eprintln!(
+            "{label}：相互相関を数え終えた（{:.1} 秒）",
+            t0.elapsed().as_secs_f64()
+        );
     }
 
     let mut out = String::from("quantity,sample,random,r_lo_km,r_hi_km,value,sigma\n");
@@ -394,6 +475,47 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             };
             eprintln!("{line}");
             writeln!(chi2_txt, "{line}").unwrap();
+        }
+    }
+    for (s, r, c) in &cross_counts {
+        let r = r.as_str();
+        let ls = jackknife(k, |o| c.pair_counts(o).landy_szalay());
+        put("ls_cross", s, r, &ls);
+        // 選択関数つきは R/2 より短いビンだけ、共通の基準は 3 km 以上の全部のビンで、0 と合うかを χ² で見る
+        let r_max = r
+            .strip_prefix("footprint_")
+            .and_then(|v| v.parse::<f64>().ok())
+            .map_or(f64::INFINITY, |r_km| r_km / 2.0);
+        let use_bins: Vec<usize> = (0..bins.len())
+            .filter(|b| ed[*b] >= CHI2_MIN_KM && ed[b + 1] <= r_max)
+            .collect();
+        let x: Vec<f64> = use_bins.iter().map(|b| ls.value[*b]).collect();
+        let cov: Vec<Vec<f64>> = use_bins
+            .iter()
+            .map(|i| use_bins.iter().map(|j| ls.cov[*i][*j]).collect())
+            .collect();
+        let pn = x.len();
+        let hartlap = (k as f64 - pn as f64 - 2.0) / (k as f64 - 1.0);
+        let line = match chi2(&x, &cov) {
+            Some(c2) if hartlap > 0.0 && pn > 0 => {
+                let c2h = c2 * hartlap;
+                format!(
+                    "{s} / {r}：相互相関、{CHI2_MIN_KM}–{:.0} km の {pn} ビン、χ² = {c2h:.1}（Hartlap {hartlap:.3} をかけた値）、上側確率 {:.3}",
+                    ed[use_bins[pn - 1] + 1],
+                    chi2_sf(c2h, pn)
+                )
+            }
+            _ => format!("{s} / {r}：相互相関の χ² を計算できない（領域 {k}、ビン {pn}）"),
+        };
+        eprintln!("{line}");
+        writeln!(chi2_txt, "{line}").unwrap();
+        let mid_r: Vec<usize> = mid.iter().copied().filter(|b| ed[b + 1] <= r_max).collect();
+        if !mid_r.is_empty() {
+            summaries.push(summarize_over(
+                &format!("{s} の相互相関 ξ_LS（{r}）"),
+                &ls,
+                &mid_r,
+            ));
         }
     }
     for l in &summaries {

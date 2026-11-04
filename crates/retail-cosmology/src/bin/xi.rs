@@ -6,13 +6,17 @@
 //!
 //! --footprint：出店している地方を選択関数としてランダムカタログに入れる。値はならす幅 R [km] の一覧。
 //! --mock R:種：店の代わりに、幅 R の選択関数に従って独立に撒いた模擬の店を使う（方法の確かめ）。
+//!   チェーンごとに独立に撒くので、相互相関では「二社が互いに無関係に出店した」帰無仮説になる。
+//! --stores a.csv,b.csv：店のファイルをカンマで区切って複数渡せる。
+//! --cross A,B：チェーン A と B の相互相関関数も測る（例：--cross TRIAL,SEIYU）。
 //!
 //! au（既定）：Coles と Woolworths。人口は ABS の格子人口。基準は陸地・人が住む格子・人口。
 //!   読むもの：data/osm/stores_clean_<日付>.csv、data/abs/apgr25_1_0_0.tif
 //!   書くもの：data/xi/xi_<日付>[_名前].csv、data/xi/chi2_<日付>[_名前].txt
-//! jp：トライアル。人口は e-Stat の 1 km メッシュ。基準は人が住む格子・人口
+//! jp：トライアルと西友。人口は e-Stat の 1 km メッシュ。基準は人が住む格子・人口
 //!   （メッシュのファイルには人口 0 の陸地が載っていないので、陸地の基準は作れない）。
-//!   店は公式サイトから取ったもの（日付はサイトから取った日）。--stores で OSM の店などに替えられる。
+//!   店は既定ではトライアルの公式サイトから取ったもの（日付はサイトから取った日）。--stores で OSM の店や、
+//!   西友（data/seiyu_site/seiyu_site_clean_<日>.csv）に替えたり、足したりできる。
 //!   読むもの：data/trial_site/trial_site_clean_<日付>.csv、data/estat/tblT001140S*.txt
 //!   書くもの：data/xi/xi_jp_<日付>[_名前].csv、data/xi/chi2_jp_<日付>[_名前].txt
 
@@ -36,6 +40,10 @@ fn main() {
             "--mock" => {
                 let (r, seed) = v.split_once(':').expect("--mock R:種");
                 p.mock = Some((r.parse().unwrap(), seed.parse().unwrap()));
+            }
+            "--cross" => {
+                let (a, b) = v.split_once(',').expect("--cross チェーン,チェーン");
+                p.cross = Some((a.into(), b.into()));
             }
             "--footprint" => p.footprint = v.split(',').map(|x| x.parse().unwrap()).collect(),
             _ => panic!("知らない引数：{k}"),

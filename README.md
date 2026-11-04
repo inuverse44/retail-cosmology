@@ -1,6 +1,6 @@
 # retail-cosmology
 
-オーストラリアの Coles と Woolworths の店舗座標に、宇宙論で銀河の分布を測るときの二点相関関数（Landy–Szalay 推定量ほか）を当てる研究。
+オーストラリアの Coles と Woolworths、日本のトライアルと西友の店舗座標に、宇宙論で銀河の分布を測るときの二点相関関数（Landy–Szalay 推定量ほか）を当てる研究。
 小売に宇宙論をどこまで適用できるかを調べる。
 
 - 発表予定：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
@@ -63,6 +63,15 @@ cargo run --release --bin xi -- 2026-11-03 --country jp --footprint 50,100,200 -
 cargo run --release --bin xi -- 2026-11-01 --footprint 50,100,200 --tag fp
 scripts/null_mocks.sh 2026-11-03 jp 50 100             # 帰無仮説の模擬データ 100 個
 uv run scripts/plot_footprint.py 2026-11-01 2026-11-03 # docs/figures/xi_footprint.{pdf,png}
+
+# 西友と、トライアルとの相互相関
+scripts/seiyu_site/fetch.sh                            # data/seiyu_site/<取得日>/（公式サイトの店舗）
+cargo run --release --bin seiyu_census -- 2026-11-04 2026-11-03
+S=data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv
+cargo run --release --bin xi -- 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50,100,200 --tag crossfp
+scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6    # 帰無仮説の模擬データ 100 個（6 並列）
+scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6
+uv run scripts/plot_cross.py 2026-11-03                # docs/figures/xi_cross.{pdf,png}
 cd notes && latexmk -lualatex retail-cosmology.tex
 
 # コードの構成を変える前と後で、すべての出力が変わらないことを確かめる
@@ -76,7 +85,9 @@ diff before.txt after.txt
 - 店舗の座標：[OpenStreetMap](https://www.openstreetmap.org)（© OpenStreetMap contributors、ODbL）。Overpass API で 2026-11-01T00:00:00Z 時点のデータを取り出す。選び方と限界はノートの「店舗データ」の節。
 - 人口：オーストラリア統計局（ABS）の [2025 年の格子人口](https://www.abs.gov.au/statistics/people/population/regional-population/2024-25)（1 km 格子、EPSG:3577、CC BY 4.0）。ランダムカタログに使う。
 - トライアルの店舗：公式サイトの[店舗検索](https://www.trial-net.co.jp/shops)（業態・緯度・経度・都道府県）。著作権はトライアルグループにあるので、取ったデータはコミットしない。
+- 西友の店舗：公式サイトの[店舗検索](https://www.seiyu.co.jp/searchshop/)（店名・住所・緯度・経度）。一覧に載っていないトライアル西友は、サイトマップから店のページを取る。著作権は西友にあるので、取ったデータはコミットしない。
 - 日本の人口：e-Stat の令和2年国勢調査 1 km メッシュ（T001140、政府標準利用規約 第2.0版）。
 - 公式の店舗数：[`reference/`](reference/README.md)。Coles と Woolworths の決算資料（2026年6月28日時点）。
 
 OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）、トライアルが 232 店（公式 378 店）。
+公式サイトから取った店舗数は、トライアルが 375 店（公式 378 店）、西友が 243 店（公式 243 店）。

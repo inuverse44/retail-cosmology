@@ -1,7 +1,7 @@
 //! Engine：対の数え上げ。距離のビンごとに DD, DR, RR を数える。
 //! jackknife のために、領域の組ごとにも数える（領域 k を除いた数は、数え直さずに求まる）。
 
-use crate::contract::PairCounts;
+use crate::contract::{CrossPairCounts, PairCounts};
 
 /// 距離のビン。`edges` は狭義単調増加で、ビン k は `[edges[k], edges[k+1])`。
 #[derive(Clone, Debug)]
@@ -339,6 +339,111 @@ impl JkCounts {
     }
 }
 
+/// 二種類の点の相互相関のための、領域ごとの対の数。
+/// R1 と R2 が同じカタログのときは、R1R2 にそのカタログの中の対（i < j）の数を使う（`shared_random`）。
+#[derive(Clone, Debug)]
+pub struct JkCross {
+    pub k: usize,
+    pub d1d2: RegionCounts,
+    pub d1r2: RegionCounts,
+    pub d2r1: RegionCounts,
+    pub r1r2: RegionCounts,
+    pub shared_random: bool,
+    pub nd1: Vec<usize>,
+    pub nd2: Vec<usize>,
+    pub nr1: Vec<usize>,
+    pub nr2: Vec<usize>,
+}
+
+fn per_region(r: &[usize], k: usize) -> Vec<usize> {
+    let mut n = vec![0; k];
+    for x in r {
+        n[*x] += 1;
+    }
+    n
+}
+
+impl JkCross {
+    /// 基準が共通（R1 = R2 = R）のとき。種類ごとの自己相関で数えた `a`（D1 と R）と `b`（D2 と R）の
+    /// DR と RR を使い回し、D1D2 だけを数える。
+    pub fn from_shared<P>(
+        d1: (&[P], &[usize]),
+        d2: (&[P], &[usize]),
+        a: &JkCounts,
+        b: &JkCounts,
+        bins: &Bins,
+        dist: impl Fn(&P, &P) -> f64,
+    ) -> Self {
+        assert_eq!(a.nr, b.nr, "基準のランダムカタログが同じでない");
+        let k = a.k;
+        Self {
+            k,
+            d1d2: count_cross_by_region(d1.0, d1.1, d2.0, d2.1, k, bins, &dist),
+            d1r2: a.dr.clone(),
+            d2r1: b.dr.clone(),
+            r1r2: a.rr.clone(),
+            shared_random: true,
+            nd1: per_region(d1.1, k),
+            nd2: per_region(d2.1, k),
+            nr1: a.nr.clone(),
+            nr2: a.nr.clone(),
+        }
+    }
+
+    /// 種類ごとに別のランダムカタログ（R1、R2）を使うとき。
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute<P>(
+        d1: (&[P], &[usize]),
+        d2: (&[P], &[usize]),
+        r1: (&[P], &[usize]),
+        r2: (&[P], &[usize]),
+        k: usize,
+        bins: &Bins,
+        dist: impl Fn(&P, &P) -> f64,
+    ) -> Self {
+        Self {
+            k,
+            d1d2: count_cross_by_region(d1.0, d1.1, d2.0, d2.1, k, bins, &dist),
+            d1r2: count_cross_by_region(d1.0, d1.1, r2.0, r2.1, k, bins, &dist),
+            d2r1: count_cross_by_region(d2.0, d2.1, r1.0, r1.1, k, bins, &dist),
+            r1r2: count_cross_by_region(r1.0, r1.1, r2.0, r2.1, k, bins, &dist),
+            shared_random: false,
+            nd1: per_region(d1.1, k),
+            nd2: per_region(d2.1, k),
+            nr1: per_region(r1.1, k),
+            nr2: per_region(r2.1, k),
+        }
+    }
+
+    /// 全体（`None`）か、領域 `omit` を除いた対の数。
+    pub fn pair_counts(&self, omit: Option<usize>) -> CrossPairCounts {
+        let n = |v: &[usize]| -> usize {
+            v.iter()
+                .enumerate()
+                .filter(|(i, _)| Some(*i) != omit)
+                .map(|(_, x)| x)
+                .sum()
+        };
+        let (m1, m2) = (n(&self.nr1), n(&self.nr2));
+        let n_r1r2 = if self.shared_random {
+            m1 as f64 * (m1 as f64 - 1.0) / 2.0
+        } else {
+            m1 as f64 * m2 as f64
+        };
+        CrossPairCounts {
+            n_d1: n(&self.nd1),
+            n_d2: n(&self.nd2),
+            n_r1: m1,
+            n_r2: m2,
+            n_r1r2,
+            d1d2: self.d1d2.total(omit),
+            d1r2: self.d1r2.total(omit),
+            d2r1: self.d2r1.total(omit),
+            r1r2: self.r1r2.total(omit),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +512,87 @@ mod tests {
             n[reg.assign(*p)] += 1;
         }
         assert!(n.iter().all(|c| *c == 256), "{n:?}");
+    }
+
+    #[test]
+    fn cross_with_shared_random_matches_separate_copies() {
+        // 基準が共通のとき、DR と RR を使い回した値は、同じ R を R1 と R2 に渡して数え直した値と、
+        // RR の全対数の違い（n(n-1)/2 の中の対と n^2 の順序つきの組）を除いて一致する。
+        let mut rng = SplitMix64::new(11);
+        let d1 = uniform(200, &mut rng);
+        let d2 = uniform(150, &mut rng);
+        let rand = uniform(800, &mut rng);
+        let xy = |v: &[Xy]| v.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>();
+        let reg = Regions::build(&xy(&rand), 2);
+        let rg = |v: &[Xy]| v.iter().map(|p| reg.assign((p.x, p.y))).collect::<Vec<_>>();
+        let (r1, r2, rr) = (rg(&d1), rg(&d2), rg(&rand));
+        let k = reg.len();
+        let bins = Bins::linear(0.02, 0.3, 7);
+        let a = JkCounts::compute(&d1, &r1, &rand, &rr, k, &bins, euclid);
+        let b = JkCounts::compute(&d2, &r2, &rand, &rr, k, &bins, euclid);
+        let shared = JkCross::from_shared((&d1, &r1), (&d2, &r2), &a, &b, &bins, euclid);
+        let sep = JkCross::compute(
+            (&d1, &r1),
+            (&d2, &r2),
+            (&rand, &rr),
+            (&rand, &rr),
+            k,
+            &bins,
+            euclid,
+        );
+        for omit in [None, Some(0), Some(3)] {
+            let (s, p) = (shared.pair_counts(omit), sep.pair_counts(omit));
+            assert_eq!(s.d1d2, p.d1d2);
+            assert_eq!(s.d1r2, p.d1r2);
+            assert_eq!(s.d2r1, p.d2r1);
+            // 順序つきの組は中の対の 2 倍（距離 0 の自分自身の組はビンの外）
+            let twice: Vec<u64> = s.r1r2.iter().map(|x| 2 * x).collect();
+            assert_eq!(twice, p.r1r2);
+            let (xs, xp) = (s.landy_szalay(), p.landy_szalay());
+            let m = s.n_r1 as f64;
+            for (u, v) in xs.iter().zip(&xp) {
+                // RR の正規化が n(n-1) と n^2 で違う分だけずれる
+                let rel = ((1.0 + u) - (1.0 + v) * (m - 1.0) / m).abs();
+                assert!(rel < 0.05, "{u} {v}");
+            }
+        }
+        // 領域を除いた値が、その領域の点を除いて数え直した値と一致する
+        let omit = 1;
+        let keep = |v: &[Xy], r: &[usize]| -> Vec<Xy> {
+            v.iter()
+                .zip(r)
+                .filter(|(_, x)| **x != omit)
+                .map(|(p, _)| *p)
+                .collect()
+        };
+        let (e1, e2, er) = (keep(&d1, &r1), keep(&d2, &r2), keep(&rand, &rr));
+        let fast = sep.pair_counts(Some(omit));
+        assert_eq!(fast.d1d2, count_cross(&e1, &e2, &bins, euclid));
+        assert_eq!(fast.d1r2, count_cross(&e1, &er, &bins, euclid));
+        assert_eq!(fast.r1r2, count_cross(&er, &er, &bins, euclid));
+    }
+
+    #[test]
+    fn cross_of_a_set_with_itself_is_its_auto_correlation() {
+        // D1 = D2、R1 = R2 なら、相互相関は自己相関の Landy–Szalay と同じ形になる（DD の正規化の違いを除く）。
+        let mut rng = SplitMix64::new(13);
+        let d = uniform(300, &mut rng);
+        let rand = uniform(900, &mut rng);
+        let reg = Regions::build(&rand.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(), 1);
+        let rd: Vec<usize> = d.iter().map(|p| reg.assign((p.x, p.y))).collect();
+        let rr: Vec<usize> = rand.iter().map(|p| reg.assign((p.x, p.y))).collect();
+        let bins = Bins::linear(0.05, 0.3, 5);
+        let a = JkCounts::compute(&d, &rd, &rand, &rr, reg.len(), &bins, euclid);
+        let c = JkCross::from_shared((&d, &rd), (&d, &rd), &a, &a, &bins, euclid);
+        let auto = a.pair_counts(None);
+        let cross = c.pair_counts(None);
+        let twice: Vec<u64> = auto.dd.iter().map(|x| 2 * x).collect();
+        assert_eq!(cross.d1d2, twice);
+        let n = d.len() as f64;
+        for (x, y) in cross.landy_szalay().iter().zip(auto.landy_szalay()) {
+            // DD を n^2 と n(n-1) で割る違い：ξ_cross = ξ_auto + (dd/rr)(1/n) 程度
+            assert!((x - y).abs() < 2.0 / n * (1.0 + y.abs()) + 1e-12, "{x} {y}");
+        }
     }
 
     #[test]

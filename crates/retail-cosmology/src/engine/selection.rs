@@ -19,7 +19,7 @@ pub fn region(chain: Chain, state: &str) -> &'static str {
         (Chain::Coles, "AU-VIC" | "AU-TAS") => "VIC & TAS",
         (Chain::Woolworths, "AU-VIC") => "VIC",
         (Chain::Woolworths, "AU-TAS") => "TAS",
-        (Chain::Trial, s) => jp_region(s),
+        (Chain::Trial | Chain::Seiyu, s) => jp_region(s),
         _ => "other",
     }
 }
@@ -235,6 +235,33 @@ const PREFECTURES: [&str; 47] = [
     "沖縄県",
 ];
 
+/// 住所（〒の番号があってもよい）の頭にある都道府県のコード。
+pub fn prefecture_of_address(address: &str) -> Option<String> {
+    let a = address.trim_start_matches(|c: char| {
+        c == '〒' || c == '-' || c.is_ascii_digit() || c.is_whitespace() || c == '　'
+    });
+    PREFECTURES
+        .iter()
+        .find(|p| a.starts_with(**p))
+        .and_then(|p| prefecture_code(p))
+}
+
+/// 西友の公式サイトの店のうち、数えるもの。店名に【閉店】とある店は除く。
+/// 【改装中】の店は、一時的に閉めているだけで店舗網に入っているので数える。
+/// ロゴが seiyu（西友）、livin（リヴィン、ザ・モール）、trial（トライアル西友）のどれでもよい。
+/// トライアルの決算資料は、トライアル西友を西友の数に入れているので、それに合わせる。
+pub fn is_open_seiyu(name: &str) -> bool {
+    !name.contains("【閉店】")
+}
+
+/// 店名の頭の【…】（【改装中】など）。なければ空。
+pub fn seiyu_status(name: &str) -> &str {
+    name.strip_prefix('【')
+        .and_then(|r| r.split_once('】'))
+        .map(|(s, _)| s)
+        .unwrap_or("")
+}
+
 /// 都道府県名 → ISO 3166-2 のコード（JP-01〜JP-47）
 pub fn prefecture_code(name: &str) -> Option<String> {
     PREFECTURES
@@ -380,5 +407,19 @@ node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
         assert_eq!(prefecture_code("福岡県").as_deref(), Some("JP-40"));
         assert_eq!(prefecture_code("沖縄県").as_deref(), Some("JP-47"));
         assert_eq!(prefecture_code("どこか"), None);
+        assert_eq!(
+            prefecture_of_address("〒120-0012　東京都足立区青井3-1-1").as_deref(),
+            Some("JP-13")
+        );
+        assert_eq!(
+            prefecture_of_address("神奈川県川崎市").as_deref(),
+            Some("JP-14")
+        );
+        assert_eq!(prefecture_of_address("〒000-0000　どこか"), None);
+        assert!(!is_open_seiyu("【閉店】西友山科店"));
+        assert!(is_open_seiyu("【改装中】西友巣鴨店"));
+        assert_eq!(seiyu_status("【改装中】西友巣鴨店"), "改装中");
+        assert_eq!(seiyu_status("西友青井店"), "");
+        assert_eq!(region(Chain::Seiyu, "JP-13"), "関東");
     }
 }
