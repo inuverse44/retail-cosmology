@@ -46,6 +46,22 @@ impl SmoothRatio {
         s / pts.len() as f64
     }
 
+    /// S(p) を求めるときに調べる点の数と、そのうち打ち切りの半径の内側にあって足し合わせる点の数
+    /// （店と参照の点の合計）。計算量を見積もるための診断。
+    pub fn eval_cost(&self, p: &Unit) -> (usize, usize) {
+        let c2max = self.cutoff * self.cutoff;
+        let (mut visited, mut inside) = (0, 0);
+        for (pts, g) in [(&self.refs, &self.g_refs), (&self.stores, &self.g_stores)] {
+            g.for_each_near(p, self.cutoff, |i| {
+                visited += 1;
+                if chord2(p, &pts[i]) < c2max {
+                    inside += 1;
+                }
+            });
+        }
+        (visited, inside)
+    }
+
     /// S(p)。近くに参照の点がなければ 0。
     pub fn eval(&self, p: &Unit) -> f64 {
         let den = self.smooth(p, &self.refs, &self.g_refs);
@@ -55,6 +71,40 @@ impl SmoothRatio {
             self.smooth(p, &self.stores, &self.g_stores) / den
         }
     }
+}
+
+/// 重み `w` をつけた点で、ln ρ の重みつき平均。重みにはさらに ρ^γ を掛ける（`log_rho` は ln ρ）。
+pub fn mean_log_density(log_rho: &[f64], w: &[f64], gamma: f64) -> f64 {
+    let (mut num, mut den) = (0.0, 0.0);
+    for (l, wi) in log_rho.iter().zip(w) {
+        let wt = wi * (gamma * l).exp();
+        num += wt * l;
+        den += wt;
+    }
+    num / den
+}
+
+/// 店が人の密集地にどれだけ寄るかを表す指数 γ を求める。
+/// 基準（重み `w` の点）に ρ^γ を掛けたときの ln ρ の平均が、店の ln ρ の平均 `target` に等しくなる γ。
+/// 平均は γ について単調に増える（γ で微分すると重みつきの分散になる）ので、二分法で解く。
+/// 範囲 [-`limit`, `limit`] で解けなければ、近い方の端を返す。
+pub fn fit_density_exponent(log_rho: &[f64], w: &[f64], target: f64, limit: f64) -> f64 {
+    let (mut lo, mut hi) = (-limit, limit);
+    if mean_log_density(log_rho, w, lo) >= target {
+        return lo;
+    }
+    if mean_log_density(log_rho, w, hi) <= target {
+        return hi;
+    }
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if mean_log_density(log_rho, w, mid) < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
 }
 
 #[cfg(test)]
@@ -72,6 +122,22 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn density_exponent_recovers_the_power_used_to_draw() {
+        // ln ρ が 0〜10 に一様な点を基準にし、ρ^γ の重みで選んだ点の平均を目標にすると γ が戻る。
+        let mut rng = SplitMix64::new(4);
+        let lr: Vec<f64> = (0..20_000).map(|_| 10.0 * rng.next_f64()).collect();
+        let w = vec![1.0; lr.len()];
+        for g in [-0.5, 0.0, 0.3] {
+            let target = mean_log_density(&lr, &w, g);
+            let fit = fit_density_exponent(&lr, &w, target, 3.0);
+            assert!((fit - g).abs() < 1e-9, "{g} {fit}");
+        }
+        // 平均が範囲の外なら端を返す
+        assert_eq!(fit_density_exponent(&lr, &w, 20.0, 3.0), 3.0);
+        assert_eq!(fit_density_exponent(&lr, &w, -1.0, 3.0), -3.0);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::contract::PopulationGrid;
 use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
 use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
-use crate::engine::selection_function::SmoothRatio;
+use crate::engine::selection_function::{SmoothRatio, fit_density_exponent, mean_log_density};
 use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
 use crate::util::rng::SplitMix64;
 
@@ -20,7 +20,7 @@ const CHI2_MIN_KM: f64 = 3.0;
 /// 比と dr/rr - 1 をまとめる距離の範囲 [km]（中点が 10–40 km の 4 ビン）
 const MID_RANGE_KM: (f64, f64) = (7.0, 55.0);
 /// 選択関数の人口の密度を表す、人口に比例して撒いた参照の点の数
-const N_REF: usize = 50_000;
+pub const N_REF: usize = 50_000;
 
 /// 測り方の設定。
 #[derive(Clone, Debug)]
@@ -41,6 +41,9 @@ pub struct Params {
     /// 帰無仮説の模擬データ：(R [km], 種)。実際の店から幅 R の選択関数を作り、それに従って店と同じ数の点を
     /// 独立に撒いて、店の代わりに使う（短い距離の相関がない店）。選択関数の方法の確かめに使う。
     pub mock: Option<(f64, u64)>,
+    /// 模擬データを撒く重みに、人口密度 ρ（格子の人口）の γ 乗も掛ける。γ はチェーンごとに、
+    /// 店の位置の ln ρ の平均が実際の店と同じになるように決める（人の密集地への寄り方をそろえる）。
+    pub mock_density: bool,
     /// 相互相関を測る二つのチェーンの名前（例：TRIAL と SEIYU）。None なら測らない
     pub cross: Option<(String, String)>,
 }
@@ -58,6 +61,7 @@ impl Params {
             tag: String::new(),
             footprint: Vec::new(),
             mock: None,
+            mock_density: false,
             cross: None,
         }
     }
@@ -155,23 +159,61 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some((r_km, mock_seed)) = p.mock {
         let mut rng_m = SplitMix64::new(mock_seed ^ 0x4D0C_C0DE_0000_0000);
-        let refs: Vec<Unit> = sample(grid, N_REF, Weight::Population, &mut rng_m)
-            .iter()
-            .map(Unit::from)
-            .collect();
+        let refs_ll = sample(grid, N_REF, Weight::Population, &mut rng_m);
+        let refs: Vec<Unit> = refs_ll.iter().map(Unit::from).collect();
+        // 格子の人口（人口密度 [人/km²] にあたる）。格子の外か人口 0 なら None
+        let rho = |q: &LatLon| -> Option<f64> {
+            let v = grid.values[grid.geometry.cell_of(q)?] as f64;
+            (v > 0.0).then_some(v)
+        };
         for (name, pts) in stores.iter_mut() {
             let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
             let sr = SmoothRatio::new(&units, &refs, r_km);
             let n = pts.len();
-            *pts = sample_selected(
+            let gamma = if p.mock_density {
+                // 基準は「人口 × 選択関数」。人口に比例する参照の点に選択関数の重みをつけて表す
+                let (lr, w): (Vec<f64>, Vec<f64>) = refs_ll
+                    .iter()
+                    .zip(&refs)
+                    .filter_map(|(q, u)| rho(q).map(|r| (r.ln(), sr.eval(u))))
+                    .unzip();
+                let ls: Vec<f64> = pts.iter().filter_map(|q| rho(q).map(f64::ln)).collect();
+                let target = ls.iter().sum::<f64>() / ls.len() as f64;
+                let g = fit_density_exponent(&lr, &w, target, 3.0);
+                eprintln!(
+                    "{name}：店の ln ρ の平均 {target:.3}（人口 0 の格子の {} 店を除く）、基準の平均 {:.3}、γ = {g:.3}",
+                    n - ls.len(),
+                    mean_log_density(&lr, &w, 0.0)
+                );
+                g
+            } else {
+                0.0
+            };
+            let sel = sample_selected(
                 grid,
                 n,
                 Weight::Population,
-                |q| sr.eval(&Unit::from(q)),
-                20 * n,
+                |q| {
+                    let s = sr.eval(&Unit::from(q));
+                    if gamma == 0.0 {
+                        s
+                    } else {
+                        s * rho(q).map_or(0.0, |r| r.powf(gamma))
+                    }
+                },
+                if p.mock_density { 100 * n } else { 20 * n },
                 &mut rng_m,
-            )
-            .points;
+            );
+            *pts = sel.points;
+            if p.mock_density {
+                let ls: Vec<f64> = pts.iter().filter_map(|q| rho(q).map(f64::ln)).collect();
+                eprintln!(
+                    "{name}：模擬の店の ln ρ の平均 {:.3}、候補 {} 点、上限を超えた候補 {}",
+                    ls.iter().sum::<f64>() / ls.len() as f64,
+                    sel.candidates,
+                    sel.clipped
+                );
+            }
             eprintln!(
                 "{name}：模擬データ（R = {r_km} km の選択関数に従う {n} 点、種 {mock_seed}）"
             );

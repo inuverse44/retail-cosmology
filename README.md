@@ -71,7 +71,16 @@ S=data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_cle
 cargo run --release --bin xi -- 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50,100,200 --tag crossfp
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6    # 帰無仮説の模擬データ 100 個（6 並列）
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6
+scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density   # 人の密集地への寄り方もそろえた模擬データ
+scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6 density
 uv run scripts/plot_cross.py 2026-11-03                # docs/figures/xi_cross.{pdf,png}
+
+# 模擬データの計算量（notes/algorithm-cost.tex）
+target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --mock 50:1 --mock-density on --tag costlog 2> data/cost/mock_log_R50.txt
+target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --tag costreal 2> data/cost/real_log_R50.txt
+cargo run --release --bin cost -- 50 40000             # data/cost/cost_R50.csv
+uv run scripts/plot_cost.py                            # docs/figures/cost_*.{pdf,png}
+cd notes && latexmk -lualatex algorithm-cost.tex
 cd notes && latexmk -lualatex retail-cosmology.tex
 
 # コードの構成を変える前と後で、すべての出力が変わらないことを確かめる
