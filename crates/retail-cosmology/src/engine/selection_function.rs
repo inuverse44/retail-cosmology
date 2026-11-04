@@ -165,6 +165,45 @@ mod tests {
     }
 
     #[test]
+    fn tabulated_returns_the_exact_value_at_the_cell_centre() {
+        // 同じ粗い格子の点はすべて、その格子の中心で厳密に求めた値になり、計算は格子ごとに 1 回。
+        use crate::util::grid::GridGeometry;
+        use std::collections::HashMap;
+        let mut rng = SplitMix64::new(12);
+        let mk = |n: usize, rng: &mut SplitMix64| -> Vec<Unit> {
+            (0..n)
+                .map(|_| {
+                    Unit::from(&LatLon {
+                        lat: 35.0 + rng.next_f64(),
+                        lon: 139.0 + rng.next_f64(),
+                    })
+                })
+                .collect()
+        };
+        let refs = mk(5000, &mut rng);
+        let stores = mk(300, &mut rng);
+        let sr = SmoothRatio::new(&stores, &refs, 30.0);
+        let g = GridGeometry::Mesh {
+            sw: Vec::new(),
+            index: HashMap::new(),
+        };
+        let tab = Tabulated::new(&sr, &g);
+        let a = LatLon {
+            lat: 35.681,
+            lon: 139.767,
+        };
+        let b = LatLon {
+            lat: 35.70,
+            lon: 139.80,
+        }; // 同じ 2 次メッシュ 533946
+        let (_, c) = g.coarse_cell(&a).unwrap();
+        let exact = sr.eval(&Unit::from(&c));
+        assert_eq!(tab.eval(&a), exact);
+        assert_eq!(tab.eval(&b), exact);
+        assert_eq!(tab.n_cells(), 1);
+    }
+
+    #[test]
     fn density_exponent_recovers_the_power_used_to_draw() {
         // ln ρ が 0〜10 に一様な点を基準にし、ρ^γ の重みで選んだ点の平均を目標にすると γ が戻る。
         let mut rng = SplitMix64::new(4);

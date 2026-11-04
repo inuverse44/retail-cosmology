@@ -187,6 +187,25 @@ mod tests {
     }
 
     #[test]
+    fn coarse_cell_is_the_second_level_mesh() {
+        // 東京駅は 2 次メッシュ 533946。中心はその 2 次メッシュの中にあり、同じ番号を返す。
+        let g = GridGeometry::Mesh {
+            sw: Vec::new(),
+            index: HashMap::new(),
+        };
+        let p = LatLon {
+            lat: 35.681,
+            lon: 139.767,
+        };
+        let (key, c) = g.coarse_cell(&p).unwrap();
+        assert_eq!(key, 533946);
+        assert_eq!(code_of(&c) / 100, key);
+        let (lat0, lon0) = code_to_sw(key * 100);
+        assert!((c.lat - (lat0 + 2.5 / 60.0)).abs() < 1e-12);
+        assert!((c.lon - (lon0 + 3.75 / 60.0)).abs() < 1e-12);
+    }
+
+    #[test]
     fn code_round_trips_at_cell_centres() {
         for code in [53394611u64, 30360000, 68414579, 36221137] {
             let (lat, lon) = code_to_sw(code);
