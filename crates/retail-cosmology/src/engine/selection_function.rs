@@ -3,7 +3,11 @@
 //! 「どの地方に、人口あたりどれだけ出店しているか」が基準に入り、R より短い距離の店どうしの並び方だけが残る。
 //! 人口の密度は、人口に比例して撒いた点（参照の点）で表す。
 
-use crate::util::geo::{Unit, chord2, km_to_chord2};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
+use crate::util::grid::GridGeometry;
 use crate::util::spatial::UnitGrid;
 
 /// ガウス関数を打ち切る位置（標準偏差の何倍か）
@@ -70,6 +74,42 @@ impl SmoothRatio {
         } else {
             self.smooth(p, &self.stores, &self.g_stores) / den
         }
+    }
+}
+
+/// 選択関数を約 10 km の粗い格子ごとに一度だけ求め、格子の中では同じ値を返す（#12）。
+/// S は幅 R（50 km 以上）でならした関数なので、格子の中ではほとんど変わらない、という近似。
+/// 格子の値は、初めて聞かれたときに格子の中心で求めて覚えておく。
+pub struct Tabulated<'a> {
+    sr: &'a SmoothRatio,
+    geometry: &'a GridGeometry,
+    cache: RefCell<HashMap<u64, f64>>,
+}
+
+impl<'a> Tabulated<'a> {
+    pub fn new(sr: &'a SmoothRatio, geometry: &'a GridGeometry) -> Self {
+        Self {
+            sr,
+            geometry,
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// 点 p が入る粗い格子の S。粗い格子の外なら、その点で厳密に求める。
+    pub fn eval(&self, p: &LatLon) -> f64 {
+        match self.geometry.coarse_cell(p) {
+            Some((key, center)) => *self
+                .cache
+                .borrow_mut()
+                .entry(key)
+                .or_insert_with(|| self.sr.eval(&Unit::from(&center))),
+            None => self.sr.eval(&Unit::from(p)),
+        }
+    }
+
+    /// これまでに S を求めた粗い格子の数。
+    pub fn n_cells(&self) -> usize {
+        self.cache.borrow().len()
     }
 }
 

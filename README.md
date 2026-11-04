@@ -73,12 +73,16 @@ scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6    # 帰無仮説
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density   # 人の密集地への寄り方もそろえた模擬データ
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6 density
+# 模擬データは選択関数を 10 km 格子の表で求めると約 6 分の 1 の時間で済む（結果の差は揺らぎより小さい、notes/algorithm-cost.tex）
+scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density,grid
 uv run scripts/plot_cross.py 2026-11-03                # docs/figures/xi_cross.{pdf,png}
 
 # 模擬データの計算量（notes/algorithm-cost.tex）
 target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --mock 50:1 --mock-density on --tag costlog 2> data/cost/mock_log_R50.txt
 target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --tag costreal 2> data/cost/real_log_R50.txt
+target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --mock 50:1 --mock-density on --selection-grid on --tag costlog 2> data/cost/mock_log_R50_grid.txt
 cargo run --release --bin cost -- 50 40000             # data/cost/cost_R50.csv
+cargo run --release --bin cost -- 100 40000            # data/cost/cost_R100.csv
 uv run scripts/plot_cost.py                            # docs/figures/cost_*.{pdf,png}
 cd notes && latexmk -lualatex algorithm-cost.tex
 cd notes && latexmk -lualatex retail-cosmology.tex

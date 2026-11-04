@@ -303,20 +303,30 @@ impl JkCounts {
         bins: &Bins,
         dist: impl Fn(&P, &P) -> f64,
     ) -> Self {
-        let count = |r: &[usize]| {
-            let mut n = vec![0; k];
-            for x in r {
-                n[*x] += 1;
-            }
-            n
-        };
+        let rr = count_auto_by_region(randoms, rr_reg, k, bins, &dist);
+        Self::with_rr(data, rd, randoms, rr_reg, k, bins, dist, rr)
+    }
+
+    /// RR をすでに数えてあるとき（同じランダムカタログを何度も使うとき）。DD と DR だけを数える。
+    /// `rr` は `count_auto_by_region(randoms, rr_reg, k, bins, dist)` で数えたものでなければならない。
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_rr<P>(
+        data: &[P],
+        rd: &[usize],
+        randoms: &[P],
+        rr_reg: &[usize],
+        k: usize,
+        bins: &Bins,
+        dist: impl Fn(&P, &P) -> f64,
+        rr: RegionCounts,
+    ) -> Self {
         Self {
             k,
             dd: count_auto_by_region(data, rd, k, bins, &dist),
             dr: count_cross_by_region(data, rd, randoms, rr_reg, k, bins, &dist),
-            rr: count_auto_by_region(randoms, rr_reg, k, bins, &dist),
-            nd: count(rd),
-            nr: count(rr_reg),
+            rr,
+            nd: per_region(rd, k),
+            nr: per_region(rr_reg, k),
         }
     }
 

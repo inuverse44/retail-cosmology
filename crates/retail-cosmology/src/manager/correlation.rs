@@ -9,9 +9,11 @@ use std::time::Instant;
 use crate::access::{population, results, stores};
 use crate::contract::PopulationGrid;
 use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
-use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions};
+use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions, count_auto_by_region};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
-use crate::engine::selection_function::{SmoothRatio, fit_density_exponent, mean_log_density};
+use crate::engine::selection_function::{
+    SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
+};
 use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
 use crate::util::rng::SplitMix64;
 
@@ -44,6 +46,8 @@ pub struct Params {
     /// 模擬データを撒く重みに、人口密度 ρ（格子の人口）の γ 乗も掛ける。γ はチェーンごとに、
     /// 店の位置の ln ρ の平均が実際の店と同じになるように決める（人の密集地への寄り方をそろえる）。
     pub mock_density: bool,
+    /// 選択関数を約 10 km の粗い格子ごとに一度だけ求め、格子の中では同じ値を使う（速くするための近似、#12）。
+    pub selection_grid: bool,
     /// 相互相関を測る二つのチェーンの名前（例：TRIAL と SEIYU）。None なら測らない
     pub cross: Option<(String, String)>,
 }
@@ -62,6 +66,7 @@ impl Params {
             footprint: Vec::new(),
             mock: None,
             mock_density: false,
+            selection_grid: false,
             cross: None,
         }
     }
@@ -169,13 +174,21 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
         for (name, pts) in stores.iter_mut() {
             let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
             let sr = SmoothRatio::new(&units, &refs, r_km);
+            let tab = Tabulated::new(&sr, &grid.geometry);
+            let s_of = |q: &LatLon| {
+                if p.selection_grid {
+                    tab.eval(q)
+                } else {
+                    sr.eval(&Unit::from(q))
+                }
+            };
             let n = pts.len();
             let gamma = if p.mock_density {
                 // 基準は「人口 × 選択関数」。人口に比例する参照の点に選択関数の重みをつけて表す
                 let (lr, w): (Vec<f64>, Vec<f64>) = refs_ll
                     .iter()
                     .zip(&refs)
-                    .filter_map(|(q, u)| rho(q).map(|r| (r.ln(), sr.eval(u))))
+                    .filter_map(|(q, _)| rho(q).map(|r| (r.ln(), s_of(q))))
                     .unzip();
                 let ls: Vec<f64> = pts.iter().filter_map(|q| rho(q).map(f64::ln)).collect();
                 let target = ls.iter().sum::<f64>() / ls.len() as f64;
@@ -194,7 +207,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                 n,
                 Weight::Population,
                 |q| {
-                    let s = sr.eval(&Unit::from(q));
+                    let s = s_of(q);
                     if gamma == 0.0 {
                         s
                     } else {
@@ -271,17 +284,44 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
         JkCounts::compute(&d.unit, &d.region, &r.unit, &r.region, k, &cbins, chord2)
     };
 
+    // 基準のランダムカタログどうしの組（RR）は、どの標本にも共通なので一度だけ数える
+    let rr_rand: Vec<_> = c_rand
+        .iter()
+        .map(|(_, r)| count_auto_by_region(&r.unit, &r.region, k, &cbins, chord2))
+        .collect();
+    let jk_shared = |d: &Catalogue, i: usize| {
+        let r = &c_rand[i].1;
+        JkCounts::with_rr(
+            &d.unit,
+            &d.region,
+            &r.unit,
+            &r.region,
+            k,
+            &cbins,
+            chord2,
+            rr_rand[i].clone(),
+        )
+    };
+    eprintln!(
+        "基準の RR：数え終えた（{:.1} 秒）",
+        t0.elapsed().as_secs_f64()
+    );
+
     // 計算する組：(標本, 基準) → 対の数
     let mut counts: Vec<(String, String, JkCounts)> = Vec::new();
     for (name, c) in &c_stores {
-        for (w, r) in &c_rand {
-            counts.push((name.to_string(), w.name().to_string(), jk(c, r)));
+        for (i, (w, _)) in c_rand.iter().enumerate() {
+            counts.push((name.to_string(), w.name().to_string(), jk_shared(c, i)));
         }
         eprintln!("{name}：数え終えた（{:.1} 秒）", t0.elapsed().as_secs_f64());
     }
-    for (w, r) in &c_rand {
+    for (i, (w, _)) in c_rand.iter().enumerate() {
         if *w != Weight::Population {
-            counts.push(("population".into(), w.name().to_string(), jk(&c_pp, r)));
+            counts.push((
+                "population".into(),
+                w.name().to_string(),
+                jk_shared(&c_pp, i),
+            ));
         }
     }
     eprintln!("人口：数え終えた（{:.1} 秒）", t0.elapsed().as_secs_f64());
@@ -304,6 +344,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
         for r_km in &p.footprint {
             for (i, (name, c)) in c_stores.iter().enumerate() {
                 let sr = SmoothRatio::new(&c.unit, &refs, *r_km);
+                let tab = Tabulated::new(&sr, &grid.geometry);
                 let rng_c = if i == 0 {
                     &mut rng_fp
                 } else {
@@ -313,7 +354,13 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                     grid,
                     p.n_random,
                     Weight::Population,
-                    |q| sr.eval(&Unit::from(q)),
+                    |q| {
+                        if p.selection_grid {
+                            tab.eval(q)
+                        } else {
+                            sr.eval(&Unit::from(q))
+                        }
+                    },
                     2 * p.n_random,
                     rng_c,
                 );
