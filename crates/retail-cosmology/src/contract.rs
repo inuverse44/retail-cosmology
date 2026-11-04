@@ -10,6 +10,7 @@ pub enum Chain {
     Coles,
     Woolworths,
     Trial,
+    Seiyu,
 }
 
 impl Chain {
@@ -18,6 +19,7 @@ impl Chain {
             Chain::Coles => "Coles",
             Chain::Woolworths => "Woolworths",
             Chain::Trial => "TRIAL",
+            Chain::Seiyu => "SEIYU",
         }
     }
 }
@@ -35,7 +37,9 @@ pub struct OsmElement {
     pub name: String,
 }
 
-/// トライアルの公式サイトの店。
+/// 公式サイトの店（トライアル、西友）。
+/// トライアルは `category` が業態、`prefecture` が都道府県名で、`address` は空。
+/// 西友は `category` がロゴの種類（seiyu、livin、trial）、`address` が住所で、`prefecture` は空。
 #[derive(Clone, Debug)]
 pub struct SiteStore {
     pub id: String,
@@ -43,6 +47,7 @@ pub struct SiteStore {
     pub category: String,
     pub pos: LatLon,
     pub prefecture: String,
+    pub address: String,
 }
 
 /// 選び出した店。OSM の店では `kind` と `id` が OSM の要素、公式サイトの店では `kind` が site、`id` が 0。
@@ -66,6 +71,22 @@ pub struct PairCounts {
     pub dd: Vec<u64>,
     pub dr: Vec<u64>,
     pub rr: Vec<u64>,
+}
+
+/// 二種類の点（1 と 2）の相互相関のための、ビンごとの対の数。
+/// ランダムカタログは種類ごとに R1、R2 を持つ。`n_r1r2` は R1R2 の対の総数で、
+/// R1 と R2 が別のカタログなら n_r1 n_r2、同じカタログなら n_r(n_r - 1)/2（`r1r2` はそのカタログの中の対の数）。
+#[derive(Clone, Debug)]
+pub struct CrossPairCounts {
+    pub n_d1: usize,
+    pub n_d2: usize,
+    pub n_r1: usize,
+    pub n_r2: usize,
+    pub n_r1r2: f64,
+    pub d1d2: Vec<u64>,
+    pub d1r2: Vec<u64>,
+    pub d2r1: Vec<u64>,
+    pub r1r2: Vec<u64>,
 }
 
 /// 決算資料にある地域ごとの店舗数。

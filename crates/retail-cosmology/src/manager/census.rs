@@ -2,6 +2,7 @@
 //!
 //! [`osm`]：OSM の店を選び出し、地域ごとに公式の数と比べる（Coles と Woolworths、またはトライアル）。
 //! [`trial_site`]：トライアルの公式サイトの店を数え、公式の数と OSM の店と比べる。
+//! [`seiyu_site`]：西友の公式サイトの店を数え、公式の数と、トライアルのサイトに載るトライアル西友と比べる。
 //! どちらも、選び出した店の CSV と、ノートに載せる TeX の表を書き、要約の文字列を返す。
 
 use std::collections::BTreeMap;
@@ -12,7 +13,8 @@ use crate::access::{official, results, stores};
 use crate::contract::{Chain, OsmElement, Store};
 use crate::engine::census::{MATCH_KM, nearest_km, quantile};
 use crate::engine::selection::{
-    classify, deduplicate, is_trial_format, prefecture_code, region, trial_format,
+    classify, deduplicate, is_open_seiyu, is_trial_format, prefecture_code, prefecture_of_address,
+    region, seiyu_status, trial_format,
 };
 use crate::util::geo::LatLon;
 
@@ -299,6 +301,142 @@ pub fn trial_site(
         &root.join("docs/tables/trial_site_census.tex"),
         &format!(
             "% cargo run --release --bin trial_census -- {day} {osm_date} が書いた表\n\\begin{{tabular}}{{lrrrrr}}\n\\toprule\n地方 & サイト & 公式 & サイト/公式 & OSM で一致 & OSM の割合 \\\\\n\\midrule\n{table}\\bottomrule\n\\end{{tabular}}\n"
+        ),
+    )?;
+    Ok(report)
+}
+
+/// 西友の公式サイトの店を数え、地方ごとに公式の数と比べる。
+/// あわせて、トライアルの公式サイト（`trial_day` に取ったもの）に業態「トライアル西友」として載る店が、
+/// 西友のサイトのどの店にあたるかを、いちばん近い店までの距離で確かめる（同じ店を二社に数えていないか、座標が合うか）。
+pub fn seiyu_site(
+    root: &Path,
+    day: &str,
+    trial_day: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let all = stores::read_seiyu_site(&root.join(format!("data/seiyu_site/{day}")))
+        .map_err(|e| format!("scripts/seiyu_site/fetch.sh を先に：{e}"))?;
+    let mut report = String::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut site: Vec<Store> = Vec::new();
+    let mut status: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut logos: BTreeMap<String, usize> = BTreeMap::new();
+    for s in &all {
+        if !seen.insert(s.id.clone()) {
+            writeln!(report, "二度出た店（一つ目だけ残す）：{}", s.id)?;
+            continue;
+        }
+        let st = seiyu_status(&s.name);
+        if !st.is_empty() {
+            status
+                .entry(st.to_string())
+                .or_default()
+                .push(s.name.clone());
+        }
+        if !is_open_seiyu(&s.name) {
+            continue;
+        }
+        *logos.entry(s.category.clone()).or_default() += 1;
+        let code = prefecture_of_address(&s.address)
+            .ok_or_else(|| format!("住所から都道府県がわからない：{} {}", s.name, s.address))?;
+        site.push(Store {
+            chain: Chain::Seiyu,
+            region: region(Chain::Seiyu, &code).to_string(),
+            state: code,
+            pos: s.pos,
+            kind: "site".into(),
+            id: 0,
+            brand: s.category.clone(),
+            name: s.name.clone(),
+        });
+    }
+
+    let official: BTreeMap<String, usize> =
+        official::read_official(&root.join("reference/official_store_counts.csv"))?
+            .into_iter()
+            .filter(|o| o.chain == "SEIYU")
+            .map(|o| (o.region, o.count))
+            .collect();
+    let mut n_site: BTreeMap<&str, usize> = BTreeMap::new();
+    for s in &site {
+        *n_site.entry(s.region.as_str()).or_default() += 1;
+    }
+    writeln!(
+        report,
+        "{:<10} {:>5} {:>5} {:>8}",
+        "地方", "サイト", "公式", "サイト/公式"
+    )?;
+    let mut table = String::new();
+    let (mut ts, mut to) = (0, 0);
+    for r in TRIAL_REGIONS {
+        let (s, o) = (
+            n_site.get(r).copied().unwrap_or(0),
+            official.get(r).copied().unwrap_or(0),
+        );
+        if s == 0 && o == 0 {
+            continue;
+        }
+        ts += s;
+        to += o;
+        writeln!(report, "{r:<10} {s:>5} {o:>5} {:>8.3}", s as f64 / o as f64)?;
+        writeln!(table, "{r} & {s} & {o} & {:.2} \\\\", s as f64 / o as f64)?;
+    }
+    writeln!(
+        report,
+        "{:<10} {ts:>5} {to:>5} {:>8.3}",
+        "計",
+        ts as f64 / to as f64
+    )?;
+    writeln!(
+        table,
+        "\\midrule\n計 & {ts} & {to} & {:.2} \\\\",
+        ts as f64 / to as f64
+    )?;
+    let others: Vec<&str> = n_site
+        .keys()
+        .copied()
+        .filter(|r| !official.contains_key(*r))
+        .collect();
+    if !others.is_empty() {
+        writeln!(report, "公式の数がない地方にある店：{others:?}")?;
+    }
+    writeln!(report, "ロゴの種類（数えた店）：{logos:?}")?;
+    for (st, names) in &status {
+        writeln!(report, "【{st}】{} 店：{names:?}", names.len())?;
+    }
+
+    // トライアルのサイトのトライアル西友と照らす
+    let site_pos: Vec<LatLon> = site.iter().map(|s| s.pos).collect();
+    let trial_dir = root.join(format!("data/trial_site/{trial_day}"));
+    let ts_trial: Vec<_> = stores::read_site(&trial_dir)
+        .map_err(|e| format!("scripts/trial_site/fetch.sh を先に：{e}"))?
+        .into_iter()
+        .filter(|s| s.category == "トライアル西友")
+        .collect();
+    let mut far = Vec::new();
+    let mut d_m: Vec<f64> = Vec::new();
+    for t in &ts_trial {
+        let d = nearest_km(&t.pos, &site_pos);
+        d_m.push(d * 1000.0);
+        if d >= MATCH_KM {
+            far.push(format!("{}（{:.2} km）", t.name, d));
+        }
+    }
+    writeln!(
+        report,
+        "トライアルのサイトのトライアル西友 {} 店：西友のサイトの店までの距離 最大 {:.0} m。{MATCH_KM} km より遠い店 {far:?}",
+        ts_trial.len(),
+        d_m.iter().copied().fold(0.0, f64::max)
+    )?;
+
+    stores::write_selected(
+        &root.join(format!("data/seiyu_site/seiyu_site_clean_{day}.csv")),
+        &site,
+    )?;
+    results::write_text(
+        &root.join("docs/tables/seiyu_site_census.tex"),
+        &format!(
+            "% cargo run --release --bin seiyu_census -- {day} {trial_day} が書いた表\n\\begin{{tabular}}{{lrrr}}\n\\toprule\n地方 & サイト & 公式 & サイト/公式 \\\\\n\\midrule\n{table}\\bottomrule\n\\end{{tabular}}\n"
         ),
     )?;
     Ok(report)

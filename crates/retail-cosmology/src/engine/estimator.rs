@@ -1,7 +1,7 @@
 //! Engine：推定量と誤差。対の数から二点相関関数の推定量を求め、jackknife で誤差をつけ、
 //! 共分散を使って χ² と、ビンをまとめた値（GLS）を求める。
 
-use crate::contract::PairCounts;
+use crate::contract::{CrossPairCounts, PairCounts};
 
 impl PairCounts {
     /// 全対数で割った (dd, dr, rr)。全対数は n_d(n_d-1)/2, n_d n_r, n_r(n_r-1)/2。
@@ -50,6 +50,25 @@ impl PairCounts {
             .map(|b| {
                 (self.dr[b] as f64 / (nd * nr)) / (self.rr[b] as f64 / (nr * (nr - 1.0) / 2.0))
                     - 1.0
+            })
+            .collect()
+    }
+}
+
+impl CrossPairCounts {
+    /// 相互相関の Landy–Szalay：(d1d2 - d1r2 - d2r1 + r1r2) / r1r2。
+    /// それぞれ全対数（n_d1 n_d2, n_d1 n_r2, n_d2 n_r1, n_r1r2）で割った値。
+    /// R1 と R2 が同じカタログなら (d1d2 - d1r - d2r + rr) / rr になる。
+    pub fn landy_szalay(&self) -> Vec<f64> {
+        let (n1, n2) = (self.n_d1 as f64, self.n_d2 as f64);
+        let (m1, m2) = (self.n_r1 as f64, self.n_r2 as f64);
+        (0..self.d1d2.len())
+            .map(|b| {
+                let d1d2 = self.d1d2[b] as f64 / (n1 * n2);
+                let d1r2 = self.d1r2[b] as f64 / (n1 * m2);
+                let d2r1 = self.d2r1[b] as f64 / (n2 * m1);
+                let r1r2 = self.r1r2[b] as f64 / self.n_r1r2;
+                (d1d2 - d1r2 - d2r1 + r1r2) / r1r2
             })
             .collect()
     }
