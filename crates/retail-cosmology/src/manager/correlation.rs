@@ -7,9 +7,10 @@ use std::time::Instant;
 
 use crate::access::{population, results, stores};
 use crate::contract::PopulationGrid;
-use crate::engine::estimator::{Estimate, chi2, chi2_sf_even, gls_mean, jackknife};
+use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
 use crate::engine::pair_count::{Bins, JkCounts, Regions};
-use crate::engine::random_catalog::{Weight, sample};
+use crate::engine::random_catalog::{Weight, sample, sample_selected};
+use crate::engine::selection_function::SmoothRatio;
 use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
 use crate::util::rng::SplitMix64;
 
@@ -17,6 +18,8 @@ use crate::util::rng::SplitMix64;
 const CHI2_MIN_KM: f64 = 3.0;
 /// 比と dr/rr - 1 をまとめる距離の範囲 [km]（中点が 10–40 km の 4 ビン）
 const MID_RANGE_KM: (f64, f64) = (7.0, 55.0);
+/// 選択関数の人口の密度を表す、人口に比例して撒いた参照の点の数
+const N_REF: usize = 50_000;
 
 /// 測り方の設定。
 #[derive(Clone, Debug)]
@@ -32,6 +35,11 @@ pub struct Params {
     pub seed: u64,
     /// 出力のファイル名につける名前（空でなければ "_名前" の形）
     pub tag: String,
+    /// 選択関数（出店している地方）をならす幅 R [km] の一覧。空なら選択関数を使わない
+    pub footprint: Vec<f64>,
+    /// 帰無仮説の模擬データ：(R [km], 種)。実際の店から幅 R の選択関数を作り、それに従って店と同じ数の点を
+    /// 独立に撒いて、店の代わりに使う（短い距離の相関がない店）。選択関数の方法の確かめに使う。
+    pub mock: Option<(f64, u64)>,
 }
 
 impl Params {
@@ -45,6 +53,8 @@ impl Params {
             depth: 6,
             seed: 1,
             tag: String::new(),
+            footprint: Vec::new(),
+            mock: None,
         }
     }
 }
@@ -123,6 +133,31 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             .push(pos);
     }
 
+    if let Some((r_km, mock_seed)) = p.mock {
+        let mut rng_m = SplitMix64::new(mock_seed ^ 0x4D0C_C0DE_0000_0000);
+        let refs: Vec<Unit> = sample(grid, N_REF, Weight::Population, &mut rng_m)
+            .iter()
+            .map(Unit::from)
+            .collect();
+        for (name, pts) in stores.iter_mut() {
+            let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
+            let sr = SmoothRatio::new(&units, &refs, r_km);
+            let n = pts.len();
+            *pts = sample_selected(
+                grid,
+                n,
+                Weight::Population,
+                |q| sr.eval(&Unit::from(q)),
+                20 * n,
+                &mut rng_m,
+            )
+            .points;
+            eprintln!(
+                "{name}：模擬データ（R = {r_km} km の選択関数に従う {n} 点、種 {mock_seed}）"
+            );
+        }
+    }
+
     let mut rng = SplitMix64::new(p.seed);
     // 乱数を引く順：陸地の格子がある場合（オーストラリア）は「人が住む格子」を最後に引き、
     // それより前の基準の乱数の列を、この基準を足す前と同じに保つ（ノートの数字を再現できるように）。
@@ -175,19 +210,54 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 計算する組：(標本, 基準) → 対の数
-    let mut counts: Vec<(String, &str, JkCounts)> = Vec::new();
+    let mut counts: Vec<(String, String, JkCounts)> = Vec::new();
     for (name, c) in &c_stores {
         for (w, r) in &c_rand {
-            counts.push((name.to_string(), w.name(), jk(c, r)));
+            counts.push((name.to_string(), w.name().to_string(), jk(c, r)));
         }
         eprintln!("{name}：数え終えた（{:.1} 秒）", t0.elapsed().as_secs_f64());
     }
     for (w, r) in &c_rand {
         if *w != Weight::Population {
-            counts.push(("population".into(), w.name(), jk(&c_pp, r)));
+            counts.push(("population".into(), w.name().to_string(), jk(&c_pp, r)));
         }
     }
     eprintln!("人口：数え終えた（{:.1} 秒）", t0.elapsed().as_secs_f64());
+
+    // 選択関数：店の密度と人口の密度を幅 R でならした比 S を、人口に掛けてランダムカタログを撒く。
+    // 乱数はほかの基準とは別の列から引き、選択関数を使わないときの結果を変えない。
+    if !p.footprint.is_empty() {
+        let mut rng_fp = SplitMix64::new(p.seed ^ 0xF007_9417_0000_0000);
+        let refs: Vec<Unit> = sample(grid, N_REF, Weight::Population, &mut rng_fp)
+            .iter()
+            .map(Unit::from)
+            .collect();
+        for r_km in &p.footprint {
+            for (name, c) in &c_stores {
+                let sr = SmoothRatio::new(&c.unit, &refs, *r_km);
+                let sel = sample_selected(
+                    grid,
+                    p.n_random,
+                    Weight::Population,
+                    |q| sr.eval(&Unit::from(q)),
+                    2 * p.n_random,
+                    &mut rng_fp,
+                );
+                eprintln!(
+                    "{name}：選択関数 R = {r_km} km、候補 {} 点から {} 点（上限を超えた候補 {}）（{:.1} 秒）",
+                    sel.candidates,
+                    sel.points.len(),
+                    sel.clipped,
+                    t0.elapsed().as_secs_f64()
+                );
+                counts.push((
+                    name.to_string(),
+                    format!("footprint_{r_km}"),
+                    jk(c, &cat(&sel.points)),
+                ));
+            }
+        }
+    }
 
     let mut out = String::from("quantity,sample,random,r_lo_km,r_hi_km,value,sigma\n");
     let mut put = |q: &str, s: &str, r: &str, e: &Estimate| {
@@ -209,7 +279,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     let pop_counts = |r: &str| {
         &counts
             .iter()
-            .find(|(s, rr, _)| s == "population" && *rr == r)
+            .find(|(s, rr, _)| s == "population" && rr.as_str() == r)
             .unwrap()
             .2
     };
@@ -219,7 +289,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     let mid: Vec<usize> = (0..bins.len())
         .filter(|b| ed[*b] >= MID_RANGE_KM.0 && ed[b + 1] <= MID_RANGE_KM.1)
         .collect();
-    let summarize = |label: &str, e: &Estimate| {
+    let summarize_over = |label: &str, e: &Estimate, mid: &[usize]| {
         let x: Vec<f64> = mid.iter().map(|b| e.value[*b]).collect();
         let cov: Vec<Vec<f64>> = mid
             .iter()
@@ -238,9 +308,11 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{line}");
         line
     };
+    let summarize = |label: &str, e: &Estimate| summarize_over(label, e, &mid);
     let mut summaries = Vec::new();
 
     for (s, r, c) in &counts {
+        let r = r.as_str();
         let ls = jackknife(k, |o| c.pair_counts(o).landy_szalay());
         let nat = jackknife(k, |o| c.pair_counts(o).natural());
         let drr = jackknife(k, |o| c.pair_counts(o).dr_over_rr_minus_1());
@@ -248,7 +320,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
         put("natural", s, r, &nat);
         put("dr_over_rr_minus_1", s, r, &drr);
 
-        if *r != "population" && s != "population" {
+        if (r == "land" || r == "inhabited") && s != "population" {
             // 店と人口の比を、同じ領域を除いて計算し、まとめて jackknife にかける
             let pc = pop_counts(r);
             let ratio = jackknife(k, |o| {
@@ -262,7 +334,44 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                 &ratio,
             ));
         }
-        if *r == "population" {
+        if let Some(r_km) = r
+            .strip_prefix("footprint_")
+            .and_then(|v| v.parse::<f64>().ok())
+        {
+            // 選択関数はならす幅 R より長い距離の構造を消すので、R/2 より短いビンだけを読む
+            let use_bins: Vec<usize> = (0..bins.len())
+                .filter(|b| ed[*b] >= CHI2_MIN_KM && ed[b + 1] <= r_km / 2.0)
+                .collect();
+            let x: Vec<f64> = use_bins.iter().map(|b| ls.value[*b]).collect();
+            let cov: Vec<Vec<f64>> = use_bins
+                .iter()
+                .map(|i| use_bins.iter().map(|j| ls.cov[*i][*j]).collect())
+                .collect();
+            let pn = x.len();
+            let hartlap = (k as f64 - pn as f64 - 2.0) / (k as f64 - 1.0);
+            let line = match chi2(&x, &cov) {
+                Some(c2) if hartlap > 0.0 && pn > 0 => {
+                    let c2h = c2 * hartlap;
+                    format!(
+                        "{s} / {r}：{CHI2_MIN_KM}–{} km の {pn} ビン、χ² = {c2h:.1}（Hartlap {hartlap:.3} をかけた値）、上側確率 {:.3}",
+                        r_km / 2.0,
+                        chi2_sf(c2h, pn)
+                    )
+                }
+                _ => format!("{s} / {r}：χ² を計算できない（領域 {k}、ビン {pn}）"),
+            };
+            eprintln!("{line}");
+            writeln!(chi2_txt, "{line}").unwrap();
+            let mid_r: Vec<usize> = mid
+                .iter()
+                .copied()
+                .filter(|b| ed[b + 1] <= r_km / 2.0)
+                .collect();
+            if !mid_r.is_empty() {
+                summaries.push(summarize_over(&format!("{s} の ξ_LS（{r}）"), &ls, &mid_r));
+            }
+        }
+        if r == "population" {
             summaries.push(summarize(&format!("{s} の dr/rr - 1（人口が基準）"), &drr));
             // Landy–Szalay が全部のビンで 0 と合うかを、共分散を使った χ² で調べる。
             // jackknife の共分散の逆行列の偏りを Hartlap の因子 (K - p - 2)/(K - 1) で直す。

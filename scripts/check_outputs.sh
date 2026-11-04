@@ -18,6 +18,8 @@ $b/xi 2026-11-01 2>/dev/null
 $b/xi 2026-11-01 --depth 5 --tag k32 2>/dev/null
 $b/xi 2026-11-03 --country jp 2>/dev/null
 $b/xi 2026-11-03 --country jp --stores data/osm/trial_clean_2026-11-01.csv --tag osm 2>/dev/null
+$b/xi 2026-11-03 --country jp --footprint 50 --tag fpcheck 2>/dev/null
+$b/xi 2026-11-03 --country jp --footprint 50 --mock 50:1 --tag mockcheck 2>/dev/null
 shasum -a 256 \
   data/toy/poisson.csv \
   data/osm/stores_clean_2026-11-01.csv data/osm/near_pairs_2026-11-01.csv \
@@ -27,6 +29,8 @@ shasum -a 256 \
   data/xi/xi_2026-11-01.csv data/xi/chi2_2026-11-01.txt \
   data/xi/xi_2026-11-01_k32.csv data/xi/chi2_2026-11-01_k32.txt \
   data/xi/xi_jp_2026-11-03.csv data/xi/chi2_jp_2026-11-03.txt \
-  data/xi/xi_jp_2026-11-03_osm.csv data/xi/chi2_jp_2026-11-03_osm.txt
+  data/xi/xi_jp_2026-11-03_osm.csv data/xi/chi2_jp_2026-11-03_osm.txt \
+  data/xi/xi_jp_2026-11-03_fpcheck.csv data/xi/chi2_jp_2026-11-03_fpcheck.txt \
+  data/xi/xi_jp_2026-11-03_mockcheck.csv data/xi/chi2_jp_2026-11-03_mockcheck.txt
 (cd "$log" && shasum -a 256 osm_census_stores.txt osm_census_trial.txt trial_census.txt)
 rm -r "$log"

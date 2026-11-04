@@ -159,6 +159,76 @@ pub fn chi2(x: &[f64], cov: &[Vec<f64>]) -> Option<f64> {
     Some(y.iter().map(|v| v * v).sum())
 }
 
+/// χ² 分布の上側確率 P(χ² > x)（自由度 dof は任意）。正則化された上側不完全ガンマ関数 Q(dof/2, x/2)。
+/// 級数（x < a + 1）と連分数（それ以外）で求める（Numerical Recipes の gammq と同じ方法）。
+pub fn chi2_sf(x: f64, dof: usize) -> f64 {
+    let a = dof as f64 / 2.0;
+    let x = x / 2.0;
+    if x <= 0.0 {
+        return 1.0;
+    }
+    let gln = ln_gamma(a);
+    if x < a + 1.0 {
+        let (mut ap, mut sum) = (a, 1.0 / a);
+        let mut del = sum;
+        for _ in 0..1000 {
+            ap += 1.0;
+            del *= x / ap;
+            sum += del;
+            if del.abs() < sum.abs() * 1e-15 {
+                break;
+            }
+        }
+        1.0 - sum * (-x + a * x.ln() - gln).exp()
+    } else {
+        let tiny = 1e-300;
+        let mut b = x + 1.0 - a;
+        let mut c = 1.0 / tiny;
+        let mut d = 1.0 / b;
+        let mut h = d;
+        for i in 1..1000 {
+            let an = -(i as f64) * (i as f64 - a);
+            b += 2.0;
+            d = an * d + b;
+            if d.abs() < tiny {
+                d = tiny;
+            }
+            c = b + an / c;
+            if c.abs() < tiny {
+                c = tiny;
+            }
+            d = 1.0 / d;
+            let del = d * c;
+            h *= del;
+            if (del - 1.0).abs() < 1e-15 {
+                break;
+            }
+        }
+        (-x + a * x.ln() - gln).exp() * h
+    }
+}
+
+/// ln Γ(a)（Lanczos 近似、a > 0）
+fn ln_gamma(a: f64) -> f64 {
+    const C: [f64; 6] = [
+        76.18009172947146,
+        -86.50532032941677,
+        24.01409824083091,
+        -1.231739572450155,
+        0.1208650973866179e-2,
+        -0.5395239384953e-5,
+    ];
+    let mut y = a;
+    let tmp = a + 5.5;
+    let tmp = tmp - (a + 0.5) * tmp.ln();
+    let mut ser = 1.000000000190015;
+    for c in C {
+        y += 1.0;
+        ser += c / y;
+    }
+    -tmp + (2.5066282746310005 * ser / a).ln()
+}
+
 /// 自由度が偶数のときの χ² 分布の上側確率 P(χ² > x) = e^{-x/2} Σ_{i<k/2} (x/2)^i / i!
 pub fn chi2_sf_even(x: f64, dof: usize) -> f64 {
     assert!(dof.is_multiple_of(2));
@@ -290,6 +360,22 @@ mod tests {
                 (0.75..1.33).contains(&ratio),
                 "bin {b}: jackknife {jk:.4} vs 実際のばらつき {sd:.4}"
             );
+        }
+    }
+
+    #[test]
+    fn chi2_sf_agrees_with_tables_and_even_formula() {
+        // χ² 分布表の 95% 点：自由度 1 は 3.841、5 は 11.070、14 は 23.685
+        for (x, k) in [(3.841, 1), (11.070, 5), (23.685, 14)] {
+            assert!(
+                (chi2_sf(x, k) - 0.05).abs() < 2e-4,
+                "dof {k}: {}",
+                chi2_sf(x, k)
+            );
+        }
+        // 自由度が偶数なら、閉じた式と一致する
+        for (x, k) in [(1.0, 2), (10.4, 14), (72.9, 14), (3.0, 4)] {
+            assert!((chi2_sf(x, k) - chi2_sf_even(x, k)).abs() < 1e-10);
         }
     }
 

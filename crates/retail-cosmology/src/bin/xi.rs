@@ -2,6 +2,10 @@
 //!
 //! cargo run --release --bin xi -- 2026-11-01 [--country au|jp] [--stores パス] [--n-random 20000]
 //!                                            [--n-pop 2000] [--depth 6] [--seed 1] [--tag 名前]
+//!                                            [--footprint 50,100,200]
+//!
+//! --footprint：出店している地方を選択関数としてランダムカタログに入れる。値はならす幅 R [km] の一覧。
+//! --mock R:種：店の代わりに、幅 R の選択関数に従って独立に撒いた模擬の店を使う（方法の確かめ）。
 //!
 //! au（既定）：Coles と Woolworths。人口は ABS の格子人口。基準は陸地・人が住む格子・人口。
 //!   読むもの：data/osm/stores_clean_<日付>.csv、data/abs/apgr25_1_0_0.tif
@@ -29,6 +33,11 @@ fn main() {
             "--depth" => p.depth = v.parse().unwrap(),
             "--seed" => p.seed = v.parse().unwrap(),
             "--tag" => p.tag = format!("_{v}"),
+            "--mock" => {
+                let (r, seed) = v.split_once(':').expect("--mock R:種");
+                p.mock = Some((r.parse().unwrap(), seed.parse().unwrap()));
+            }
+            "--footprint" => p.footprint = v.split(',').map(|x| x.parse().unwrap()).collect(),
             _ => panic!("知らない引数：{k}"),
         }
     }

@@ -56,6 +56,12 @@ cargo run --release --bin trial_census -- 2026-11-03 2026-11-01
 cargo run --release --bin xi -- 2026-11-03 --country jp
 cargo run --release --bin xi -- 2026-11-03 --country jp --stores data/osm/trial_clean_2026-11-01.csv --tag osm
 uv run scripts/plot_compare.py 2026-11-01 2026-11-03   # docs/figures/xi_compare.{pdf,png}
+
+# 選択関数（出店している地方）を入れる
+cargo run --release --bin xi -- 2026-11-03 --country jp --footprint 50,100,200 --tag fp
+cargo run --release --bin xi -- 2026-11-01 --footprint 50,100,200 --tag fp
+scripts/null_mocks.sh 2026-11-03 jp 50 100             # 帰無仮説の模擬データ 100 個
+uv run scripts/plot_footprint.py 2026-11-01 2026-11-03 # docs/figures/xi_footprint.{pdf,png}
 cd notes && latexmk -lualatex retail-cosmology.tex
 
 # コードの構成を変える前と後で、すべての出力が変わらないことを確かめる

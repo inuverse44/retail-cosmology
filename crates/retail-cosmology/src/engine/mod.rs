@@ -6,3 +6,4 @@ pub mod estimator;
 pub mod pair_count;
 pub mod random_catalog;
 pub mod selection;
+pub mod selection_function;
