@@ -15,6 +15,7 @@ scripts/                  描画（Python, matplotlib）とデータの取得（
 reference/                公式の店舗数と出典
 notes/                    ノート（TeX）
 docs/adr/                 設計判断の記録（ADR）
+docs/retrospectives/      振り返りと活動のログ
 docs/figures/             ノートに載せる図
 docs/tables/              ノートに載せる表（Rust が書く）
 data/                     取得したデータと計算結果（コミットしない）
