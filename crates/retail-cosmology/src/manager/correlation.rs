@@ -21,7 +21,7 @@ use crate::util::rng::SplitMix64;
 const CHI2_MIN_KM: f64 = 3.0;
 /// 比と dr/rr - 1 をまとめる距離の範囲 [km]（中点が 10–40 km の 4 ビン）
 const MID_RANGE_KM: (f64, f64) = (7.0, 55.0);
-/// 選択関数の人口の密度を表す、人口に比例して撒いた参照の点の数
+/// 選択関数の人口の密度を表す、人口に比例して撒いた参照の点の数（既定）
 pub const N_REF: usize = 50_000;
 
 /// 測り方の設定。
@@ -33,6 +33,8 @@ pub struct Params {
     /// 店のファイル（リポジトリの根からの相対パス）。カンマで区切って複数渡せる。空なら国ごとの既定
     pub stores: String,
     pub n_random: usize,
+    /// 選択関数の人口の密度を表す参照の点の数（既定は N_REF）
+    pub n_ref: usize,
     pub n_pop: usize,
     pub depth: u32,
     pub seed: u64,
@@ -61,6 +63,7 @@ impl Params {
             country: "au".into(),
             stores: String::new(),
             n_random: 20_000,
+            n_ref: N_REF,
             n_pop: 2_000,
             depth: 6,
             seed: 1,
@@ -167,7 +170,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some((r_km, mock_seed)) = p.mock {
         let mut rng_m = SplitMix64::new(mock_seed ^ 0x4D0C_C0DE_0000_0000);
-        let refs_ll = sample(grid, N_REF, Weight::Population, &mut rng_m);
+        let refs_ll = sample(grid, p.n_ref, Weight::Population, &mut rng_m);
         let refs: Vec<Unit> = refs_ll.iter().map(Unit::from).collect();
         // 格子の人口（人口密度 [人/km²] にあたる）。格子の外か人口 0 なら None
         let rho = |q: &LatLon| -> Option<f64> {
@@ -339,7 +342,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     let mut fp_cats: Vec<(f64, usize, Catalogue)> = Vec::new();
     if !p.footprint.is_empty() {
         let mut rng_fp = SplitMix64::new(p.seed ^ 0xF007_9417_0000_0000);
-        let refs: Vec<Unit> = sample(grid, N_REF, Weight::Population, &mut rng_fp)
+        let refs: Vec<Unit> = sample(grid, p.n_ref, Weight::Population, &mut rng_fp)
             .iter()
             .map(Unit::from)
             .collect();
