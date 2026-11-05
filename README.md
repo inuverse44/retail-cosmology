@@ -43,6 +43,7 @@ cargo run --release --bin toy > data/toy/poisson.csv   # 先に mkdir -p data/to
 uv run scripts/plot_toy.py                             # docs/figures/toy_poisson.{pdf,png}
 scripts/osm/fetch.sh 2026-11-01                         # data/osm/stores_2026-11-01.tsv
 cargo run --release --bin osm_census -- 2026-11-01     # 公式の数と比べ、docs/tables/osm_census.tex を書く
+scripts/naturalearth/fetch.sh                          # data/naturalearth/（地図に描く海岸線）
 uv run scripts/plot_stores.py 2026-11-01               # docs/figures/stores_osm.{pdf,png}
 scripts/abs/fetch.sh                                   # data/abs/apgr25_1_0_0.tif（ABS の格子人口）
 cargo run --release --bin xi -- 2026-11-01             # data/xi/xi_2026-11-01.csv（jackknife の誤差つき）
@@ -67,6 +68,7 @@ uv run scripts/plot_footprint.py 2026-11-01 2026-11-03 # docs/figures/xi_footpri
 # 西友と、トライアルとの相互相関
 scripts/seiyu_site/fetch.sh                            # data/seiyu_site/<取得日>/（公式サイトの店舗）
 cargo run --release --bin seiyu_census -- 2026-11-04 2026-11-03
+uv run scripts/plot_stores_jp.py 2026-11-03 2026-11-04 # docs/figures/stores_jp.{pdf,png}
 S=data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv
 cargo run --release --bin xi -- 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50,100,200 --tag crossfp
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6    # 帰無仮説の模擬データ 100 個（6 並列）
