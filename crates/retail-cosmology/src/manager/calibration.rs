@@ -102,9 +102,9 @@ pub fn run(root: &Path, au: &str, jp: &str) -> Result<String, Box<dyn std::error
     let mut report = String::new();
     let mut tex = format!(
         "% cargo run --release --bin chi2_calibrate -- {au} {jp} が書いた表\n\
-         \\begin{{tabular}}{{lllrrrr}}\n\\toprule\n\
-         国 & 標本 & 基準 & ビン & $\\chi^2$ & \\multicolumn{{2}}{{c}}{{上側確率}} \\\\\n\
-         & & & & & $\\chi^2$ 分布 & 模擬データ \\\\\n\\midrule\n"
+         \\begin{{tabular}}{{lllrrrrr}}\n\\toprule\n\
+         国 & 標本 & 基準 & 範囲 [km] & ビン & $\\chi^2$ & \\multicolumn{{2}}{{c}}{{上側確率}} \\\\\n\
+         & & & & & & $\\chi^2$ 分布 & 模擬データ \\\\\n\\midrule\n"
     );
     let mut last = "";
     for row in &rows {
@@ -143,18 +143,52 @@ pub fn run(root: &Path, au: &str, jp: &str) -> Result<String, Box<dyn std::error
             None => "人口".into(),
         };
         let sample = o.sample.replace('x', "$\\times$");
-        let nbins = o
-            .bins
-            .rsplit_once(" の ")
-            .map_or(o.bins.as_str(), |(_, b)| b);
+        let (range, nbins) = bins_columns(&o.bins);
         writeln!(
             tex,
-            "{country} & {sample} & {random} & {} & {:.1} & {p_chi2} & {p_mock} \\\\",
-            nbins.trim_end_matches(" ビン"),
+            "{country} & {sample} & {random} & {range} & {nbins} & {:.1} & {p_chi2} & {p_mock} \\\\",
             o.chi2
         )?;
     }
     tex.push_str("\\bottomrule\n\\end{tabular}\n");
     results::write_text(&root.join("docs/tables/chi2_calibrated.tex"), &tex)?;
     Ok(report)
+}
+
+/// 「3–25 km の 4 ビン」を TeX の列（"3--25"、"4"）に、「3 km 以上の 14 ビン」を（"$\geq 3$"、"14"）に分ける。
+fn bins_columns(bins: &str) -> (String, String) {
+    let (range, rest) = bins.split_once(" km").unwrap_or((bins, ""));
+    let range = if rest.starts_with(" 以上") {
+        format!("$\\geq {range}$")
+    } else {
+        range.replace('–', "--")
+    };
+    let n = rest
+        .trim_end_matches(" ビン")
+        .rsplit(' ')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    (range, n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bins_columns;
+
+    #[test]
+    fn splits_the_bin_description_into_range_and_count() {
+        assert_eq!(
+            bins_columns("3–25 km の 4 ビン"),
+            ("3--25".into(), "4".into())
+        );
+        assert_eq!(
+            bins_columns("3 km 以上の 14 ビン"),
+            ("$\\geq 3$".into(), "14".into())
+        );
+        assert_eq!(
+            bins_columns("3–2000 km の 14 ビン"),
+            ("3--2000".into(), "14".into())
+        );
+    }
 }
