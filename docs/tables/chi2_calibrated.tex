@@ -1,0 +1,29 @@
+% cargo run --release --bin chi2_calibrate -- 2026-11-01 2026-11-03 が書いた表
+\begin{tabular}{lllrrrrr}
+\toprule
+国 & 標本 & 基準 & 範囲 [km] & ビン & $\chi^2$ & \multicolumn{2}{c}{上側確率} \\
+& & & & & & $\chi^2$ 分布 & 模擬データ \\
+\midrule
+オーストラリア & Coles & 人口 & $\geq 3$ & 14 & 10.4 & 0.733 & 0.28 \\
+ & Woolworths & 人口 & $\geq 3$ & 14 & 10.6 & 0.719 & 0.27 \\
+ & Coles & $R = 50\,\mathrm{km}$ & 3--25 & 4 & 0.8 & 0.939 & 0.95 \\
+ & Woolworths & $R = 50\,\mathrm{km}$ & 3--25 & 4 & 2.3 & 0.686 & 0.76 \\
+ & Coles & $R = 100\,\mathrm{km}$ & 3--50 & 5 & 3.6 & 0.611 & 0.67 \\
+ & Woolworths & $R = 100\,\mathrm{km}$ & 3--50 & 5 & 1.8 & 0.875 & 0.92 \\
+ & Coles & $R = 200\,\mathrm{km}$ & 3--100 & 7 & 5.2 & 0.639 & 0.58 \\
+ & Woolworths & $R = 200\,\mathrm{km}$ & 3--100 & 7 & 2.2 & 0.951 & 0.94 \\
+\midrule
+日本 & TRIAL & 人口 & $\geq 3$ & 14 & 72.9 & $< 0.001$ & $< 0.01$ \\
+ & SEIYU & 人口 & $\geq 3$ & 14 & 40.0 & $< 0.001$ & $< 0.01$ \\
+ & TRIAL$\times$SEIYU & 人口 & 3--2000 & 14 & 46.8 & $< 0.001$ & $< 0.01$ \\
+ & TRIAL & $R = 50\,\mathrm{km}$ & 3--25 & 4 & 18.3 & 0.001 & 0.05 \\
+ & SEIYU & $R = 50\,\mathrm{km}$ & 3--25 & 4 & 10.2 & 0.037 & 0.01 \\
+ & TRIAL$\times$SEIYU & $R = 50\,\mathrm{km}$ & 3--20 & 4 & 5.0 & 0.283 & 0.21 \\
+ & TRIAL & $R = 100\,\mathrm{km}$ & 3--50 & 5 & 38.3 & $< 0.001$ & $< 0.01$ \\
+ & SEIYU & $R = 100\,\mathrm{km}$ & 3--50 & 5 & 7.3 & 0.196 & 0.09 \\
+ & TRIAL$\times$SEIYU & $R = 100\,\mathrm{km}$ & 3--32 & 5 & 5.3 & 0.378 & 0.12 \\
+ & TRIAL & $R = 200\,\mathrm{km}$ & 3--100 & 7 & 45.1 & $< 0.001$ & $< 0.01$ \\
+ & SEIYU & $R = 200\,\mathrm{km}$ & 3--100 & 7 & 7.7 & 0.361 & 0.10 \\
+ & TRIAL$\times$SEIYU & $R = 200\,\mathrm{km}$ & 3--80 & 7 & 6.1 & 0.526 & 0.25 \\
+\bottomrule
+\end{tabular}

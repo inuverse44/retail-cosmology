@@ -178,6 +178,13 @@ pub fn chi2(x: &[f64], cov: &[Vec<f64>]) -> Option<f64> {
     Some(y.iter().map(|v| v * v).sum())
 }
 
+/// 帰無仮説の模擬データと比べた上側確率：模擬データのうち χ² が `observed` 以上のものの数と、その割合。
+/// 模擬データが N 個なら、割合の刻みは 1/N で、0 個のときは「1/N 未満」としか言えない。
+pub fn mock_sf(observed: f64, mocks: &[f64]) -> (usize, f64) {
+    let k = mocks.iter().filter(|m| **m >= observed).count();
+    (k, k as f64 / mocks.len() as f64)
+}
+
 /// χ² 分布の上側確率 P(χ² > x)（自由度 dof は任意）。正則化された上側不完全ガンマ関数 Q(dof/2, x/2)。
 /// 級数（x < a + 1）と連分数（それ以外）で求める（Numerical Recipes の gammq と同じ方法）。
 pub fn chi2_sf(x: f64, dof: usize) -> f64 {
@@ -396,6 +403,12 @@ mod tests {
         for (x, k) in [(1.0, 2), (10.4, 14), (72.9, 14), (3.0, 4)] {
             assert!((chi2_sf(x, k) - chi2_sf_even(x, k)).abs() < 1e-10);
         }
+    }
+
+    #[test]
+    fn mock_sf_counts_ties_as_exceeding() {
+        assert_eq!(mock_sf(2.0, &[1.0, 2.0, 3.0, 0.5]), (2, 0.5));
+        assert_eq!(mock_sf(9.0, &[1.0, 2.0]), (0, 0.0));
     }
 
     #[test]
