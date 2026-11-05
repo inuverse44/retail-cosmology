@@ -89,6 +89,21 @@ pub struct CrossPairCounts {
     pub r1r2: Vec<u64>,
 }
 
+/// xi が書いた χ² の一行（data/xi/chi2_….txt）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chi2Record {
+    /// 標本（例：TRIAL、TRIALxSEIYU）
+    pub sample: String,
+    /// 基準（例：population、footprint_50）
+    pub random: String,
+    /// 使ったビン（例：「3 km 以上の 14 ビン」）
+    pub bins: String,
+    /// Hartlap の補正をかけた χ²
+    pub chi2: f64,
+    /// χ² 分布から求めた上側確率
+    pub p: f64,
+}
+
 /// 決算資料にある地域ごとの店舗数。
 #[derive(Clone, Debug)]
 pub struct OfficialCount {

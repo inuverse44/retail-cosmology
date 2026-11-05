@@ -44,6 +44,7 @@ pub struct Params {
     pub footprint: Vec<f64>,
     /// 帰無仮説の模擬データ：(R [km], 種)。実際の店から幅 R の選択関数を作り、それに従って店と同じ数の点を
     /// 独立に撒いて、店の代わりに使う（短い距離の相関がない店）。選択関数の方法の確かめに使う。
+    /// R = 0 なら選択関数を使わず、人口だけに比例して撒く（人口が基準の χ² の校正に使う、#9）。
     pub mock: Option<(f64, u64)>,
     /// 模擬データを撒く重みに、人口密度 ρ（格子の人口）の γ 乗も掛ける。γ はチェーンごとに、
     /// 店の位置の ln ρ の平均が実際の店と同じになるように決める（人の密集地への寄り方をそろえる）。
@@ -183,14 +184,13 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
-            let sr = SmoothRatio::new(&units, &refs, r_km);
-            let tab = Tabulated::new(&sr, &grid.geometry);
-            let s_of = |q: &LatLon| {
-                if p.selection_grid {
-                    tab.eval(q)
-                } else {
-                    sr.eval(&Unit::from(q))
-                }
+            // R = 0 なら選択関数を使わず（S = 1）、人口だけに比例して撒く（人口が基準の帰無仮説、#9）
+            let sr = (r_km > 0.0).then(|| SmoothRatio::new(&units, &refs, r_km));
+            let tab = sr.as_ref().map(|sr| Tabulated::new(sr, &grid.geometry));
+            let s_of = |q: &LatLon| match (&sr, &tab) {
+                (Some(_), Some(tab)) if p.selection_grid => tab.eval(q),
+                (Some(sr), _) => sr.eval(&Unit::from(q)),
+                _ => 1.0,
             };
             let n = pts.len();
             let gamma = if p.mock_density {
