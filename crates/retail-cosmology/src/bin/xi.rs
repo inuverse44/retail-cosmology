@@ -7,6 +7,7 @@
 //! --footprint：出店している地方を選択関数としてランダムカタログに入れる。値はならす幅 R [km] の一覧。
 //! --mock R:種：店の代わりに、幅 R の選択関数に従って独立に撒いた模擬の店を使う（方法の確かめ）。
 //!   チェーンごとに独立に撒くので、相互相関では「二社が互いに無関係に出店した」帰無仮説になる。
+//! --mock-keep A：--mock のとき、チェーン A は撒き直さず実際の位置のまま使う（店の固まりを残した帰無仮説、#13）。
 //! --selection-grid on：選択関数を約 10 km の粗い格子ごとに一度だけ求める近似を使う（速くするため、#12）。
 //! --mock-density on：模擬データの重みに人口密度 ρ の γ 乗も掛け、人の密集地への寄り方を実際の店にそろえる。
 //! --stores a.csv,b.csv：店のファイルをカンマで区切って複数渡せる。
@@ -45,6 +46,7 @@ fn main() {
             }
             "--mock-density" => p.mock_density = v == "on",
             "--selection-grid" => p.selection_grid = v == "on",
+            "--mock-keep" => p.mock_keep = v.split(',').map(String::from).collect(),
             "--cross" => {
                 let (a, b) = v.split_once(',').expect("--cross チェーン,チェーン");
                 p.cross = Some((a.into(), b.into()));

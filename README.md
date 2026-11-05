@@ -75,6 +75,8 @@ scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density   # 人�
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6 density
 # 模擬データは選択関数を 10 km 格子の表で求めると約 6 分の 1 の時間で済む（結果の差は揺らぎより小さい、notes/algorithm-cost.tex）
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density,grid
+# 片方のチェーンを実際の位置のまま残し、もう片方だけを撒き直す（店の固まりを残した帰無仮説、#13）
+for R in 50 100; do for K in TRIAL SEIYU; do scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU $R 100 6 density,grid,keep:$K; done; done
 uv run scripts/plot_cross.py 2026-11-03                # docs/figures/xi_cross.{pdf,png}
 
 # 模擬データの計算量（notes/algorithm-cost.tex）

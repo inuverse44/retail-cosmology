@@ -6,6 +6,9 @@ scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 100 100 6 density
+for R in 50 100; do for K in TRIAL SEIYU; do
+  scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU $R 100 6 density,grid,keep:$K
+done; done
 uv run scripts/plot_cross.py 2026-11-03
 """
 
@@ -62,17 +65,23 @@ def main() -> None:
     for ax, r_km, label, tag in [(axes[1, 0], 50, "8–20 km", "c"), (axes[1, 1], 100, "8–32 km", "d")]:
         key = f"{key_cross}（footprint_{r_km}）"
         real = summaries(real_txt, key)[0]
-        for suffix, color, name in [("", "0.6", "region only"), ("_density", "#9467bd", "region + density")]:
+        nulls = [
+            ("", "0.6", "both redrawn, region"),
+            ("_density", "#9467bd", "both redrawn, region + density"),
+            ("_density_grid_keepTRIAL", "#2ca02c", "TRIAL kept, SEIYU redrawn"),
+            ("_density_grid_keepSEIYU", "#ff7f0e", "SEIYU kept, TRIAL redrawn"),
+        ]
+        for suffix, color, name in nulls:
             path = XI / f"null_mocks_cross_{CROSS}_{r_km}{suffix}.txt"
             if not path.exists():
                 continue
             m = summaries(path, key)
             ax.hist(m, bins=20, histtype="step", color=color, lw=1.5, label=f"null mocks, {name} ({len(m)})")
-        ax.axvline(real, color="#9467bd", lw=2.5, label="data")
+        ax.axvline(real, color="k", lw=2.0, label="data")
         ax.set_xlabel(rf"$\hat\xi_{{\rm LS}}^{{\times}}$ ({label}, R = {r_km} km)")
         ax.set_ylabel("count")
         ax.set_title(f"({tag}) TRIAL x SEIYU vs null mocks, R = {r_km} km")
-        ax.legend(frameon=False, fontsize=7, loc="upper right")
+        ax.legend(frameon=False, fontsize=6.5, loc="upper right")
 
     fig.tight_layout()
     out = ROOT / "docs" / "figures" / "xi_cross"

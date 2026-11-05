@@ -48,6 +48,8 @@ pub struct Params {
     pub mock_density: bool,
     /// 選択関数を約 10 km の粗い格子ごとに一度だけ求め、格子の中では同じ値を使う（速くするための近似、#12）。
     pub selection_grid: bool,
+    /// 模擬データで撒き直さず、実際の位置のまま残すチェーン（#13）。店の固まりを残した帰無仮説に使う
+    pub mock_keep: Vec<String>,
     /// 相互相関を測る二つのチェーンの名前（例：TRIAL と SEIYU）。None なら測らない
     pub cross: Option<(String, String)>,
 }
@@ -67,6 +69,7 @@ impl Params {
             mock: None,
             mock_density: false,
             selection_grid: false,
+            mock_keep: Vec::new(),
             cross: None,
         }
     }
@@ -172,6 +175,10 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             (v > 0.0).then_some(v)
         };
         for (name, pts) in stores.iter_mut() {
+            if p.mock_keep.iter().any(|k| k == name) {
+                eprintln!("{name}：撒き直さず、実際の {} 店のまま使う", pts.len());
+                continue;
+            }
             let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
             let sr = SmoothRatio::new(&units, &refs, r_km);
             let tab = Tabulated::new(&sr, &grid.geometry);
