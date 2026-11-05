@@ -78,6 +78,8 @@ scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6 density,grid
 # 片方のチェーンを実際の位置のまま残し、もう片方だけを撒き直す（店の固まりを残した帰無仮説、#13）
 for R in 50 100; do for K in TRIAL SEIYU; do scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU $R 100 6 density,grid,keep:$K; done; done
 uv run scripts/plot_cross.py 2026-11-03                # docs/figures/xi_cross.{pdf,png}
+# 選択関数つきのランダムカタログの点の数・参照の点の数・種で、まとめた値がどれだけ動くか（#11、6 並列で約 27 分）
+scripts/random_points.sh 2026-11-03 $S TRIAL,SEIYU 6 100000:50000:5 50000:200000:5 50000:50000:10 20000:200000:10 20000:50000:10
 # χ² の上側確率を、帰無仮説の模擬データ 100 個と比べて校正する（#9、6 並列で約 30 分）
 scripts/chi2_mocks.sh 2026-11-03 jp 0 100 6 $S TRIAL,SEIYU     # 人口だけに比例して撒いた模擬データ
 scripts/chi2_mocks.sh 2026-11-03 jp 200 100 6 $S TRIAL,SEIYU   # R = 50、100 km は null_mocks_cross.sh の結果を使う
