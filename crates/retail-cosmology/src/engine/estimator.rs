@@ -119,6 +119,32 @@ pub fn gls_mean(x: &[f64], cov: &[Vec<f64>], hartlap: f64) -> Option<(f64, f64)>
     Some((b / a, (1.0 / a).sqrt()))
 }
 
+/// 決まった重み w でビンを足し合わせた値 m = wᵀx と、その標準偏差 σ_m = √(wᵀCw)。
+/// 重みが前もって決まっていれば、これは jackknife の標本ごとに同じ和をとって求めた分散と一致する
+/// （和が線形なので）。C⁻¹ を使わないので Hartlap の補正は要らない。
+pub fn weighted_sum(x: &[f64], cov: &[Vec<f64>], w: &[f64]) -> (f64, f64) {
+    let m = w.iter().zip(x).map(|(a, b)| a * b).sum();
+    let var: f64 = (0..w.len())
+        .map(|i| (0..w.len()).map(|j| w[i] * cov[i][j] * w[j]).sum::<f64>())
+        .sum();
+    (m, var.sqrt())
+}
+
+/// ビンの単純な平均（重み 1/p）と、その標準偏差。ビンの間の相関は誤差にだけ入る。
+pub fn plain_mean(x: &[f64], cov: &[Vec<f64>]) -> (f64, f64) {
+    let w = vec![1.0 / x.len() as f64; x.len()];
+    weighted_sum(x, cov, &w)
+}
+
+/// 分散の逆数（共分散の対角）で重みをつけた平均と、その標準偏差（共分散全体で求める）。
+/// 重みは正なので、値は必ずビンの最小と最大の間に入る。
+pub fn inverse_variance_mean(x: &[f64], cov: &[Vec<f64>]) -> (f64, f64) {
+    let inv: Vec<f64> = (0..x.len()).map(|i| 1.0 / cov[i][i]).collect();
+    let total: f64 = inv.iter().sum();
+    let w: Vec<f64> = inv.iter().map(|v| v / total).collect();
+    weighted_sum(x, cov, &w)
+}
+
 /// C y = b を Cholesky 分解で解く。C が正定値でなければ None。
 pub fn solve(cov: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
     let l = cholesky(cov)?;
@@ -403,6 +429,23 @@ mod tests {
         for (x, k) in [(1.0, 2), (10.4, 14), (72.9, 14), (3.0, 4)] {
             assert!((chi2_sf(x, k) - chi2_sf_even(x, k)).abs() < 1e-10);
         }
+    }
+
+    #[test]
+    fn fixed_weight_means_stay_inside_the_bins_unlike_gls() {
+        // 強く相関した 2 ビン（ρ = 0.9）で、誤差の大きいビンが低い。GLS は負の重みでビンの外に出る
+        let x = [0.063, 0.105];
+        let (s1, s2, rho) = (0.129, 0.071, 0.9);
+        let cov = vec![vec![s1 * s1, rho * s1 * s2], vec![rho * s1 * s2, s2 * s2]];
+        let (g, _) = gls_mean(&x, &cov, 1.0).unwrap();
+        assert!(g > 0.105, "GLS {g}");
+        let (m, sm) = plain_mean(&x, &cov);
+        assert!((m - 0.084).abs() < 1e-12);
+        // 単純な平均の分散は (σ1² + σ2² + 2ρσ1σ2) / 4
+        let want = ((s1 * s1 + s2 * s2 + 2.0 * rho * s1 * s2) / 4.0).sqrt();
+        assert!((sm - want).abs() < 1e-12);
+        let (iv, _) = inverse_variance_mean(&x, &cov);
+        assert!(iv > 0.063 && iv < 0.105, "分散の逆数 {iv}");
     }
 
     #[test]

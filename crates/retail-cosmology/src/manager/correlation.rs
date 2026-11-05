@@ -8,7 +8,9 @@ use std::time::Instant;
 
 use crate::access::{population, results, stores};
 use crate::contract::PopulationGrid;
-use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
+use crate::engine::estimator::{
+    Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, inverse_variance_mean, jackknife, plain_mean,
+};
 use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions, count_auto_by_region};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
 use crate::engine::selection_function::{
@@ -485,6 +487,19 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             ),
             None => format!("{label}：まとめられない"),
         };
+        // GLS と並べて、重みが前もって決まる二つのまとめ方も書く（#18）。
+        // 描画のスクリプトは「まとめた値」の行を読むので、こちらはその言葉を使わない。
+        let range = format!(
+            "{:.1}–{:.1} km の {} ビン",
+            ed[mid[0]],
+            ed[mid[mid.len() - 1] + 1],
+            mid.len()
+        );
+        let (pm, ps) = plain_mean(&x, &cov);
+        let (im, is) = inverse_variance_mean(&x, &cov);
+        let line = format!(
+            "{line}\n{label}：{range}の単純な平均 {pm:.3} ± {ps:.3}\n{label}：{range}の分散の逆数の重みの平均 {im:.3} ± {is:.3}"
+        );
         eprintln!("{line}");
         line
     };
