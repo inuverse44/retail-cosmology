@@ -61,7 +61,7 @@ uv run scripts/plot_compare.py 2026-11-01 2026-11-03   # docs/figures/xi_compare
 # 選択関数（出店している地方）を入れる
 cargo run --release --bin xi -- 2026-11-03 --country jp --footprint 50,100,200 --tag fp
 cargo run --release --bin xi -- 2026-11-01 --footprint 50,100,200 --tag fp
-scripts/null_mocks.sh 2026-11-03 jp 50 100             # 帰無仮説の模擬データ 100 個
+scripts/null_mocks.sh 2026-11-03 jp 50 100 6           # 帰無仮説の模擬データ 100 個（6 並列）
 uv run scripts/plot_footprint.py 2026-11-01 2026-11-03 # docs/figures/xi_footprint.{pdf,png}
 
 # 西友と、トライアルとの相互相関

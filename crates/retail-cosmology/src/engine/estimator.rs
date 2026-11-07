@@ -1,5 +1,5 @@
 //! Engine：推定量と誤差。対の数から二点相関関数の推定量を求め、jackknife で誤差をつけ、
-//! 共分散を使って χ² と、ビンをまとめた値（GLS）を求める。
+//! 共分散を使って χ² と、ビンをまとめた値（単純な平均に jackknife の誤差、ADR 002）を求める。
 
 use crate::contract::{CrossPairCounts, PairCounts};
 
@@ -109,6 +109,7 @@ pub fn jackknife(k: usize, f: impl Fn(Option<usize>) -> Vec<f64>) -> Estimate {
 }
 
 /// 定数を共分散つきで当てはめた値（GLS の平均）と、その標準偏差。
+/// 共分散が粗いと重みが負になり、値がビンの外に出る。ビンをまとめるのには使わない（ADR 002）。
 /// m = 1ᵀC⁻¹x / 1ᵀC⁻¹1、σ_m² = 1 / 1ᵀC⁻¹1。`hartlap` は C⁻¹ にかける補正因子。
 pub fn gls_mean(x: &[f64], cov: &[Vec<f64>], hartlap: f64) -> Option<(f64, f64)> {
     let ones = vec![1.0; x.len()];
@@ -133,15 +134,6 @@ pub fn weighted_sum(x: &[f64], cov: &[Vec<f64>], w: &[f64]) -> (f64, f64) {
 /// ビンの単純な平均（重み 1/p）と、その標準偏差。ビンの間の相関は誤差にだけ入る。
 pub fn plain_mean(x: &[f64], cov: &[Vec<f64>]) -> (f64, f64) {
     let w = vec![1.0 / x.len() as f64; x.len()];
-    weighted_sum(x, cov, &w)
-}
-
-/// 分散の逆数（共分散の対角）で重みをつけた平均と、その標準偏差（共分散全体で求める）。
-/// 重みは正なので、値は必ずビンの最小と最大の間に入る。
-pub fn inverse_variance_mean(x: &[f64], cov: &[Vec<f64>]) -> (f64, f64) {
-    let inv: Vec<f64> = (0..x.len()).map(|i| 1.0 / cov[i][i]).collect();
-    let total: f64 = inv.iter().sum();
-    let w: Vec<f64> = inv.iter().map(|v| v / total).collect();
     weighted_sum(x, cov, &w)
 }
 
@@ -432,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_weight_means_stay_inside_the_bins_unlike_gls() {
+    fn plain_mean_stays_inside_the_bins_unlike_gls() {
         // 強く相関した 2 ビン（ρ = 0.9）で、誤差の大きいビンが低い。GLS は負の重みでビンの外に出る
         let x = [0.063, 0.105];
         let (s1, s2, rho) = (0.129, 0.071, 0.9);
@@ -444,8 +436,6 @@ mod tests {
         // 単純な平均の分散は (σ1² + σ2² + 2ρσ1σ2) / 4
         let want = ((s1 * s1 + s2 * s2 + 2.0 * rho * s1 * s2) / 4.0).sqrt();
         assert!((sm - want).abs() < 1e-12);
-        let (iv, _) = inverse_variance_mean(&x, &cov);
-        assert!(iv > 0.063 && iv < 0.105, "分散の逆数 {iv}");
     }
 
     #[test]
