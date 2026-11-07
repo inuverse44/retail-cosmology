@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::access::{population, results, stores};
 use crate::contract::PopulationGrid;
-use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
+use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, jackknife, plain_mean};
 use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions, count_auto_by_region};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
 use crate::engine::selection_function::{
@@ -475,16 +475,14 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .map(|i| mid.iter().map(|j| e.cov[*i][*j]).collect())
             .collect();
-        let hartlap = (k as f64 - mid.len() as f64 - 2.0) / (k as f64 - 1.0);
-        let line = match gls_mean(&x, &cov, hartlap) {
-            Some((m, sd)) => format!(
-                "{label}：{:.1}–{:.1} km の {} ビンをまとめた値 {m:.3} ± {sd:.3}",
-                ed[mid[0]],
-                ed[mid[mid.len() - 1] + 1],
-                mid.len()
-            ),
-            None => format!("{label}：まとめられない"),
-        };
+        // ビンの単純な平均に、jackknife の誤差をつける（ADR 002）。GLS は粗い共分散に重みが左右されるので使わない
+        let (m, sd) = plain_mean(&x, &cov);
+        let line = format!(
+            "{label}：{:.1}–{:.1} km の {} ビンをまとめた値 {m:.3} ± {sd:.3}",
+            ed[mid[0]],
+            ed[mid[mid.len() - 1] + 1],
+            mid.len()
+        );
         eprintln!("{line}");
         line
     };
