@@ -275,6 +275,7 @@ OSM では、同じ店が点（node）と建物の輪郭（way）の両方で描
   \includegraphics[width=\linewidth]{stores_osm.pdf}
   \caption{OSM から取り出した Coles と Woolworths の店舗（2026年11月1日時点）。
     店舗は東海岸と南東部の都市に集まり、内陸にはほとんどない。
+    灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
     \code{scripts/plot\_stores.py} で描いた。}
   \label{fig:stores}
 \end{figure}
@@ -399,6 +400,21 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 トライアルの公式サイトにも、業態がトライアル西友の店が 8 店載っている。
 8 店とも、西友のサイトのいずれかの店から $60\,\mathrm{m}$ 以内にあった。
 トライアルの店（\ref{sec:data-jp} 節）からはトライアル西友を除いてあるので、同じ店を二社に数えてはいない。
+
+二社の店を図~\ref{fig:stores-jp} に示す。
+トライアルは九州の北部に最も多く、そこから山陽、近畿、関東、東北、北海道へ散らばっている。
+西友は関東と中部に集まり、九州と北海道には店がない。
+二社の店が同じ地方に重なるのは、主に関東と中部である。
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{stores_jp.pdf}
+  \caption{公式サイトから取ったトライアル（2026年11月3日）と西友（2026年11月4日）の店舗。
+    灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
+    店のない沖縄は範囲の外にある。
+    \code{scripts/plot\_stores\_jp.py} で描いた。}
+  \label{fig:stores-jp}
+\end{figure}
 
 \subsubsection{人口}
 
