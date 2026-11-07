@@ -2,8 +2,9 @@
 //! Manager どうしは呼び合わない。
 //!
 //! 使用例は二つ：店舗の二点相関関数を測る（[`correlation`]）、店舗の数を公式の数と比べる（[`census`]）。
-//! [`toy`] は推定量の確かめに使う toy model。[`cost`] は模擬データの計算量を測る診断。
+//! [`calibration`] は χ² の上側確率を模擬データで校正する。[`toy`] は推定量の確かめに使う toy model。[`cost`] は模擬データの計算量を測る診断。
 
+pub mod calibration;
 pub mod census;
 pub mod correlation;
 pub mod cost;

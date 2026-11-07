@@ -1,5 +1,5 @@
 //! Engine：推定量と誤差。対の数から二点相関関数の推定量を求め、jackknife で誤差をつけ、
-//! 共分散を使って χ² と、ビンをまとめた値（GLS）を求める。
+//! 共分散を使って χ² と、ビンをまとめた値（単純な平均に jackknife の誤差、ADR 002）を求める。
 
 use crate::contract::{CrossPairCounts, PairCounts};
 
@@ -109,6 +109,7 @@ pub fn jackknife(k: usize, f: impl Fn(Option<usize>) -> Vec<f64>) -> Estimate {
 }
 
 /// 定数を共分散つきで当てはめた値（GLS の平均）と、その標準偏差。
+/// 共分散が粗いと重みが負になり、値がビンの外に出る。ビンをまとめるのには使わない（ADR 002）。
 /// m = 1ᵀC⁻¹x / 1ᵀC⁻¹1、σ_m² = 1 / 1ᵀC⁻¹1。`hartlap` は C⁻¹ にかける補正因子。
 pub fn gls_mean(x: &[f64], cov: &[Vec<f64>], hartlap: f64) -> Option<(f64, f64)> {
     let ones = vec![1.0; x.len()];
@@ -117,6 +118,23 @@ pub fn gls_mean(x: &[f64], cov: &[Vec<f64>], hartlap: f64) -> Option<(f64, f64)>
     let a: f64 = cinv_1.iter().sum::<f64>() * hartlap;
     let b: f64 = cinv_x.iter().sum::<f64>() * hartlap;
     Some((b / a, (1.0 / a).sqrt()))
+}
+
+/// 決まった重み w でビンを足し合わせた値 m = wᵀx と、その標準偏差 σ_m = √(wᵀCw)。
+/// 重みが前もって決まっていれば、これは jackknife の標本ごとに同じ和をとって求めた分散と一致する
+/// （和が線形なので）。C⁻¹ を使わないので Hartlap の補正は要らない。
+pub fn weighted_sum(x: &[f64], cov: &[Vec<f64>], w: &[f64]) -> (f64, f64) {
+    let m = w.iter().zip(x).map(|(a, b)| a * b).sum();
+    let var: f64 = (0..w.len())
+        .map(|i| (0..w.len()).map(|j| w[i] * cov[i][j] * w[j]).sum::<f64>())
+        .sum();
+    (m, var.sqrt())
+}
+
+/// ビンの単純な平均（重み 1/p）と、その標準偏差。ビンの間の相関は誤差にだけ入る。
+pub fn plain_mean(x: &[f64], cov: &[Vec<f64>]) -> (f64, f64) {
+    let w = vec![1.0 / x.len() as f64; x.len()];
+    weighted_sum(x, cov, &w)
 }
 
 /// C y = b を Cholesky 分解で解く。C が正定値でなければ None。
@@ -176,6 +194,13 @@ pub fn chi2(x: &[f64], cov: &[Vec<f64>]) -> Option<f64> {
         y[i] = (x[i] - (0..i).map(|m| l[i][m] * y[m]).sum::<f64>()) / l[i][i];
     }
     Some(y.iter().map(|v| v * v).sum())
+}
+
+/// 帰無仮説の模擬データと比べた上側確率：模擬データのうち χ² が `observed` 以上のものの数と、その割合。
+/// 模擬データが N 個なら、割合の刻みは 1/N で、0 個のときは「1/N 未満」としか言えない。
+pub fn mock_sf(observed: f64, mocks: &[f64]) -> (usize, f64) {
+    let k = mocks.iter().filter(|m| **m >= observed).count();
+    (k, k as f64 / mocks.len() as f64)
 }
 
 /// χ² 分布の上側確率 P(χ² > x)（自由度 dof は任意）。正則化された上側不完全ガンマ関数 Q(dof/2, x/2)。
@@ -396,6 +421,27 @@ mod tests {
         for (x, k) in [(1.0, 2), (10.4, 14), (72.9, 14), (3.0, 4)] {
             assert!((chi2_sf(x, k) - chi2_sf_even(x, k)).abs() < 1e-10);
         }
+    }
+
+    #[test]
+    fn plain_mean_stays_inside_the_bins_unlike_gls() {
+        // 強く相関した 2 ビン（ρ = 0.9）で、誤差の大きいビンが低い。GLS は負の重みでビンの外に出る
+        let x = [0.063, 0.105];
+        let (s1, s2, rho) = (0.129, 0.071, 0.9);
+        let cov = vec![vec![s1 * s1, rho * s1 * s2], vec![rho * s1 * s2, s2 * s2]];
+        let (g, _) = gls_mean(&x, &cov, 1.0).unwrap();
+        assert!(g > 0.105, "GLS {g}");
+        let (m, sm) = plain_mean(&x, &cov);
+        assert!((m - 0.084).abs() < 1e-12);
+        // 単純な平均の分散は (σ1² + σ2² + 2ρσ1σ2) / 4
+        let want = ((s1 * s1 + s2 * s2 + 2.0 * rho * s1 * s2) / 4.0).sqrt();
+        assert!((sm - want).abs() < 1e-12);
+    }
+
+    #[test]
+    fn mock_sf_counts_ties_as_exceeding() {
+        assert_eq!(mock_sf(2.0, &[1.0, 2.0, 3.0, 0.5]), (2, 0.5));
+        assert_eq!(mock_sf(9.0, &[1.0, 2.0]), (0, 0.0));
     }
 
     #[test]

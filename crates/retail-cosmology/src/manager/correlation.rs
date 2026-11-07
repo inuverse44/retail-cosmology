@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::access::{population, results, stores};
 use crate::contract::PopulationGrid;
-use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, gls_mean, jackknife};
+use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, jackknife, plain_mean};
 use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions, count_auto_by_region};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
 use crate::engine::selection_function::{
@@ -21,7 +21,7 @@ use crate::util::rng::SplitMix64;
 const CHI2_MIN_KM: f64 = 3.0;
 /// 比と dr/rr - 1 をまとめる距離の範囲 [km]（中点が 10–40 km の 4 ビン）
 const MID_RANGE_KM: (f64, f64) = (7.0, 55.0);
-/// 選択関数の人口の密度を表す、人口に比例して撒いた参照の点の数
+/// 選択関数の人口の密度を表す、人口に比例して撒いた参照の点の数（既定）
 pub const N_REF: usize = 50_000;
 
 /// 測り方の設定。
@@ -33,6 +33,8 @@ pub struct Params {
     /// 店のファイル（リポジトリの根からの相対パス）。カンマで区切って複数渡せる。空なら国ごとの既定
     pub stores: String,
     pub n_random: usize,
+    /// 選択関数の人口の密度を表す参照の点の数（既定は N_REF）
+    pub n_ref: usize,
     pub n_pop: usize,
     pub depth: u32,
     pub seed: u64,
@@ -42,6 +44,7 @@ pub struct Params {
     pub footprint: Vec<f64>,
     /// 帰無仮説の模擬データ：(R [km], 種)。実際の店から幅 R の選択関数を作り、それに従って店と同じ数の点を
     /// 独立に撒いて、店の代わりに使う（短い距離の相関がない店）。選択関数の方法の確かめに使う。
+    /// R = 0 なら選択関数を使わず、人口だけに比例して撒く（人口が基準の χ² の校正に使う、#9）。
     pub mock: Option<(f64, u64)>,
     /// 模擬データを撒く重みに、人口密度 ρ（格子の人口）の γ 乗も掛ける。γ はチェーンごとに、
     /// 店の位置の ln ρ の平均が実際の店と同じになるように決める（人の密集地への寄り方をそろえる）。
@@ -61,6 +64,7 @@ impl Params {
             country: "au".into(),
             stores: String::new(),
             n_random: 20_000,
+            n_ref: N_REF,
             n_pop: 2_000,
             depth: 6,
             seed: 1,
@@ -167,7 +171,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some((r_km, mock_seed)) = p.mock {
         let mut rng_m = SplitMix64::new(mock_seed ^ 0x4D0C_C0DE_0000_0000);
-        let refs_ll = sample(grid, N_REF, Weight::Population, &mut rng_m);
+        let refs_ll = sample(grid, p.n_ref, Weight::Population, &mut rng_m);
         let refs: Vec<Unit> = refs_ll.iter().map(Unit::from).collect();
         // 格子の人口（人口密度 [人/km²] にあたる）。格子の外か人口 0 なら None
         let rho = |q: &LatLon| -> Option<f64> {
@@ -180,14 +184,13 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
-            let sr = SmoothRatio::new(&units, &refs, r_km);
-            let tab = Tabulated::new(&sr, &grid.geometry);
-            let s_of = |q: &LatLon| {
-                if p.selection_grid {
-                    tab.eval(q)
-                } else {
-                    sr.eval(&Unit::from(q))
-                }
+            // R = 0 なら選択関数を使わず（S = 1）、人口だけに比例して撒く（人口が基準の帰無仮説、#9）
+            let sr = (r_km > 0.0).then(|| SmoothRatio::new(&units, &refs, r_km));
+            let tab = sr.as_ref().map(|sr| Tabulated::new(sr, &grid.geometry));
+            let s_of = |q: &LatLon| match (&sr, &tab) {
+                (Some(_), Some(tab)) if p.selection_grid => tab.eval(q),
+                (Some(sr), _) => sr.eval(&Unit::from(q)),
+                _ => 1.0,
             };
             let n = pts.len();
             let gamma = if p.mock_density {
@@ -339,7 +342,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     let mut fp_cats: Vec<(f64, usize, Catalogue)> = Vec::new();
     if !p.footprint.is_empty() {
         let mut rng_fp = SplitMix64::new(p.seed ^ 0xF007_9417_0000_0000);
-        let refs: Vec<Unit> = sample(grid, N_REF, Weight::Population, &mut rng_fp)
+        let refs: Vec<Unit> = sample(grid, p.n_ref, Weight::Population, &mut rng_fp)
             .iter()
             .map(Unit::from)
             .collect();
@@ -472,16 +475,14 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .map(|i| mid.iter().map(|j| e.cov[*i][*j]).collect())
             .collect();
-        let hartlap = (k as f64 - mid.len() as f64 - 2.0) / (k as f64 - 1.0);
-        let line = match gls_mean(&x, &cov, hartlap) {
-            Some((m, sd)) => format!(
-                "{label}：{:.1}–{:.1} km の {} ビンをまとめた値 {m:.3} ± {sd:.3}",
-                ed[mid[0]],
-                ed[mid[mid.len() - 1] + 1],
-                mid.len()
-            ),
-            None => format!("{label}：まとめられない"),
-        };
+        // ビンの単純な平均に、jackknife の誤差をつける（ADR 002）。GLS は粗い共分散に重みが左右されるので使わない
+        let (m, sd) = plain_mean(&x, &cov);
+        let line = format!(
+            "{label}：{:.1}–{:.1} km の {} ビンをまとめた値 {m:.3} ± {sd:.3}",
+            ed[mid[0]],
+            ed[mid[mid.len() - 1] + 1],
+            mid.len()
+        );
         eprintln!("{line}");
         line
     };

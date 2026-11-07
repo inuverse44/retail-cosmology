@@ -83,7 +83,8 @@ def main() -> None:
     ax.set_xlabel(r"$\hat\xi_{\rm LS}$ (8–20 km, R = 50 km)")
     ax.set_ylabel("count")
     ax.set_title("(c) TRIAL vs null mocks")
-    ax.legend(frameon=False, fontsize=8, loc="upper center")
+    ax.xaxis.set_major_locator(plt.MaxNLocator(5))
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
 
     fig.tight_layout()
     out = ROOT / "docs" / "figures" / "xi_footprint"
