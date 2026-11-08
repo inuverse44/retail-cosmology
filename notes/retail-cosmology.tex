@@ -205,6 +205,8 @@ jackknife の共分散から求めた $C^{-1}$ は大きめに偏るので、Har
 この模擬の店には、選択関数より短い距離の相関がない。
 これに実際と同じ手順（模擬の店から選択関数を作り直す）を当て、乱数の種を変えて繰り返す。
 人口だけを基準にした $\chi^2$ には、店と同じ数の点を人口だけに比例して撒いた模擬の店を使う。
+模擬データの店の数は実際と同じに固定するので、比べるばらつきは店の数を固定したときのばらつきである。
+店の数もポアソン分布で揺らしたときとは $DD$ の分散の式が違い、その導出は付録~\ref{app:var-dd} にまとめた。
 
 本稿で使う $\chi^2$ を、こうした模擬データ 100 個と比べて校正した（表~\ref{tab:chi2}）。
 模擬データと比べた上側確率は、模擬データのうち $\chi^2$ が実際の値以上になったものの割合である。
@@ -778,5 +780,131 @@ jackknife の誤差が正しく出るかは、toy model で確かめた。
 単位正方形に相関のない点を撒き直して 60 回計算し、$\hat\xi_{\mathrm{LS}}$ の実際のばらつきと、jackknife で見積もった標準偏差を比べた。
 jackknife の値は実際のばらつきより $7$--$20\%$ 大きかった。
 toy model では、jackknife は誤差をやや大きめに見積もったことになる。
+
+\section{$DD$ の分散}
+\label{app:var-dd}
+
+この付録ではデータ同士の組の数 $DD$ の分散を、店の数を固定した場合と、店の数もポアソン分布で揺らした場合とで導く。
+店の数を固定すると、分散のうち店の数の 3 乗に比例する項は、もう一点がそのビンの距離に入る確率が点の位置によって違うことだけから生じる。
+ポアソン分布で揺らした場合の 3 乗の項には、これに店の数の揺らぎによる分が足される。
+本稿の模擬データは店と同じ数の点を撒くので（\ref{sec:errors} 節）、前者がそのばらつきに当たる。
+
+\subsection{設定}
+
+$n$ 個の点が領域の上の確率密度 $p(\bm{x})$（$\int p\, d^2x = 1$）に従って互いに独立に撒かれているとする。
+人口に比例するランダムカタログなら $p$ は人口の密度に比例し、選択関数を入れた模擬データなら $S_R\, \rho^{\gamma}$ に比例する。
+ある距離のビンについて、二点 $\bm{x}, \bm{y}$ の距離がそのビンに入れば $1$、入らなければ $0$ をとる関数を $\theta(\bm{x}, \bm{y})$ と書く。
+点 $i$ と点 $j$ について $\theta_{ij} = \theta(\bm{x}_i, \bm{x}_j)$ とすると、
+\begin{equation}
+  DD = \sum_{i<j} \theta_{ij}
+  \label{eq:dd-sum}
+\end{equation}
+である。
+
+点 $\bm{x}$ に置いた点から見て、もう一点がそのビンの距離に入る確率を
+\begin{equation}
+  f(\bm{x}) = \int \theta(\bm{x}, \bm{y})\, p(\bm{y})\, d^2y
+  \label{eq:f-def}
+\end{equation}
+と書く。
+$f$ を使って三つの量を定義する。記号は Landy と Szalay \cite{LandySzalay1993} にならう。
+\begin{align}
+  G_p &= \mathbb{E}[\theta_{12}] = \int p\, f\, d^2x, \notag \\
+  G_t &= \mathbb{E}[\theta_{12}\, \theta_{13}] = \int p\, f^2\, d^2x, \label{eq:g-def} \\
+  G_q &= \mathbb{E}[\theta_{12}\, \theta_{34}] = G_p^2. \notag
+\end{align}
+$G_p$ は一つの組がビンに入る確率、$G_t$ は一点を共有する二つの組がともにビンに入る確率、$G_q$ は点を共有しない二つの組がともにビンに入る確率である。
+$G_t$ では共有する点 $\bm{x}_1$ を固定すると、残りの二点は独立にそれぞれ確率 $f(\bm{x}_1)$ でビンに入る。
+$G_q$ では二つの組が独立なので、$G_p$ の 2 乗になる\footnote{Landy と Szalay は領域を $K$ 個のセルに分け、点が同じセルに重ならないように数えたので、$G_q$ と $G_p^2$ は $1/K$ の程度だけ違う。ここでは $K \to \infty$ の連続の場合を考える。}。
+
+\subsection{店の数を固定した場合}
+
+式~\eqref{eq:dd-sum} の期待値は、組が $n(n-1)/2$ 個あるので
+\begin{equation}
+  \mathbb{E}[DD \mid n] = \frac{n(n-1)}{2}\, G_p
+  \label{eq:dd-mean}
+\end{equation}
+である。
+
+2 乗の期待値は二つの組 $\{i,j\}$ と $\{k,l\}$ のすべての順序つきの組み合わせについての和になる。
+二つの組の関係は三通りに分かれる。
+同じ組である場合は $n(n-1)/2$ 通りあり、それぞれの期待値は $\mathbb{E}[\theta_{12}^2] = G_p$ である。
+一点を共有する場合は、共有する点の選び方が $n$ 通り、残りの二点の順序つきの選び方が $(n-1)(n-2)$ 通りで、合わせて $n(n-1)(n-2)$ 通りある。
+点を共有しない場合は、一つ目の組の選び方が $n(n-1)/2$ 通り、二つ目の組の選び方が $(n-2)(n-3)/2$ 通りある。
+したがって
+\begin{equation}
+  \mathbb{E}[DD^2 \mid n]
+  = \frac{n(n-1)(n-2)(n-3)}{4}\, G_q + n(n-1)(n-2)\, G_t + \frac{n(n-1)}{2}\, G_p
+  \label{eq:dd-second}
+\end{equation}
+である。
+三通りの数を足すと組み合わせの総数になる。
+\begin{equation}
+  \left[\frac{n(n-1)}{2}\right]^2 = \frac{n(n-1)(n-2)(n-3)}{4} + n(n-1)(n-2) + \frac{n(n-1)}{2}.
+  \label{eq:count-identity}
+\end{equation}
+式~\eqref{eq:dd-mean} の 2 乗をこの恒等式で三つに分けて式~\eqref{eq:dd-second} から引き、$G_q = G_p^2$ を使うと、
+\begin{equation}
+  \mathrm{Var}[DD \mid n] = n(n-1)(n-2)\, \bigl(G_t - G_p^2\bigr) + \frac{n(n-1)}{2}\, G_p\bigl(1 - G_p\bigr)
+  \label{eq:var-fixed}
+\end{equation}
+を得る。
+点を共有しない二つの組は独立なので、その共分散は $0$ で、分散に効かない。
+
+$n^3$ の項の係数は、式~\eqref{eq:g-def} から
+\begin{equation}
+  G_t - G_p^2 = \int p\, \bigl(f - G_p\bigr)^2\, d^2x
+  \label{eq:gt-var}
+\end{equation}
+と書ける。
+これは $p$ に従って選んだ点で見た $f$ の分散で、負にならない。
+どの点から見ても $f$ が同じなら $0$ になり、分散には $n^2$ の項だけが残る。
+$f$ が点によって違うのは、境界の近くではビンの距離の輪の一部が領域の外にはみ出すからと、$p$ が場所によって違うからである。
+ビンの距離 $r$ が $p$ の変わる尺度より短く、点が境界から $r$ 以上離れていれば、輪の面積を $A$ として $f(\bm{x}) \simeq A\, p(\bm{x})$ である。
+このとき式~\eqref{eq:gt-var} は $A^2$ と、点の位置で見た $p$ の分散の積になる。
+人口に比例して撒く場合は、都市とそれ以外で $p$ が大きく違うので、この項は小さいとは限らない。
+
+\subsection{店の数もポアソン分布で揺らした場合}
+
+店の数 $n$ が平均 $N$ のポアソン分布に従うとする。
+ポアソン分布の階乗モーメントは
+\begin{equation}
+  \mathbb{E}\bigl[n(n-1)\cdots(n-k+1)\bigr]
+  = \sum_{n=k}^{\infty} \frac{n!}{(n-k)!}\, \frac{N^n e^{-N}}{n!}
+  = N^k
+  \label{eq:poisson-factorial}
+\end{equation}
+である。
+全分散の公式
+\begin{equation}
+  \mathrm{Var}[DD] = \mathbb{E}\bigl[\mathrm{Var}[DD \mid n]\bigr] + \mathrm{Var}\bigl[\mathbb{E}[DD \mid n]\bigr]
+  \label{eq:total-var}
+\end{equation}
+の右辺を順に求める。
+第 1 項は、式~\eqref{eq:var-fixed} に式~\eqref{eq:poisson-factorial} を当てて
+\begin{equation}
+  \mathbb{E}\bigl[\mathrm{Var}[DD \mid n]\bigr] = N^3 \bigl(G_t - G_p^2\bigr) + \frac{N^2}{2}\, G_p\bigl(1 - G_p\bigr)
+\end{equation}
+である。
+第 2 項は、店の数の揺らぎによって式~\eqref{eq:dd-mean} が揺らぐ分である。
+式~\eqref{eq:count-identity} の両辺に $4$ をかけると $[n(n-1)]^2$ が階乗の積の和に分かれるので、式~\eqref{eq:poisson-factorial} から $\mathbb{E}\{[n(n-1)]^2\} = N^4 + 4N^3 + 2N^2$ となる。
+よって
+\begin{equation}
+  \mathrm{Var}\bigl[\mathbb{E}[DD \mid n]\bigr]
+  = \frac{G_p^2}{4}\, \Bigl(\mathbb{E}\bigl\{[n(n-1)]^2\bigr\} - N^4\Bigr)
+  = \Bigl(N^3 + \frac{N^2}{2}\Bigr)\, G_p^2
+\end{equation}
+である。
+二つを足すと $G_p^2$ の項が打ち消し合い、
+\begin{equation}
+  \mathrm{Var}[DD] = N^3\, G_t + \frac{N^2}{2}\, G_p
+  \label{eq:var-poisson}
+\end{equation}
+を得る。
+
+式~\eqref{eq:var-fixed} と式~\eqref{eq:var-poisson} の違いは、$G_p^2$ の項があるかどうかである。
+ポアソン分布で揺らした場合の $N^3 G_t$ には、$f$ が一様でも $N^3 G_p^2$ が残る。
+これは店の数の揺らぎが $DD$ の期待値を揺らす分で、店の数を固定すれば消える。
+式~\eqref{eq:var-poisson} は店の数の揺らぎも含めた全分散で、条件つき分散をポアソン分布で平均した $\mathbb{E}[\mathrm{Var}[DD \mid n]]$ より $(N^3 + N^2/2)\, G_p^2$ だけ大きい。
 
 \end{document}
