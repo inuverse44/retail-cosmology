@@ -907,4 +907,16 @@ $f$ が点によって違うのは、境界の近くではビンの距離の輪�
 これは店の数の揺らぎが $DD$ の期待値を揺らす分で、店の数を固定すれば消える。
 式~\eqref{eq:var-poisson} は店の数の揺らぎも含めた全分散で、条件つき分散をポアソン分布で平均した $\mathbb{E}[\mathrm{Var}[DD \mid n]]$ より $(N^3 + N^2/2)\, G_p^2$ だけ大きい。
 
+\subsection{toy model での検算}
+
+二つの式を単位正方形に一様に撒いた点で確かめた。
+ビンは $0.05 \le r < 0.10$ とし、$G_p$ と $G_t$ は式~\eqref{eq:f-def} の $f$ を角度について積分して求めた。
+$G_p = 2.1276 \times 10^{-2}$ は単位正方形の二点の距離の累積分布 $\pi r^2 - 8r^3/3 + r^4/2$ から求めた値と一致する。
+$G_t - G_p^2 = 1.52 \times 10^{-5}$ は、$f$ が正方形の辺の近くで小さくなることから生じる。
+点の数を $n = 200$ に固定して 4000 回撒き直すと、$DD$ の標本分散は $541 \pm 12$ で、式~\eqref{eq:var-fixed} の $534$ と合う。
+境界の項を落とした式（$G_t = G_p^2$）では $414$ で、模擬データから標準誤差の 10 倍離れる。
+点の数を平均 $200$ のポアソン分布から選んで 4000 回撒き直すと、標本分散は $4231 \pm 95$ で、式~\eqref{eq:var-poisson} の $4168$ と合う。
+店の数を固定した模擬データに式~\eqref{eq:var-poisson} を当てると、分散を 8 倍近く大きく見積もることになる。
+計算は \code{cargo test --lib variance -- --nocapture} で行った（\href{\repourl/blob/main/crates/retail-cosmology/src/engine/variance.rs}{\nolinkurl{crates/retail-cosmology/src/engine/variance.rs}}）。
+
 \end{document}
