@@ -1,6 +1,6 @@
 ---
 id: "004"
-status: Proposed
+status: Accepted
 date: "2026-11-08"
 ---
 # ADR 004: ノートの図の体裁を一か所で決め、本文と同じ処理系で組む
