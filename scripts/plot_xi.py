@@ -6,15 +6,12 @@ uv run scripts/plot_xi.py 2026-11-01
 
 import csv
 import sys
-from pathlib import Path
 
-import matplotlib.pyplot as plt
+import figstyle as fs
 import numpy as np
+from matplotlib.lines import Line2D
 
-ROOT = Path(__file__).resolve().parents[1]
-COLORS = {"Coles": "#d62728", "Woolworths": "#2ca02c", "population": "0.3"}
-# 同じビンの点が重ならないよう、横に少しずらす
-SHIFT = {"Coles": 0.97, "Woolworths": 1.03, "population": 1.0}
+ROOT = fs.ROOT
 
 
 def load(date: str) -> dict:
@@ -32,49 +29,51 @@ def load(date: str) -> dict:
 def main() -> None:
     date = sys.argv[1]
     d = load(date)
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+    fig, axes = fs.figure(1, 3, height=2.3)
 
     ax = axes[0]
     for s in ("population", "Coles", "Woolworths"):
         r, v, e = d[("ls", s, "land")]
         ok = v > 0
-        ax.errorbar(r[ok] * SHIFT[s], v[ok], yerr=e[ok], color=COLORS[s], marker="o", ms=3, lw=1, capsize=2, label=s)
+        fs.errorbar(ax, r[ok] * fs.SHIFT[s], v[ok], e[ok], s)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel(r"$r$ [km]")
-    ax.set_ylabel(r"$\hat\xi_{\rm LS}(r)$")
-    ax.set_title("(a) random: uniform on land")
-    ax.legend(frameon=False, fontsize=8)
+    ax.set_ylabel(r"$\hat\xi_{\mathrm{LS}}$")
+    fs.panel(ax, "a", "uniform on land")
 
     ax = axes[1]
-    ax.axhline(1, color="0.6", lw=0.8)
+    fs.ref_line(ax, 1)
     for s in ("Coles", "Woolworths"):
         r, v, e = d[("ratio_to_population", s, "land")]
         ok = r < 300  # これより長い距離は人口の ξ が 0 に近く、比が定まらない
-        ax.errorbar(r[ok] * SHIFT[s], v[ok], yerr=e[ok], color=COLORS[s], marker="o", ms=3, lw=1, capsize=2, label=s)
+        fs.errorbar(ax, r[ok] * fs.SHIFT[s], v[ok], e[ok], s, label="_")
     ax.set_xscale("log")
     ax.set_xlabel(r"$r$ [km]")
-    ax.set_ylabel(r"$\hat\xi_{\rm store} / \hat\xi_{\rm population}$")
-    ax.set_title("(b) stores relative to population")
-    ax.legend(frameon=False, fontsize=8)
+    ax.set_ylabel(r"$\hat\xi_{\mathrm{store}} / \hat\xi_{\mathrm{population}}$")
+    fs.panel(ax, "b", "stores / population")
 
     ax = axes[2]
-    ax.axhline(0, color="0.6", lw=0.8)
+    fs.ref_line(ax, 0)
     for s in ("Coles", "Woolworths"):
         r, v, e = d[("ls", s, "population")]
-        ax.errorbar(r * SHIFT[s], v, yerr=e, color=COLORS[s], marker="o", ms=3, lw=1, capsize=2, label=f"{s}, Landy–Szalay")
+        fs.errorbar(ax, r * fs.SHIFT[s], v, e, s, label="_")
         r, v, e = d[("dr_over_rr_minus_1", s, "population")]
-        ax.plot(r * SHIFT[s], v, color=COLORS[s], ls=":", lw=1.2, label=f"{s}, $dr/rr-1$")
+        ax.plot(r * fs.SHIFT[s], v, color=fs.COLOR[s], ls=":", lw=1.0)
     ax.set_xscale("log")
     ax.set_xlabel(r"$r$ [km]")
-    ax.set_ylabel(r"$\hat\xi(r)$")
-    ax.set_title("(c) random: weighted by population")
-    ax.legend(frameon=False, fontsize=7)
+    ax.set_ylabel(r"$\hat\xi$")
+    fs.panel(ax, "c", "weighted by population")
+    ax.legend(
+        handles=[
+            Line2D([], [], color="0.2", marker="o", label=r"$\hat\xi_{\mathrm{LS}}$"),
+            Line2D([], [], color="0.2", ls=":", label=r"$dr/rr - 1$"),
+        ],
+        loc="lower right",
+    )
 
-    fig.tight_layout()
-    out = ROOT / "docs" / "figures" / "xi_stores"
-    for ext in ("pdf", "png"):
-        fig.savefig(out.with_suffix(f".{ext}"), dpi=200)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="outside upper center", ncol=3)
+    fs.save(fig, "xi_stores")
 
 
 if __name__ == "__main__":

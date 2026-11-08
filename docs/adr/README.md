@@ -9,6 +9,7 @@
 | [001](001-layering-by-volatility.md) | 変わりやすさで層に分ける（The Method） | Accepted |
 | [002](002-combine-bins-with-plain-mean.md) | ビンをまとめた値は、単純な平均に jackknife の誤差をつける | Accepted |
 | [003](003-lean-proofs-in-repo.md) | ノートの式の導出を Lean で検証し、証明はこのリポジトリの lean/ に置く | Accepted |
+| [004](004-figure-style.md) | ノートの図の体裁を一か所で決め、本文と同じ処理系で組む | Accepted |
 
 ## 書き方
 

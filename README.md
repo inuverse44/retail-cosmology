@@ -35,6 +35,7 @@ Rust のコードは、変わりやすさごとに層を分けている（[ADR 0
 層の間で受け渡すデータの形（データ契約）は `src/contract.rs` に置く。
 
 `scripts/` の描画とデータの取得は、Rust の層の外にある。描画のスクリプトは Rust が書いた結果を読むだけで、計算はしない。
+図の体裁（大きさ、色、フォント）は `scripts/figstyle.py` の一か所で決め、文字と数式は本文と同じ LuaLaTeX で組む（[ADR 004](docs/adr/004-figure-style.md)）。描画には LuaLaTeX（`luatexja` と `underscore.sty`）が要る。
 `lean/` も Rust の層の外にある。ノートの付録 B の式の形を Lean で検証し、数値は Rust のテストで確かめる（[ADR 003](docs/adr/003-lean-proofs-in-repo.md)）。
 
 ## 動かす

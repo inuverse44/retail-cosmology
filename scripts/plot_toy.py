@@ -4,37 +4,30 @@ cargo run --release --bin toy > data/toy/poisson.csv
 uv run scripts/plot_toy.py
 """
 
-from pathlib import Path
-
-import matplotlib.pyplot as plt
+import figstyle as fs
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "data" / "toy" / "poisson.csv"
-OUT = ROOT / "docs" / "figures" / "toy_poisson"
+SRC = fs.ROOT / "data" / "toy" / "poisson.csv"
 
 LABELS = {
     "natural": "natural",
-    "davis_peebles": "Davis–Peebles",
+    "davis_peebles": "Davis--Peebles",
     "hamilton": "Hamilton",
-    "landy_szalay": "Landy–Szalay",
+    "landy_szalay": "Landy--Szalay",
 }
 
 
 def main() -> None:
     d = np.genfromtxt(SRC, delimiter=",", names=True)
-    fig, ax = plt.subplots(figsize=(5.5, 3.6))
-    ax.axhline(0.0, color="0.6", lw=0.8)
+    fig, ax = fs.figure(width=0.8, height=2.5)
+    fs.ref_line(ax, 0)
     for key, label in LABELS.items():
-        ax.plot(d["r"], d[key], marker="o", ms=3, lw=1, label=label)
+        ax.plot(d["r"], d[key], lw=0.8, label=label, **fs.ESTIMATOR[key])
     ax.set_xlabel(r"$r$")
     ax.set_ylabel(r"$\hat\xi(r)$")
-    ax.set_title("toy model: Poisson points in a unit square")
-    ax.legend(frameon=False, fontsize=8)
-    fig.tight_layout()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    for ext in ("pdf", "png"):
-        fig.savefig(OUT.with_suffix(f".{ext}"), dpi=200)
+    ax.legend(ncol=4, loc="upper center", columnspacing=1.0)
+    ax.set_ylim(top=ax.get_ylim()[1] * 1.4)  # 凡例の場所を空ける
+    fs.save(fig, "toy_poisson")
 
 
 if __name__ == "__main__":

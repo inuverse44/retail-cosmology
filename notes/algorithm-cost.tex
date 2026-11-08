@@ -73,11 +73,11 @@
 選択関数を求める工程（1 と 3）が、64.3 秒のうち 53.4 秒を占める。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{cost_breakdown.pdf}
+  \includegraphics{cost_breakdown.pdf}
   \caption{模擬データ 1 個（$R = 50\,\mathrm{km}$、人の密集地への寄り方もそろえる、種 1）の工程ごとの時間。
     上は今の方法、下は \ref{sec:implemented} 節で選択関数を 10 km 格子の表にし、基準の RR を一度だけ数えるようにしたもの。
     \code{xi} の標準エラー出力の時刻（\code{data/cost/mock\_log\_R50.txt}、\code{mock\_log\_R50\_grid.txt}）の差から求めた。
-    緑は選択関数を求める工程、茶は対を数える工程。
+    紫は選択関数を求める工程、黄は対を数える工程。
     \code{scripts/plot\_cost.py} で描いた。}
   \label{fig:breakdown}
 \end{figure}
@@ -147,10 +147,10 @@ $N_{\mathrm{p}} + N_{\mathrm{s}} = 50{,}375$ なので、$\langle \phi_R \rangle
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{cost_selection.pdf}
-  \caption{(a) $S_R(\bm{x})$ を 1 点（星印）で求める計算。灰色の点は調べない。
-    青の点は $\bm{x}$ のまわりの $3 \times 3$ 個の格子（一辺 $3\sigma_R$）にあるので調べるが、円の外なので足さない。
-    緑の点は円の中にあり、$\bm{x}$ に近いほど重く（濃く）足す。
+  \includegraphics{cost_selection.pdf}
+  \caption{(a) $S_R(\bm{x})$ を 1 点（星印）で求める計算。薄い灰色の点は調べない。
+    濃い灰色の点は $\bm{x}$ のまわりの $3 \times 3$ 個の格子（一辺 $3\sigma_R$）にあるので調べるが、円の外なので足さない。
+    紫の点は円の中にあり、$\bm{x}$ に近いほど重く（濃く）足す。
     (b) 棄却法。人口に比例して候補を投げ（帯の濃さが人口）、$S_R / S_{\max}$ の確率で残す。
     残すか捨てるかを決める前に、候補ごとに $S_R$ を 1 回求める。
     どちらも模式図で、点の数は実際とは違う。}
@@ -224,7 +224,7 @@ jackknife のために、組の数は領域の組 $(k, l)$ ごとに数える。
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{cost_pairs_grid.pdf}
+  \includegraphics{cost_pairs_grid.pdf}
   \caption{(a) 対の数え上げ。すべての組の距離を計算し、ビンに入れる。
     (b) 選択関数を 1 km 格子ごとに求める場合。日本で人が住む 1 km 格子は $176{,}964$ 個。
     (c) 10 km 格子ごとに求める場合。人が住む 10 km 格子（2 次メッシュ）は $4{,}300$ 個。
