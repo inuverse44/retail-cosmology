@@ -42,6 +42,7 @@ $8$--$20\,\mathrm{km}$ の 2 ビンを平均した相関の値は $0.080$ で、
 二社の相互相関が負になるのはトライアルの実際の店の置き方で説明でき、二社が互いを避けて店を置いていると考える必要はない。
 店が数百しかないときは、jackknife の共分散から求めた $\chi^2$ の上側確率が小さく出すぎる。
 そのため、有意かどうかは模擬データと比べて判断した。
+付録では、店の数を固定したときのデータ同士の組の数の分散を導いて Lean で検証し、人口の濃淡が分散を大きくするが、Landy--Szalay 推定量ではその分がほぼ打ち消されることを示した。
 \end{abstract}
 
 \tableofcontents
@@ -69,7 +70,9 @@ $8$--$20\,\mathrm{km}$ の 2 ビンを平均した相関の値は $0.080$ で、
 \ref{sec:data} 節ではオーストラリアと日本の店舗と人口のデータを述べる。
 \ref{sec:results} 節ではチェーンごとの結果を示す。
 \ref{sec:conclusion} 節では結論と限界を述べる。
-付録~\ref{app:toy} では相関のない点に推定量を当てた toy model を示す。
+\ref{app:toy} では相関のない点に推定量を当てた toy model を示す。
+\ref{app:var-dd} ではデータ同士の組の数 $DD$ の分散を、店の数を固定した場合とポアソン分布で揺らした場合とで導き、Lean で検証する。
+\ref{app:identities} では四つの推定量の関係を式で示す。
 
 \section{枠組み}
 \label{sec:framework}
@@ -111,7 +114,7 @@ $\xi(r) < 0$ なら、その距離の組は少なく、店舗は互いに離れ�
 $\hat\xi_{\mathrm{DP}}$ は Davis と Peebles \cite{DavisPeebles1983}、$\hat\xi_{\mathrm{H}}$ は Hamilton \cite{Hamilton1993}、
 $\hat\xi_{\mathrm{LS}}$ は Landy と Szalay \cite{LandySzalay1993} による。
 実装は \href{\repourl/blob/main/crates/retail-cosmology/src/lib.rs}{\nolinkurl{crates/retail-cosmology/src/lib.rs}} にある。
-toy model で、相関のない点に当てると $0$ のまわりに散ることを確かめた（付録~\ref{app:toy}）。
+toy model で、相関のない点に当てると $0$ のまわりに散ることを確かめた（\ref{app:toy}）。
 
 二つのチェーンの店がどれだけ近くに並ぶかは、相互相関関数 $\xi_{\times}(r)$ で表す。
 式~\eqref{eq:xi-def} で、一点目を一方のチェーンの店、二点目をもう一方のチェーンの店に限ったものである。
@@ -185,7 +188,7 @@ $S_{\max}$ は最初に撒いた 40,000 個の候補での最大値で、これ�
 人口が大都市に偏っているので（オーストラリアならシドニーとメルボルン）、領域は面積ではなく人口でそろえた。
 人口に比例するランダムの点を、点の数が等しくなるように縦横交互に二等分していった。
 領域 $k$ を除いた対の数は領域の組ごとに数えておいた対の数から、領域 $k$ を含む組を引いて求めた（数え直した値と一致することをテストで確かめた）。
-jackknife の標準偏差が実際のばらつきとどれだけ合うかは、toy model で確かめた（付録~\ref{app:toy}）。
+jackknife の標準偏差が実際のばらつきとどれだけ合うかは、toy model で確かめた（\ref{app:toy}）。
 
 $\hat\xi_{\mathrm{LS}}$ が全体として $0$ と合うかは、$3\,\mathrm{km}$ 以上の 14 ビンで $\chi^2 = \bm{x}^{\mathsf T} C^{-1} \bm{x}$ を求めて調べた。
 jackknife の共分散から求めた $C^{-1}$ は大きめに偏るので、Hartlap の因子 $(K-p-2)/(K-1)$ をかけて直した \cite{Hartlap2007}。
@@ -206,7 +209,7 @@ jackknife の共分散から求めた $C^{-1}$ は大きめに偏るので、Har
 これに実際と同じ手順（模擬の店から選択関数を作り直す）を当て、乱数の種を変えて繰り返す。
 人口だけを基準にした $\chi^2$ には、店と同じ数の点を人口だけに比例して撒いた模擬の店を使う。
 模擬データの店の数は実際と同じに固定するので、比べるばらつきは店の数を固定したときのばらつきである。
-店の数もポアソン分布で揺らしたときとは $DD$ の分散の式が違い、その導出は付録~\ref{app:var-dd} にまとめた。
+店の数もポアソン分布で揺らしたときとは $DD$ の分散の式が違い、その導出は\ref{app:var-dd} にまとめた。
 
 本稿で使う $\chi^2$ を、こうした模擬データ 100 個と比べて校正した（表~\ref{tab:chi2}）。
 模擬データと比べた上側確率は、模擬データのうち $\chi^2$ が実際の値以上になったものの割合である。
@@ -221,6 +224,7 @@ jackknife の共分散から求めた $C^{-1}$ は大きめに偏るので、Har
     \code{cargo run --release --bin chi2\_calibrate -- 2026-11-01 2026-11-03} が書いた表。}
   \label{tab:chi2}
   \small
+  \setlength{\tabcolsep}{5pt}
   \input{../docs/tables/chi2_calibrated.tex}
 \end{table}
 校正のずれは一方向ではない。
@@ -468,7 +472,7 @@ $3\,\mathrm{km}$ 以上の 14 ビンで、Coles は $\chi^2 = 10.4$、Woolworths
   \hat\xi_{\mathrm{N}} - \hat\xi_{\mathrm{LS}} = 2\left(\frac{dr}{rr} - 1\right)
   \label{eq:n-minus-ls}
 \end{equation}
-で、式~\eqref{eq:estimators} から直接出る。
+で、式~\eqref{eq:estimators} から直接出る（ほかの推定量との関係は\ref{app:identities}）。
 $dr/rr - 1 < 0$ は、店とランダムの組が、ランダムどうしの組より少ないことを表す。
 つまり、人が密集している所ほど、人口あたりの店が少ない。
 同じ 4 ビンをまとめると、Woolworths は $-0.061 \pm 0.025$（$2.4\sigma$）、Coles は $-0.061 \pm 0.040$（$1.5\sigma$）だった。
@@ -748,6 +752,8 @@ OSM から取った店の限界は \ref{sec:osm-limits} 節にまとめた。
 三つ目は店の数が銀河よりずっと少ないことである。
 数百の点では jackknife の共分散が粗く、$\chi^2$ 分布から求めた上側確率は信用できない。
 本稿の模擬データでは、上側確率は場合によって大きくも小さくも出すぎた（表~\ref{tab:chi2}）。
+また、店の数を固定しても、人口の濃淡があると $DD$ の分散には店の数の 3 乗に比例する項が残り、オーストラリアでは $500\,\mathrm{km}$ より短い距離で $DD$ の相対標準偏差が $5$--$11\%$ になる（\ref{app:var-dd}）。
+Landy--Szalay 推定量は $dr$ を引くことでこの項のほとんどを打ち消すので、$30$--$500\,\mathrm{km}$ では natural の推定量より誤差が小さい（図~\ref{fig:var-au}）。
 有意かどうかは帰無仮説の模擬データと比べて判断する必要がある。
 
 \section*{謝辞}
@@ -781,7 +787,7 @@ jackknife の誤差が正しく出るかは、toy model で確かめた。
 jackknife の値は実際のばらつきより $7$--$20\%$ 大きかった。
 toy model では、jackknife は誤差をやや大きめに見積もったことになる。
 
-\section{$DD$ の分散}
+\section{\texorpdfstring{$DD$}{DD} の分散}
 \label{app:var-dd}
 
 この付録ではデータ同士の組の数 $DD$ の分散を、店の数を固定した場合と、店の数もポアソン分布で揺らした場合とで導く。
@@ -989,5 +995,42 @@ $\hat\xi_{\mathrm{N}} = dd/rr - 1$ の誤差は式~\eqref{eq:var-fixed} から�
     \code{scripts/plot\_var\_dd.py} で描いた。}
   \label{fig:var-au}
 \end{figure}
+
+\section{推定量の恒等式}
+\label{app:identities}
+
+式~\eqref{eq:estimators} の四つの推定量は、natural の値 $\hat\xi_{\mathrm{N}}$ と
+\begin{equation}
+  \epsilon = \frac{dr}{rr} - 1
+  \label{eq:eps-def}
+\end{equation}
+の二つで書ける。
+$\epsilon$ はデータの点がランダムカタログの点の多い所にどれだけ寄っているかを表し、本文で密集地への寄り方を表すのに使った量である。
+式~\eqref{eq:estimators} に $dd = rr(1 + \hat\xi_{\mathrm{N}})$ と $dr = rr(1 + \epsilon)$ を入れると、
+\begin{align}
+  \hat\xi_{\mathrm{LS}} &= \hat\xi_{\mathrm{N}} - 2\epsilon, \label{eq:id-ls} \\
+  \hat\xi_{\mathrm{DP}} &= \frac{1 + \hat\xi_{\mathrm{N}}}{1 + \epsilon} - 1, \label{eq:id-dp} \\
+  \hat\xi_{\mathrm{H}}  &= \frac{1 + \hat\xi_{\mathrm{N}}}{(1 + \epsilon)^2} - 1 \label{eq:id-h}
+\end{align}
+を得る。
+式~\eqref{eq:id-ls} は本文の式~\eqref{eq:n-minus-ls} と同じものである。
+どれも近似を使っていない。
+
+$\epsilon$ が小さいとして $\hat\xi_{\mathrm{LS}}$ との差を $\epsilon$ で展開すると、
+\begin{align}
+  \hat\xi_{\mathrm{N}}  - \hat\xi_{\mathrm{LS}} &= 2\epsilon, \notag \\
+  \hat\xi_{\mathrm{DP}} - \hat\xi_{\mathrm{LS}} &= \bigl(1 - \hat\xi_{\mathrm{N}}\bigr)\, \epsilon + O(\epsilon^2), \label{eq:id-expand} \\
+  \hat\xi_{\mathrm{H}}  - \hat\xi_{\mathrm{LS}} &= -2\hat\xi_{\mathrm{N}}\, \epsilon + 3\bigl(1 + \hat\xi_{\mathrm{N}}\bigr)\, \epsilon^2 + O(\epsilon^3) \notag
+\end{align}
+となる。
+相関のない点では $\hat\xi_{\mathrm{N}}$ も $\epsilon$ も $0$ のまわりで揺れるので、Hamilton と Landy--Szalay の差は揺れの 2 乗の大きさしかない。
+natural と Davis--Peebles は $\epsilon$ の 1 乗の大きさだけ Landy--Szalay から離れ、その差は natural の方が約 2 倍大きい。
+toy model で Hamilton と Landy--Szalay がほぼ重なり、natural がほかの三つと違う揺れ方をしたのはこのためと考えられる（図~\ref{fig:toy}）。
+
+$\epsilon$ の揺れは、データの点がたまたまランダムカタログの点の多い所に落ちたかどうかで生じる。
+そのとき $dd$ も同じ向きに揺れるので、$\hat\xi_{\mathrm{N}}$ と $2\epsilon$ の揺れの大部分は共通である。
+式~\eqref{eq:id-ls} で $2\epsilon$ を引く Landy--Szalay は、この共通の揺れを打ち消す。
+\ref{app:var-dd} の $n^3$ の項がこの揺れに当たり、オーストラリアの $30$--$500\,\mathrm{km}$ で $\hat\xi_{\mathrm{LS}}$ の誤差が $\hat\xi_{\mathrm{N}}$ より小さかったのはこのためである（図~\ref{fig:var-au}）。
+式~\eqref{eq:id-ls}--\eqref{eq:id-h} は実装の関数で成り立つことをテストで確かめた（\code{cargo test --lib estimator\_identities}、\href{\repourl/blob/main/crates/retail-cosmology/src/engine/estimator.rs}{\nolinkurl{crates/retail-cosmology/src/engine/estimator.rs}}）。
 
 \end{document}

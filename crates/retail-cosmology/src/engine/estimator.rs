@@ -349,6 +349,32 @@ mod tests {
     }
 
     #[test]
+    fn estimator_identities_hold_on_toy_counts() {
+        // ノートの付録「推定量の恒等式」：ε = dr/rr - 1 と natural で他の三つが書ける。
+        let mut rng = SplitMix64::new(3);
+        let data = uniform_square(500, &mut rng);
+        let randoms = uniform_square(1000, &mut rng);
+        let bins = Bins::linear(0.02, 0.2, 9);
+        let c = PairCounts::compute(&data, &randoms, &bins, euclid);
+        let (n, dp, h, ls, eps) = (
+            c.natural(),
+            c.davis_peebles(),
+            c.hamilton(),
+            c.landy_szalay(),
+            c.dr_over_rr_minus_1(),
+        );
+        for k in 0..n.len() {
+            let tol = 1e-12;
+            assert!((n[k] - ls[k] - 2.0 * eps[k]).abs() < tol, "bin {k}: N - LS");
+            assert!((dp[k] - ((1.0 + n[k]) / (1.0 + eps[k]) - 1.0)).abs() < tol, "bin {k}: DP");
+            assert!(
+                (h[k] - ((1.0 + n[k]) / (1.0 + eps[k]).powi(2) - 1.0)).abs() < tol,
+                "bin {k}: H"
+            );
+        }
+    }
+
+    #[test]
     fn gls_mean_of_correlated_pair() {
         // 独立なら逆分散の重みつき平均になる
         let cov = vec![vec![1.0, 0.0], vec![0.0, 4.0]];
