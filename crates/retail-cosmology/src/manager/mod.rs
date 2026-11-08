@@ -9,3 +9,4 @@ pub mod census;
 pub mod correlation;
 pub mod cost;
 pub mod toy;
+pub mod variance;

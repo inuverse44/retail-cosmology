@@ -907,4 +907,64 @@ $f$ が点によって違うのは、境界の近くではビンの距離の輪�
 これは店の数の揺らぎが $DD$ の期待値を揺らす分で、店の数を固定すれば消える。
 式~\eqref{eq:var-poisson} は店の数の揺らぎも含めた全分散で、条件つき分散をポアソン分布で平均した $\mathbb{E}[\mathrm{Var}[DD \mid n]]$ より $(N^3 + N^2/2)\, G_p^2$ だけ大きい。
 
+\subsection{toy model での検算}
+
+二つの式を単位正方形に一様に撒いた点で確かめた。
+ビンは $0.05 \le r < 0.10$ とし、$G_p$ と $G_t$ は式~\eqref{eq:f-def} の $f$ を角度について積分して求めた。
+$G_p = 2.1276 \times 10^{-2}$ は単位正方形の二点の距離の累積分布 $\pi r^2 - 8r^3/3 + r^4/2$ から求めた値と一致する。
+$G_t - G_p^2 = 1.52 \times 10^{-5}$ は、$f$ が正方形の辺の近くで小さくなることから生じる。
+点の数を $n = 200$ に固定して 4000 回撒き直すと、$DD$ の標本分散は $541 \pm 12$ で、式~\eqref{eq:var-fixed} の $534$ と合う。
+境界の項を落とした式（$G_t = G_p^2$）では $414$ で、模擬データから標準誤差の 10 倍離れる。
+点の数を平均 $200$ のポアソン分布から選んで 4000 回撒き直すと、標本分散は $4231 \pm 95$ で、式~\eqref{eq:var-poisson} の $4168$ と合う。
+店の数を固定した模擬データに式~\eqref{eq:var-poisson} を当てると、分散を 8 倍近く大きく見積もることになる。
+計算は \code{cargo test --lib variance -- --nocapture} で行った（\href{\repourl/blob/main/crates/retail-cosmology/src/engine/variance.rs}{\nolinkurl{crates/retail-cosmology/src/engine/variance.rs}}）。
+
+\subsection{オーストラリアでの値}
+
+オーストラリアの $G_p$ と $G_t$ を、人口に比例して撒いたランダムカタログから求めた。
+点 $i$ から見てビンに入る点の数を $c_i$ とすると、$N$ 点のランダムカタログから
+\begin{equation}
+  G_p = \frac{\sum_i c_i}{N(N-1)}, \qquad
+  G_t = \frac{\sum_i c_i (c_i - 1)}{N(N-1)(N-2)}
+  \label{eq:g-estimate}
+\end{equation}
+で偏りなく求まる。
+どちらも、異なる点の組または三つ組すべてについて、式~\eqref{eq:g-def} の期待値の中身を平均したものである。
+距離のビンは二点相関関数と同じで、$N = 40{,}000$ とした（表~\ref{tab:var-au}）。
+$N$ を $10{,}000$、$20{,}000$、$40{,}000$ と変え、$N = 20{,}000$ で乱数の種を三通りに変えても、$(G_t - G_p^2)/G_p^2$ は $5\%$ 以内しか動かない。
+
+\begin{table}[t]
+  \centering
+  \caption{オーストラリアの幾何の因子と、$DD$ の相対標準偏差 $\sqrt{\mathrm{Var}[DD]}/\mathbb{E}[DD]$。
+    「固定」は店の数を固定した式~\eqref{eq:var-fixed}、「ポアソン」は店の数をポアソン分布で揺らした式~\eqref{eq:var-poisson} による。
+    $G_p$ と $G_t$ は人口に比例して撒いた $40{,}000$ 点のランダムカタログから式~\eqref{eq:g-estimate} で求めた。
+    \code{cargo run --release --bin var\_dd -- 2026-11-01} が書いた表。}
+  \label{tab:var-au}
+  \small
+  \input{../docs/tables/var_dd_au.tex}
+\end{table}
+
+$500\,\mathrm{km}$ より短い距離では、$(G_t - G_p^2)/G_p^2$ は $0.8$--$2.4$ である。
+点の位置によって $f$ が平均と同じ程度の幅で違うということである。
+陸地に一様に撒いたランダムカタログでは、同じ量は $0.004$--$0.12$ にとどまる。
+したがって、この大きさは海岸線ではなく人口の濃淡から来る。
+店の数を固定した分散のうち、$n^3$ の項は $n^2$ の項の、Coles で $1.6$--$250$ 倍、Woolworths で $2.0$--$320$ 倍になる。
+$n^2$ の項より $n^3$ の項が大きいので、店の数を固定しても $DD$ の相対標準偏差は $500\,\mathrm{km}$ より短い距離で $5$--$11\%$ ある。
+ポアソン分布で揺らした場合の標準偏差は、$500\,\mathrm{km}$ より短い距離で固定した場合の $1.2$--$1.5$ 倍、$500$--$800\,\mathrm{km}$ で $2.0$ 倍である。
+
+この $n^3$ の項は、人の多い所に点がたまたま多く落ちたかどうかで $DD$ が揺らぐ分である。
+Landy--Szalay の推定量は $DR$ を引くので、この揺らぎの大部分が打ち消され、分散はポアソン分布の $n^2$ の項に近くなる \cite{LandySzalay1993}。
+図~\ref{fig:var-au} で、\ref{sec:res-au} 節の jackknife の誤差と比べた。
+$\hat\xi_{\mathrm{N}} = dd/rr - 1$ の誤差は式~\eqref{eq:var-fixed} から求めた $DD$ の相対標準偏差の $0.6$--$1.8$ 倍で、$\hat\xi_{\mathrm{LS}}$ の誤差は $n^2$ の項だけから求めた値の $0.9$--$2.7$ 倍である。
+二つの式の値は $30$--$500\,\mathrm{km}$ で $7$--$16$ 倍離れており、二つの推定量の誤差はそれぞれの式の近くにある。
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{var_dd_au.pdf}
+  \caption{オーストラリアの店の $\hat\xi$ の jackknife の誤差（点）と、$DD$ の相対標準偏差の式（線）。
+    基準は人口に比例するランダムカタログ。
+    実線は店の数を固定した式~\eqref{eq:var-fixed}、破線はその $n^2$ の項だけ。
+    \code{scripts/plot\_var\_dd.py} で描いた。}
+  \label{fig:var-au}
+\end{figure}
+
 \end{document}

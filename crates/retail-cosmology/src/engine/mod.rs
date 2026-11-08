@@ -7,3 +7,4 @@ pub mod pair_count;
 pub mod random_catalog;
 pub mod selection;
 pub mod selection_function;
+pub mod variance;
