@@ -105,6 +105,10 @@ cd notes && latexmk -lualatex retail-cosmology.tex
 scripts/check_outputs.sh > before.txt   # 変える前
 scripts/check_outputs.sh > after.txt    # 変えた後
 diff before.txt after.txt
+
+# ノートの付録 B の式の形を Lean で検証する（ADR 003、lean/README.md）
+cd lean && lake exe cache get   # Mathlib のビルド済みファイル（数 GB）を取る。初回だけ
+cd lean && lake build           # 証明を検査する。通れば付録 B の式が検証されている
 ```
 
 ## データ
