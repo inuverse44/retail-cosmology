@@ -1,6 +1,6 @@
 ---
 id: "005"
-status: Proposed
+status: Accepted
 date: "2026-11-08"
 ---
 # ADR 005: 点を独立に撒く模型から、分散の式までを Lean で検証する
