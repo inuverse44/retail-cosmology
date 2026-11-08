@@ -6,20 +6,15 @@ uv run scripts/plot_var_dd.py
 """
 
 import csv
-from pathlib import Path
 
-import matplotlib.pyplot as plt
+import figstyle as fs
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
 DATE = "2026-11-01"
-XI = ROOT / "data" / "xi" / f"xi_{DATE}.csv"
-VAR = ROOT / "data" / "var" / f"var_dd_au_{DATE}.csv"
-OUT = ROOT / "docs" / "figures" / "var_dd_au"
+XI = fs.ROOT / "data" / "xi" / f"xi_{DATE}.csv"
+VAR = fs.ROOT / "data" / "var" / f"var_dd_au_{DATE}.csv"
 # 表と同じランダムカタログ（人口に比例、40000 点、種 1）
 RUN = ("Population", "40000", "1")
-NATURAL = "#d9661f"  # natural と、店の数を固定した DD の分散（式 14）
-LS = "#2a6fdb"  # Landy–Szalay と、n^2 の項だけ
 
 
 def jackknife(xi: list[dict], chain: str, quantity: str, lo: np.ndarray) -> np.ndarray:
@@ -31,8 +26,8 @@ def jackknife(xi: list[dict], chain: str, quantity: str, lo: np.ndarray) -> np.n
 def main() -> None:
     xi = [r for r in csv.DictReader(XI.open()) if r["random"] == "population"]
     var = [r for r in csv.DictReader(VAR.open()) if (r["weight"], r["n_random"], r["seed"]) == RUN]
-    fig, axes = plt.subplots(1, 2, figsize=(7.5, 3.4), sharey=True)
-    for ax, chain in zip(axes, ("Coles", "Woolworths"), strict=True):
+    fig, axes = fs.figure(1, 2, height=2.5, sharey=True)
+    for ax, tag, chain in zip(axes, "ab", ("Coles", "Woolworths"), strict=True):
         v = [r for r in var if r["chain"] == chain]
         lo = np.array([float(r["r_lo_km"]) for r in v])
         hi = np.array([float(r["r_hi_km"]) for r in v])
@@ -43,23 +38,17 @@ def main() -> None:
         fixed = np.sqrt([float(x["var_fixed"]) for x in v]) / mean
         shot = np.sqrt(0.5 * n * (n - 1) * gp * (1 - gp)) / mean
 
-        ax.plot(r, fixed, color=NATURAL, lw=2, label=r"$\sigma(DD)/DD$, $n$ fixed")
-        ax.plot(r, shot, color=LS, lw=2, ls="--", label=r"$n^2$ term only")
-        ax.plot(r, jackknife(xi, chain, "natural", lo), "o", color=NATURAL, ms=5, mec="white", mew=1, label=r"natural, jackknife")
-        ax.plot(r, jackknife(xi, chain, "ls", lo), "s", color=LS, ms=5, mec="white", mew=1, label=r"Landy–Szalay, jackknife")
+        ax.plot(r, fixed, color="0.1", lw=1.2, label=r"$\sigma(DD)/DD$, $n$ fixed")
+        ax.plot(r, shot, color="0.1", lw=1.2, ls="--", label=r"$n^2$ term only")
+        ax.plot(r, jackknife(xi, chain, "natural", lo), ls="none", label="natural, jackknife", **fs.ESTIMATOR["natural"])
+        ax.plot(r, jackknife(xi, chain, "ls", lo), ls="none", label="Landy--Szalay, jackknife", **fs.ESTIMATOR["landy_szalay"])
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel(r"$r$ [km]")
-        ax.set_title(f"{chain} ({int(n)} stores)", fontsize=10)
-        ax.grid(True, which="major", color="0.9", lw=0.6)
-        for s in ("top", "right"):
-            ax.spines[s].set_visible(False)
+        fs.panel(ax, tag, f"{chain} ({int(n)} stores)")
     axes[0].set_ylabel(r"$\sigma$")
-    axes[0].legend(frameon=False, fontsize=7.5, loc="lower left")
-    fig.tight_layout()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    for ext in ("pdf", "png"):
-        fig.savefig(OUT.with_suffix(f".{ext}"), dpi=200)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="outside upper center", ncol=4, columnspacing=1.0)
+    fs.save(fig, "var_dd_au")
 
 
 if __name__ == "__main__":

@@ -274,7 +274,7 @@ OSM では、同じ店が点（node）と建物の輪郭（way）の両方で描
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{stores_osm.pdf}
+  \includegraphics{stores_osm.pdf}
   \caption{OSM から取り出した Coles と Woolworths の店舗（2026年11月1日時点）。
     店舗は東海岸と南東部の都市に集まり、内陸にはほとんどない。
     灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
@@ -410,7 +410,7 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{stores_jp.pdf}
+  \includegraphics{stores_jp.pdf}
   \caption{公式サイトから取ったトライアル（2026年11月3日）と西友（2026年11月4日）の店舗。
     灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
     店のない沖縄は範囲の外にある。
@@ -438,7 +438,7 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 結果を図~\ref{fig:xi} に示す。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{xi_stores.pdf}
+  \includegraphics{xi_stores.pdf}
   \caption{店舗の二点相関関数。誤差棒は jackknife（64 領域）の標準偏差。
     (a) 陸地に一様なランダムカタログを使った $\hat\xi_{\mathrm{LS}}$。灰色は人口そのもの。
     (b) (a) の店の値を人口の値で割った比。
@@ -521,7 +521,7 @@ $R = 100\,\mathrm{km}$ で $8.0$--$31.7\,\mathrm{km}$ の 3 ビンをまとめ�
 日本とオーストラリアの結果を図~\ref{fig:compare} に並べる。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{xi_compare.pdf}
+  \includegraphics{xi_compare.pdf}
   \caption{トライアル（日本）と Coles・Woolworths（オーストラリア）の比較。誤差棒は jackknife（64 領域）。
     (a) 人口に比例するランダムカタログに対する $dr/rr - 1$。
     (b) 人口に比例するランダムカタログに対する $\hat\xi_{\mathrm{LS}}$。
@@ -555,9 +555,9 @@ OSM は 4 割の店を拾い漏らしているが、上の結論は変わらな�
 結果を図~\ref{fig:footprint} に示す。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{xi_footprint.pdf}
+  \includegraphics{xi_footprint.pdf}
   \caption{選択関数を入れたランダムカタログに対する $\hat\xi_{\mathrm{LS}}$。誤差棒は jackknife（64 領域）。
-    (a) トライアル。灰色は人口だけを基準にしたもの。
+    (a) トライアル。灰色は人口だけを基準にしたもの、青は選択関数を入れたもので、濃いほど $R$ が小さい。
     (b) $R = 100\,\mathrm{km}$ でのトライアル、Coles、Woolworths。
     (c) 帰無仮説の模擬データ 100 個での、$8.0$--$20.0\,\mathrm{km}$ の 2 ビンをまとめた値の分布（$R = 50\,\mathrm{km}$）と、トライアルの値。
     \code{scripts/plot\_footprint.py} で描いた。}
@@ -607,13 +607,13 @@ $\chi^2$ は相関の符号を見ないので、模擬データの負の偏り�
 計算はトライアルと西友の店のファイルを両方渡して行った（\code{cargo run --release --bin xi -- 2026-11-03 --country jp --stores <トライアル>,<西友> --cross TRIAL,SEIYU --footprint 50,100,200}）。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{xi_cross.pdf}
+  \includegraphics{xi_cross.pdf}
   \caption{西友と、トライアルと西友の相互相関。誤差棒は jackknife（64 領域）。
-    (a) 西友の $\hat\xi_{\mathrm{LS}}$。灰色は人口だけを基準にしたもの、色つきは選択関数を入れたもの。
+    (a) 西友の $\hat\xi_{\mathrm{LS}}$。灰色は人口だけを基準にしたもの、色つきは選択関数を入れたもので、濃いほど $R$ が小さい。
     (b) トライアルと西友の相互相関 $\hat\xi_{\times}$（式~\eqref{eq:cross}）。
     (c) $R = 50\,\mathrm{km}$ で $8.0$--$20.0\,\mathrm{km}$ の 2 ビンをまとめた $\hat\xi_{\times}$ の、帰無仮説の模擬データ 100 個での分布と、実際の値（縦線）。
-    灰色は二社とも地方だけをそろえて撒き直した模擬データ、紫は密集地への寄り方もそろえたもの、
-    緑はトライアルを実際の位置のまま残して西友だけを撒き直したもの、橙は西友を残してトライアルだけを撒き直したもの。
+    薄い灰色は二社とも地方だけをそろえて撒き直した模擬データ、濃い灰色の破線は密集地への寄り方もそろえたもの、
+    青はトライアルを実際の位置のまま残して西友だけを撒き直したもの、赤は西友を残してトライアルだけを撒き直したもの。
     (d) (c) と同じものを $R = 100\,\mathrm{km}$、$8.0$--$31.7\,\mathrm{km}$ の 3 ビンで。
     \code{scripts/plot\_cross.py} で描いた。}
   \label{fig:cross}
@@ -682,7 +682,7 @@ $\chi^2$ は符号を見ないので、負の値が有意かどうかは、ま�
 撒き直す側は選択関数と密集地への寄り方に従って撒く。
 この模擬データでは選択関数を 10 km 格子の表で求めた（別のノート \code{notes/algorithm-cost.tex} で、結果の差がランダムカタログの揺らぎより小さいことを確かめた）。
 
-トライアルを実際の位置のまま残し、西友を撒き直すと、相互相関は大きく負になる（図~\ref{fig:cross}(c)(d) の緑）。
+トライアルを実際の位置のまま残し、西友を撒き直すと、相互相関は大きく負になる（図~\ref{fig:cross}(c)(d) の青）。
 $R = 50\,\mathrm{km}$ の 100 個では平均 $-0.124$、標準偏差 $0.043$、最小 $-0.260$ で、100 個のうち 10 個が実際の $-0.169$ 以下になった。
 $R = 100\,\mathrm{km}$ でも平均 $-0.189$、最小 $-0.270$ で、28 個が実際の $-0.211$ 以下になった。
 逆に、西友を実際の位置のまま残し、トライアルを撒き直すと、負の値はほとんど再現されない（橙）。
@@ -770,7 +770,7 @@ OSM から取った店の限界は \ref{sec:osm-limits} 節にまとめた。
 Hamilton と Landy--Szalay の値はほぼ重なり、natural は他の 3 つと違う揺れ方をする。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.8\linewidth]{toy_poisson.pdf}
+  \includegraphics{toy_poisson.pdf}
   \caption{単位正方形のポアソン点に対する 4 つの推定量。
     \code{cargo run --release --bin toy} の出力を \code{scripts/plot\_toy.py} で描いた。}
   \label{fig:toy}
@@ -975,10 +975,11 @@ $\hat\xi_{\mathrm{N}} = dd/rr - 1$ の誤差は式~\eqref{eq:var-fixed} から�
 二つの式の値は $30$--$500\,\mathrm{km}$ で $7$--$16$ 倍離れており、二つの推定量の誤差はそれぞれの式の近くにある。
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{var_dd_au.pdf}
+  \includegraphics{var_dd_au.pdf}
   \caption{オーストラリアの店の $\hat\xi$ の jackknife の誤差（点）と、$DD$ の相対標準偏差の式（線）。
     基準は人口に比例するランダムカタログ。
     実線は店の数を固定した式~\eqref{eq:var-fixed}、破線はその $n^2$ の項だけ。
+    黒丸は natural、白抜きの四角は Landy--Szalay の推定量の誤差。
     \code{scripts/plot\_var\_dd.py} で描いた。}
   \label{fig:var-au}
 \end{figure}
