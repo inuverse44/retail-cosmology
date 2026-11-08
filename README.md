@@ -14,7 +14,7 @@ crates/retail-cosmology/  計算（Rust）。層の分け方は ADR 001
 scripts/                  描画（Python, matplotlib）とデータの取得（シェル）
 reference/                公式の店舗数と出典
 notes/                    ノート（TeX）
-lean/                     ノートの式の導出の検証（Lean）。ADR 003
+lean/                     ノートの式の導出の検証（Lean）。ADR 003、005
 docs/adr/                 設計判断の記録（ADR）
 docs/retrospectives/      振り返りと活動のログ
 docs/figures/             ノートに載せる図
@@ -36,7 +36,7 @@ Rust のコードは、変わりやすさごとに層を分けている（[ADR 0
 
 `scripts/` の描画とデータの取得は、Rust の層の外にある。描画のスクリプトは Rust が書いた結果を読むだけで、計算はしない。
 図の体裁（大きさ、色、フォント）は `scripts/figstyle.py` の一か所で決め、文字と数式は本文と同じ LuaLaTeX で組む（[ADR 004](docs/adr/004-figure-style.md)）。描画には LuaLaTeX（`luatexja` と `underscore.sty`）が要る。
-`lean/` も Rust の層の外にある。ノートの付録 B の式の形を Lean で検証し、数値は Rust のテストで確かめる（[ADR 003](docs/adr/003-lean-proofs-in-repo.md)）。
+`lean/` も Rust の層の外にある。点を独立に撒く模型から、ノートの付録 B の式までを Lean で検証し、数値は Rust のテストで確かめる（置き場所は [ADR 003](docs/adr/003-lean-proofs-in-repo.md)、範囲は [ADR 005](docs/adr/005-lean-model-in-scope.md)）。
 
 ## 動かす
 
@@ -107,7 +107,7 @@ scripts/check_outputs.sh > before.txt   # 変える前
 scripts/check_outputs.sh > after.txt    # 変えた後
 diff before.txt after.txt
 
-# ノートの付録 B の式の形を Lean で検証する（ADR 003、lean/README.md）
+# ノートの付録 B の式を、点を独立に撒く模型から Lean で検証する（ADR 005、lean/README.md）
 cd lean && lake exe cache get   # Mathlib のビルド済みファイル（数 GB）を取る。初回だけ
 cd lean && lake build           # 証明を検査する。通れば付録 B の式が検証されている
 ```

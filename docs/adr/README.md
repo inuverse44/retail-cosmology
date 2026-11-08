@@ -8,8 +8,9 @@
 |---|---|---|
 | [001](001-layering-by-volatility.md) | 変わりやすさで層に分ける（The Method） | Accepted |
 | [002](002-combine-bins-with-plain-mean.md) | ビンをまとめた値は、単純な平均に jackknife の誤差をつける | Accepted |
-| [003](003-lean-proofs-in-repo.md) | ノートの式の導出を Lean で検証し、証明はこのリポジトリの lean/ に置く | Accepted |
+| [003](003-lean-proofs-in-repo.md) | ノートの式の導出を Lean で検証し、証明はこのリポジトリの lean/ に置く | Superseded by ADR 005 |
 | [004](004-figure-style.md) | ノートの図の体裁を一か所で決め、本文と同じ処理系で組む | Accepted |
+| [005](005-lean-model-in-scope.md) | 点を独立に撒く模型から、分散の式までを Lean で検証する | Accepted |
 
 ## 書き方
 
