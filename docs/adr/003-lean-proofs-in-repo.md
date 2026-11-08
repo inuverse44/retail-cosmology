@@ -1,6 +1,6 @@
 ---
 id: "003"
-status: Proposed
+status: Accepted
 date: "2026-11-08"
 ---
 # ADR 003: ノートの式の導出を Lean で検証し、証明はこのリポジトリの lean/ に置く
