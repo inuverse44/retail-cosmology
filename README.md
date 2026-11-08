@@ -14,6 +14,7 @@ crates/retail-cosmology/  計算（Rust）。層の分け方は ADR 001
 scripts/                  描画（Python, matplotlib）とデータの取得（シェル）
 reference/                公式の店舗数と出典
 notes/                    ノート（TeX）
+lean/                     ノートの式の導出の検証（Lean）。ADR 003
 docs/adr/                 設計判断の記録（ADR）
 docs/retrospectives/      振り返りと活動のログ
 docs/figures/             ノートに載せる図
@@ -34,6 +35,7 @@ Rust のコードは、変わりやすさごとに層を分けている（[ADR 0
 層の間で受け渡すデータの形（データ契約）は `src/contract.rs` に置く。
 
 `scripts/` の描画とデータの取得は、Rust の層の外にある。描画のスクリプトは Rust が書いた結果を読むだけで、計算はしない。
+`lean/` も Rust の層の外にある。ノートの付録 B の式の形を Lean で検証し、数値は Rust のテストで確かめる（[ADR 003](docs/adr/003-lean-proofs-in-repo.md)）。
 
 ## 動かす
 
