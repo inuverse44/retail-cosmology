@@ -907,6 +907,22 @@ $f$ が点によって違うのは、境界の近くではビンの距離の輪�
 これは店の数の揺らぎが $DD$ の期待値を揺らす分で、店の数を固定すれば消える。
 式~\eqref{eq:var-poisson} は店の数の揺らぎも含めた全分散で、条件つき分散をポアソン分布で平均した $\mathbb{E}[\mathrm{Var}[DD \mid n]]$ より $(N^3 + N^2/2)\, G_p^2$ だけ大きい。
 
+\subsection{Lean での検証}
+\label{app:var-dd-lean}
+
+ここまでの導出のうち、式の形を Lean 4 と数学ライブラリ Mathlib で検証した \cite{Mathlib2020}。
+証明は \href{\repourl/blob/main/lean/RetailCosmology/VarDD.lean}{\nolinkurl{lean/RetailCosmology/VarDD.lean}} にあり、\code{cd lean \&\& lake build} で検査できる。
+式と定理の対応は次のとおりである。
+\begin{itemize}
+  \item 式~\eqref{eq:dd-second}：\code{dd\_second\_moment}。二つの組の関係ごとの数え上げから $\mathbb{E}[DD^2 \mid n]$ を組み立てる。
+  \item 式~\eqref{eq:count-identity}：\code{count\_identity}。
+  \item 式~\eqref{eq:var-fixed}：\code{var\_fixed\_of\_counting}。数え上げから、店の数を固定した分散までを通して示す。
+  \item 式~\eqref{eq:poisson-factorial}：\code{poisson\_factorial\_moment}。Mathlib のポアソン分布での期待値として示す。
+  \item 式~\eqref{eq:var-poisson}：\code{var\_poisson}。式~\eqref{eq:total-var} の右辺の二つの項を、ポアソン分布で計算する。
+\end{itemize}
+$G_p$、$G_t$、$G_q$ は実数の変数として受け取っている。
+点が独立に撒かれていれば期待値が式~\eqref{eq:g-def} の値になることと、全分散の公式~\eqref{eq:total-var} そのものは、Lean では示していない。
+
 \subsection{toy model での検算}
 
 二つの式を単位正方形に一様に撒いた点で確かめた。
