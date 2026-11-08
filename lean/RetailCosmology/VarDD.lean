@@ -81,8 +81,8 @@ theorem card_offDiag :
 /-- 対 `P` を固定したときの、もう一つの対 `Q` についての和。
 `Q` が同じ組なら `Gp`、点を共有しなければ `Gq`、それ以外（一点を共有）なら `Gt` をとる関数を足す。 -/
 theorem inner_sum (f : Fin n × Fin n → ℝ) (Gp Gt Gq : ℝ) {P : Fin n × Fin n} (hP : P.1 ≠ P.2)
-    (hsame : ∀ Q, SamePair P Q → f Q = Gp)
-    (hdisj : ∀ Q, Disjoint' P Q → f Q = Gq)
+    (hsame : ∀ Q, Q.1 ≠ Q.2 → SamePair P Q → f Q = Gp)
+    (hdisj : ∀ Q, Q.1 ≠ Q.2 → Disjoint' P Q → f Q = Gq)
     (hone : ∀ Q, Q.1 ≠ Q.2 → ¬ SamePair P Q → ¬ Disjoint' P Q → f Q = Gt) :
     ∑ Q ∈ (univ : Finset (Fin n)).offDiag, f Q
       = 2 * Gp + 4 * ((n : ℝ) - 2) * Gt + ((n : ℝ) - 2) * ((n : ℝ) - 3) * Gq := by
@@ -98,10 +98,12 @@ theorem inner_sum (f : Fin n × Fin n → ℝ) (Gp Gt Gq : ℝ) {P : Fin n × Fi
     rw [filter_filter]
     exact filter_congr fun Q _ => ⟨fun h => h.2, fun h => ⟨hdisj_not_same Q h, h⟩⟩
   have hS : ∑ Q ∈ s.filter (SamePair P), f Q = 2 * Gp := by
-    rw [sum_congr rfl fun Q hQ => hsame Q (mem_filter.1 hQ).2, sum_const, card_samePair hP]
+    rw [sum_congr rfl fun Q hQ => hsame Q (mem_offDiag.1 (mem_filter.1 hQ).1).2.2 (mem_filter.1 hQ).2,
+      sum_const, card_samePair hP]
     simp
   have hD : ∑ Q ∈ s.filter (Disjoint' P), f Q = ((n : ℝ) - 2) * ((n : ℝ) - 3) * Gq := by
-    rw [sum_congr rfl fun Q hQ => hdisj Q (mem_filter.1 hQ).2, sum_const, nsmul_eq_mul,
+    rw [sum_congr rfl fun Q hQ => hdisj Q (mem_offDiag.1 (mem_filter.1 hQ).1).2.2 (mem_filter.1 hQ).2,
+      sum_const, nsmul_eq_mul,
       card_disjoint hP]
   -- 一点を共有する対の数は、総数から残りを引いて求める
   have hcard : ((((s.filter fun Q => ¬ SamePair P Q).filter fun Q => ¬ Disjoint' P Q).card : ℕ) : ℝ)
@@ -132,15 +134,16 @@ theorem inner_sum (f : Fin n × Fin n → ℝ) (Gp Gt Gq : ℝ) {P : Fin n × Fi
 /-- ノートの式 `eq:dd-second`：`E[DD² | n]`。
 `f P Q` は `E[θ_P θ_Q]`（`P`、`Q` は順序つきの対）で、二つの対の関係ごとに `Gp`、`Gt`、`Gq` をとる。 -/
 theorem dd_second_moment (f : Fin n × Fin n → Fin n × Fin n → ℝ) (Gp Gt Gq : ℝ)
-    (hsame : ∀ P Q, SamePair P Q → f P Q = Gp)
-    (hdisj : ∀ P Q, Disjoint' P Q → f P Q = Gq)
-    (hone : ∀ P Q, Q.1 ≠ Q.2 → ¬ SamePair P Q → ¬ Disjoint' P Q → f P Q = Gt) :
+    (hsame : ∀ P Q, P.1 ≠ P.2 → Q.1 ≠ Q.2 → SamePair P Q → f P Q = Gp)
+    (hdisj : ∀ P Q, P.1 ≠ P.2 → Q.1 ≠ Q.2 → Disjoint' P Q → f P Q = Gq)
+    (hone : ∀ P Q, P.1 ≠ P.2 → Q.1 ≠ Q.2 → ¬ SamePair P Q → ¬ Disjoint' P Q → f P Q = Gt) :
     (1 / 4 : ℝ) * ∑ P ∈ (univ : Finset (Fin n)).offDiag, ∑ Q ∈ (univ : Finset (Fin n)).offDiag, f P Q
       = (n : ℝ) * ((n : ℝ) - 1) * ((n : ℝ) - 2) * ((n : ℝ) - 3) / 4 * Gq
         + (n : ℝ) * ((n : ℝ) - 1) * ((n : ℝ) - 2) * Gt
         + (n : ℝ) * ((n : ℝ) - 1) / 2 * Gp := by
   rw [sum_congr rfl fun P hP => inner_sum (f P) Gp Gt Gq (mem_offDiag.1 hP).2.2
-      (hsame P) (hdisj P) (hone P),
+      (fun Q => hsame P Q (mem_offDiag.1 hP).2.2) (fun Q => hdisj P Q (mem_offDiag.1 hP).2.2)
+      (fun Q => hone P Q (mem_offDiag.1 hP).2.2),
     sum_const, nsmul_eq_mul, card_offDiag]
   ring
 
@@ -164,9 +167,9 @@ theorem var_fixed (n Gp Gt : ℝ) :
 
 /-- 式 `eq:dd-second` と式 `eq:var-fixed` をつないだもの：数え上げから、店の数を固定した分散まで。 -/
 theorem var_fixed_of_counting {n : ℕ} (f : Fin n × Fin n → Fin n × Fin n → ℝ) (Gp Gt : ℝ)
-    (hsame : ∀ P Q, SamePair P Q → f P Q = Gp)
-    (hdisj : ∀ P Q, Disjoint' P Q → f P Q = Gp ^ 2)
-    (hone : ∀ P Q, Q.1 ≠ Q.2 → ¬ SamePair P Q → ¬ Disjoint' P Q → f P Q = Gt) :
+    (hsame : ∀ P Q, P.1 ≠ P.2 → Q.1 ≠ Q.2 → SamePair P Q → f P Q = Gp)
+    (hdisj : ∀ P Q, P.1 ≠ P.2 → Q.1 ≠ Q.2 → Disjoint' P Q → f P Q = Gp ^ 2)
+    (hone : ∀ P Q, P.1 ≠ P.2 → Q.1 ≠ Q.2 → ¬ SamePair P Q → ¬ Disjoint' P Q → f P Q = Gt) :
     (1 / 4 : ℝ) * ∑ P ∈ (univ : Finset (Fin n)).offDiag, ∑ Q ∈ (univ : Finset (Fin n)).offDiag, f P Q
         - ((n : ℝ) * ((n : ℝ) - 1) / 2 * Gp) ^ 2
       = (n : ℝ) * ((n : ℝ) - 1) * ((n : ℝ) - 2) * (Gt - Gp ^ 2)

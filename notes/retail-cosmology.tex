@@ -910,18 +910,24 @@ $f$ が点によって違うのは、境界の近くではビンの距離の輪�
 \subsection{Lean での検証}
 \label{app:var-dd-lean}
 
-ここまでの導出のうち、式の形を Lean 4 と数学ライブラリ Mathlib で検証した \cite{Mathlib2020}。
-証明は \href{\repourl/blob/main/lean/RetailCosmology/VarDD.lean}{\nolinkurl{lean/RetailCosmology/VarDD.lean}} にあり、\code{cd lean \&\& lake build} で検査できる。
+この付録の導出を、Lean 4 と数学ライブラリ Mathlib で検証した \cite{Mathlib2020}。
+出発点は、$n$ 個の点が同じ確率分布 $p(\bm{x})\, d^2x$ から独立に撒かれ、$\theta$ が 0 か 1 をとり二点について対称、という模型である。
+$G_p$ と $G_t$ は式~\eqref{eq:g-def} のとおり積分で定義し、変数としては受け取らない。
+証明は \href{\repourl/tree/main/lean/RetailCosmology}{\nolinkurl{lean/RetailCosmology/}} にあり、\code{cd lean \&\& lake build} で検査できる。
 式と定理の対応は次のとおりである。
 \begin{itemize}
-  \item 式~\eqref{eq:dd-second}：\code{dd\_second\_moment}。二つの組の関係ごとの数え上げから $\mathbb{E}[DD^2 \mid n]$ を組み立てる。
+  \item 式~\eqref{eq:g-def}：\code{integral\_pair}、\code{integral\_triple}、\code{integral\_quad}。
+  \item 式~\eqref{eq:dd-mean}：\code{integral\_DD}。
+  \item 式~\eqref{eq:dd-second}：\code{integral\_DD\_sq}。二つの組の関係ごとの数え上げは \code{dd\_second\_moment} で示す。
   \item 式~\eqref{eq:count-identity}：\code{count\_identity}。
-  \item 式~\eqref{eq:var-fixed}：\code{var\_fixed\_of\_counting}。数え上げから、店の数を固定した分散までを通して示す。
+  \item 式~\eqref{eq:var-fixed}：\code{variance\_DD}。
+  \item 式~\eqref{eq:gt-var}：\code{Gtriple\_sub\_sq}。
   \item 式~\eqref{eq:poisson-factorial}：\code{poisson\_factorial\_moment}。Mathlib のポアソン分布での期待値として示す。
-  \item 式~\eqref{eq:var-poisson}：\code{var\_poisson}。式~\eqref{eq:total-var} の右辺の二つの項を、ポアソン分布で計算する。
+  \item 式~\eqref{eq:var-poisson}：\code{variance\_DDmix}。店の数をポアソン分布で選び、点を独立に撒く確率空間の上で、$DD$ の分散を求める。
+  \item 式~\eqref{eq:total-var}：\code{variance\_DDmix\_eq\_total}。同じ確率空間で、全分散が式~\eqref{eq:total-var} の右辺と等しいことを示す。
+  \item 式~\eqref{eq:g-estimate}：\code{integral\_sum\_binCount}、\code{integral\_sum\_binCount\_mul}。
 \end{itemize}
-$G_p$、$G_t$、$G_q$ は実数の変数として受け取っている。
-点が独立に撒かれていれば期待値が式~\eqref{eq:g-def} の値になることと、全分散の公式~\eqref{eq:total-var} そのものは、Lean では示していない。
+$G_p$ と $G_t$ の数値と、模型が店の分布に合うかどうかは、Lean では扱わず、Rust で確かめた（この付録の toy model での検算とオーストラリアでの値）。
 
 \subsection{toy model での検算}
 

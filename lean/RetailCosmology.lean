@@ -1,1 +1,3 @@
 import RetailCosmology.VarDD
+import RetailCosmology.Model
+import RetailCosmology.Poisson
