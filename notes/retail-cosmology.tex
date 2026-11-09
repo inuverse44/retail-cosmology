@@ -165,16 +165,59 @@ $\xi(r) < 0$ なら、その距離の組は少なく、店舗は互いに離れ�
 
 \subsection{推定量}
 
+式~\eqref{eq:xi-def} は、点の置き方を決める確率である。
+実際に手にあるのは、限られた領域に置かれた店の座標の一組だけである。
+そこで、店の組の数を数え、その期待値を式~\eqref{eq:xi-def} で書いて、$\xi$ を取り出す。
 
-店舗の組の数を数えるだけでは、$\xi$ は求まらない。
-組の数は店舗のある領域の形（海岸線や国境）にも左右されるからである。
-そこで、同じ領域に相関のない点を撒き、その点の組の数と比べる。
+店は面積 $S$ の領域 $W$（陸地）の中に $n_d$ 店あるとし、平均の面密度を $n_d/S$ とする。
+距離のビン $b$（たとえば $10$--$13\,\mathrm{km}$）に入る店の組の数を $DD$ と書く。
+式~\eqref{eq:xi-def} を $W$ の中の二点について積分すると、その期待値は
+\begin{equation}
+  \langle DD \rangle = \frac{n_d(n_d-1)}{2}\, \frac{1}{S^2} \int_W \! \int_W \Theta_b(r_{12})\, \bigl[1 + \xi(r_{12})\bigr]\, dS_1\, dS_2
+  \label{eq:dd-xi}
+\end{equation}
+になる。
+$r_{12}$ は二点の距離で、$\Theta_b$ は $r_{12}$ がビン $b$ に入れば $1$、入らなければ $0$ をとる。
+$\xi = 0$ でも、この積分は $\Theta_b$ の積分
+\begin{equation}
+  A_b = \int_W \! \int_W \Theta_b(r_{12})\, dS_1\, dS_2
+\end{equation}
+を残す。
+$A_b$ は領域 $W$ の形で決まる。
+海岸の近くの店では、距離 $r$ の相手の候補の一部が海に落ちるので、$A_b$ は同じ面積の正方形より小さくなる。
+そのため、店の組の数を数えるだけでは、組が多いのが店の置き方のせいか、領域の形のせいかを分けられない。
+
+そこで、同じ領域 $W$ に相関のない点を $n_r$ 個撒き、その組の数と比べる。
 この点の集まりをランダムカタログと呼ぶ。
-
-データを $n_d$ 点、ランダムカタログを $n_r$ 点とする。
 距離のビンごとに、三種類の組の数を数える。
-データ同士の組の数が $DD$、データとランダムの組の数が $DR$、ランダム同士の組の数が $RR$ である。
+データ同士の組の数が $DD$、データとランダムの組の数が $DR$、ランダム同士の組の数が $RR$ である
+\footnote{$DR$ は、実際の店のまわりにランダムの点がいくつあるかを数える。
+  海岸の近くにある店ほど、距離 $r$ の所のランダムの点は少ない。
+  $DR$ で割ったり $DR$ を引いたりすると、実際の店が置かれている場所から見た領域の形の効果を、その店の位置のまま取り除ける。
+  $RR$ はランダムの点どうしなので、領域全体で平均した形の効果しか表さない。}。
 組の総数はそれぞれ $n_d(n_d-1)/2$、$n_d n_r$、$n_r(n_r-1)/2$ と違うので、総数で割った $dd$、$dr$、$rr$ を使う。
+式~\eqref{eq:dd-xi} と同じ計算で、期待値は
+\begin{equation}
+  \langle dd \rangle = \frac{A_b}{S^2}\bigl(1 + \bar\xi_b\bigr), \qquad
+  \langle dr \rangle = \langle rr \rangle = \frac{A_b}{S^2}
+  \label{eq:pair-means}
+\end{equation}
+になる。
+ここで $\bar\xi_b$ は、ビン $b$ に入る組について平均した $\xi$ である。
+\begin{equation}
+  \bar\xi_b = \frac{1}{A_b} \int_W \! \int_W \Theta_b(r_{12})\, \xi(r_{12})\, dS_1\, dS_2 .
+\end{equation}
+$dr$ の期待値に $\xi$ が出ないのは、ランダムの点が店と相関をもたないからである。
+式~\eqref{eq:pair-means} の比をとると、領域の形 $A_b$ が消えて
+\begin{equation}
+  \frac{\langle dd \rangle}{\langle rr \rangle} - 1 = \bar\xi_b
+\end{equation}
+が残る。
+ランダムの点を増やすと $rr$ と $dr$ はそれぞれの期待値に近づき、ばらつきは $n_r^{-1/2}$ で小さくなる。
+したがって、ランダムの点が十分多い極限で、次の推定量の期待値はビンで平均した $\xi$ になる。
+ここでは、店の一点ずつの密度が $W$ の中で一様だとしている。
+人口に比例してランダムカタログを撒くときは、この一様を人口に比例する密度に置き換える（\ref{sec:random} 節）。
+
 比べるため、推定量は次の 4 つを実装した。
 \begin{align}
   \hat\xi_{\mathrm{N}}  &= \frac{dd}{rr} - 1, &
@@ -187,6 +230,22 @@ $\hat\xi_{\mathrm{DP}}$ は Davis と Peebles \cite{DavisPeebles1983}、$\hat\xi
 $\hat\xi_{\mathrm{LS}}$ は Landy と Szalay \cite{LandySzalay1993} による。
 実装は \href{\repourl/blob/main/crates/retail-cosmology/src/lib.rs}{\nolinkurl{crates/retail-cosmology/src/lib.rs}} にある。
 toy model で、相関のない点に当てると $0$ のまわりに散ることを確かめた（\ref{app:toy}）。
+
+四つの推定量に式~\eqref{eq:pair-means} の期待値を入れると、どれも $\bar\xi_b$ になる。
+ただし二つの近似がある。
+一つ目に、$\hat\xi_{\mathrm{DP}}$ と $\hat\xi_{\mathrm{H}}$ はデータから数えた $dd$ と $dr$ の比なので、比の期待値を期待値の比で置き換えた差が、データの揺れの 2 乗の大きさで残る。
+$\hat\xi_{\mathrm{N}}$ と $\hat\xi_{\mathrm{LS}}$ は、$rr$ を期待値に置き換えれば $dd$ と $dr$ の 1 次式なので、この差はない。
+二つ目に、平均の面密度をデータ自身の $n_d/S$ で決めているので、領域全体で積分した $\xi$ が $0$ に近づくように偏る（積分の制約）。
+本稿ではこの偏りを補正していない。
+
+極限では同じ量を測っているが、店の数が限られているときの揺れ方と、領域の端の効果の入り方が違う。
+natural の推定量 $\hat\xi_{\mathrm{N}}$ は、上の比をそのまま使う、いちばん素直な形である。
+$\hat\xi_{\mathrm{DP}}$ は $RR$ の代わりに $DR$ で割り、実際の店の位置から見た領域の形を使う。
+$\hat\xi_{\mathrm{H}}$ と $\hat\xi_{\mathrm{LS}}$ は $DD$、$DR$、$RR$ の三つを組み合わせる。
+Hamilton は、平均の密度の見積もりの誤差が $\hat\xi_{\mathrm{H}}$ には 2 次でしか入らないことを示した~\cite{Hamilton1993}。
+Landy と Szalay は、相関が弱いとき $\hat\xi_{\mathrm{LS}}$ の分散がポアソン過程の値まで小さくなり、端の効果による偏りも小さいことを示した~\cite{LandySzalay1993}。
+本稿では主に $\hat\xi_{\mathrm{LS}}$ を使い、ほかの三つは結果が推定量の選び方に左右されないかを見るために使う。
+四つの推定量の違いは、\ref{app:identities} で $\hat\xi_{\mathrm{N}}$ と $dr/rr - 1$ の二つの量で正確に書いた。
 
 二つのチェーンの店がどれだけ近くに並ぶかは、相互相関関数 $\xi_{\times}(r)$ で表す。
 式~\eqref{eq:xi-def} で、一点目を一方のチェーンの店、二点目をもう一方のチェーンの店に限ったものである。
