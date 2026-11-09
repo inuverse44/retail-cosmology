@@ -18,7 +18,8 @@
 \renewcommand{\abstractname}{要旨}
 
 \newcommand{\repourl}{https://github.com/inuverse44/retail-cosmology}
-\newcommand{\code}[1]{\texttt{#1}}
+\definecolor{codecolor}{RGB}{0,95,135}
+\newcommand{\code}[1]{\textcolor{codecolor}{\texttt{#1}}}
 
 \title{\textbf{スーパーの店舗分布の二点相関関数}}
 \author{Inuverse}
@@ -229,6 +230,7 @@ $dr$ の期待値に $\xi$ が出ないのは、ランダムの点が店と相�
 $\hat\xi_{\mathrm{DP}}$ は Davis と Peebles \cite{DavisPeebles1983}、$\hat\xi_{\mathrm{H}}$ は Hamilton \cite{Hamilton1993}、
 $\hat\xi_{\mathrm{LS}}$ は Landy と Szalay \cite{LandySzalay1993} による。
 実装は \href{\repourl/blob/main/crates/retail-cosmology/src/lib.rs}{\nolinkurl{crates/retail-cosmology/src/lib.rs}} にある。
+本文の数値と図表を作るコマンドは付録~\ref{app:repro} にまとめた。
 toy model で、相関のない点に当てると $0$ のまわりに散ることを確かめた（\ref{app:toy}）。
 
 四つの推定量に式~\eqref{eq:pair-means} の期待値を入れると、どれも $\bar\xi_b$ になる。
@@ -376,7 +378,6 @@ $S_{\max}$ は最初に撒いた 40,000 個の候補での最大値で、これ�
 この選択関数は幅 $R$ より長い距離の構造を基準に取り込む。
 そのため、$R/2$ より短い距離だけを読む。
 また、選択関数を店そのものから作るので、店が固まっている分の一部も基準に取り込まれ、$\hat\xi_{\mathrm{LS}}$ は小さめに出る。
-計算は \code{cargo run --release --bin xi -- 2026-11-03 --country jp --footprint 50,100,200} で行った。
 
 \subsection{誤差の見積もり}
 \label{sec:errors}
@@ -446,7 +447,7 @@ $K = 64$、$p = 14$ なら因子は $48/63 = 0.762$ で、$\chi^2$ は 2 割あ�
 店が数百しかないと共分散が粗く、GLS の重みがその粗さに左右される。
 ビンの間の相関が強いと、GLS はどのビンよりも外の値を返すことがある \cite{DAgostini1994}。
 トライアルの $R = 50\,\mathrm{km}$（\ref{sec:res-trial} 節）では、ビンの値 $0.056$ と $0.103$ から GLS は $0.118$ を返した。
-単純な平均なら、日本のどの量でも、乱数の種を変えて jackknife の領域の分け方を変えても、まとめた値は誤差の $0.15$ 倍以下しか動かない（設計の記録は \code{docs/adr/002-combine-bins-with-plain-mean.md}）。
+単純な平均なら、日本のどの量でも、乱数の種を変えて jackknife の領域の分け方を変えても、まとめた値は誤差の $0.15$ 倍以下しか動かない。\footnote{設計の記録は \code{docs/adr/002-combine-bins-with-plain-mean.md}。}
 
 店の数が数百しかないときは、jackknife の共分散が粗くなり、$\chi^2$ の上側確率は信用できなくなる（\ref{sec:res-trial} 節）。
 そこで、有意かどうかは帰無仮説の模擬データと比べて判断する。
@@ -465,9 +466,7 @@ $K = 64$、$p = 14$ なら因子は $48/63 = 0.762$ で、$\chi^2$ は 2 割あ�
   \caption{$\chi^2$ の上側確率を、帰無仮説の模擬データ 100 個と比べて校正した値。
     $\chi^2$ は Hartlap の因子をかけた値で、「$\chi^2$ 分布」はそれを自由度がビンの数の $\chi^2$ 分布（式~\eqref{eq:chi2-pdf}）と比べた上側確率。
     模擬データは、人口が基準の行では店と同じ数の点を人口だけに比例して撒き、$R$ の行では幅 $R$ の選択関数に従って撒いた。
-    日本の $R = 50$、$100\,\mathrm{km}$ の模擬データは \code{scripts/null\_mocks\_cross.sh} で作り、選択関数を点ごとに求めた。
-    ほかは \code{scripts/chi2\_mocks.sh} で作り、選択関数を 10 km 格子の表で求めた。
-    \code{cargo run --release --bin chi2\_calibrate -- 2026-11-01 2026-11-03} が書いた表。}
+    日本の $R = 50$、$100\,\mathrm{km}$ の模擬データでは選択関数を点ごとに求め、ほかは 10 km 格子の表で求めた。}
   \label{tab:chi2}
   \small
   \setlength{\tabcolsep}{5pt}
@@ -569,8 +568,7 @@ OSM では、同じ店が点（node）と建物の輪郭（way）の両方で描
   \includegraphics{stores_osm.pdf}
   \caption{OSM から取り出した Coles と Woolworths の店舗（2026年11月1日時点）。
     店舗は東海岸と南東部の都市に集まり、内陸にはほとんどない。
-    灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
-    \code{scripts/plot\_stores.py} で描いた。}
+    灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。}
   \label{fig:stores}
 \end{figure}
 
@@ -582,8 +580,7 @@ Coles は Full Year Results Release の Appendix~1 \cite{ColesFY26}、Woolworths
 地域の分け方は各社の表に合わせた。
 \begin{table}[t]
   \centering
-  \caption{地域ごとの店舗数。OSM は 2026年11月1日、公式は 2026年6月28日時点。
-    \code{cargo run --release --bin osm\_census -- 2026-11-01} が書いた表。}
+  \caption{地域ごとの店舗数。OSM は 2026年11月1日、公式は 2026年6月28日時点。}
   \label{tab:census}
   \input{../docs/tables/osm_census.tex}
 \end{table}
@@ -652,7 +649,7 @@ OSM の店舗はすべて陸地の格子に入り、人口が $0$ の格子に�
 日本の題材にはスーパーのトライアル（TRIAL）を選んだ。
 まず OSM から、オーストラリアと同じ方法で店を取り出した（2026年11月1日時点、47 都道府県ごと）。
 ところが、見つかったのは 232 店で、決算説明資料にある 378 店（2026年6月末）\cite{TrialFY26} の $61\%$ だった。
-オーストラリアの Coles と Woolworths が $99\%$ だったのとは、事情がまったく違う。
+オーストラリアの Coles と Woolworths が $99\%$ だったのとは、事情がまったく異なる。
 
 そこで、店の座標はトライアルの公式サイトの店舗検索 \cite{TrialSite} から取った。
 サイトの地図は店ごとの業態・緯度・経度・都道府県を返すので、住所から座標を推定する必要はない。
@@ -665,8 +662,7 @@ OSM の店舗はすべて陸地の格子に入り、人口が $0$ の格子に�
 \begin{table}[t]
   \centering
   \caption{トライアルの地方ごとの店舗数。サイトは 2026年11月3日、公式は 2026年6月末時点。
-    OSM で一致は、サイトの店から $300\,\mathrm{m}$ 以内に OSM の店があった数。
-    \code{cargo run --release --bin trial\_census -- 2026-11-03 2026-11-01} が書いた表。}
+    OSM で一致は、サイトの店から $300\,\mathrm{m}$ 以内に OSM の店があった数。}
   \label{tab:trial}
   \small
   \input{../docs/tables/trial_site_census.tex}
@@ -698,8 +694,7 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 数えた店は 243 店で、決算説明資料の 243 店（2026年6月末）と一致した（表~\ref{tab:seiyu}）。
 \begin{table}[t]
   \centering
-  \caption{西友の地方ごとの店舗数。サイトは 2026年11月4日、公式は 2026年6月末時点。
-    \code{cargo run --release --bin seiyu\_census -- 2026-11-04 2026-11-03} が書いた表。}
+  \caption{西友の地方ごとの店舗数。サイトは 2026年11月4日、公式は 2026年6月末時点。}
   \label{tab:seiyu}
   \small
   \input{../docs/tables/seiyu_site_census.tex}
@@ -722,8 +717,7 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
   \includegraphics{stores_jp.pdf}
   \caption{公式サイトから取ったトライアル（2026年11月3日）と西友（2026年11月4日）の店舗。
     灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
-    店のない沖縄は範囲の外にある。
-    \code{scripts/plot\_stores\_jp.py} で描いた。}
+    店のない沖縄は範囲の外にある。}
   \label{fig:stores-jp}
 \end{figure}
 
@@ -742,17 +736,13 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 \subsection{オーストラリア：Coles と Woolworths}
 \label{sec:res-au}
 
-計算は \code{cargo run --release --bin xi -- 2026-11-01} で行った。
-
-結果を図~\ref{fig:xi} に示す。
 \begin{figure}[t]
   \centering
   \includegraphics{xi_stores.pdf}
   \caption{店舗の二点相関関数。誤差棒は jackknife（64 領域）の標準偏差。
     (a) 陸地に一様なランダムカタログを使った $\hat\xi_{\mathrm{LS}}$。灰色は人口そのもの。
     (b) (a) の店の値を人口の値で割った比。
-    (c) 人口に比例するランダムカタログを使った $\hat\xi_{\mathrm{LS}}$（点と実線）、natural の推定量 $\hat\xi_{\mathrm{N}}$（破線）、$dr/rr - 1$（点線）。破線と実線の差は点線の 2 倍（式~\eqref{eq:n-minus-ls}）。
-    \code{scripts/plot\_xi.py} で描いた。}
+    (c) 人口に比例するランダムカタログを使った $\hat\xi_{\mathrm{LS}}$（点と実線）、natural の推定量 $\hat\xi_{\mathrm{N}}$（破線）、$dr/rr - 1$（点線）。破線と実線の差は点線の 2 倍（式~\eqref{eq:n-minus-ls}）。}
   \label{fig:xi}
 \end{figure}
 
@@ -857,8 +847,7 @@ $R = 100\,\mathrm{km}$ で $8.0$--$31.7\,\mathrm{km}$ の 3 ビンをまとめ�
     (a) 人口に比例するランダムカタログに対する $dr/rr - 1$。
     (b) 人口に比例するランダムカタログに対する $\hat\xi_{\mathrm{LS}}$。
     (c) 人が住む格子に一様なランダムカタログでの、店と人口の $\hat\xi_{\mathrm{LS}}$ の比。
-    白抜きの点はトライアルの店を OSM から取ったもの。
-    \code{scripts/plot\_compare.py} で描いた。}
+    白抜きの点はトライアルの店を OSM から取ったもの。}
   \label{fig:compare}
 \end{figure}
 
@@ -893,8 +882,7 @@ OSM は 4 割の店を拾い漏らしているが、上の結論は変わらな�
   \caption{選択関数を入れたランダムカタログに対する $\hat\xi_{\mathrm{LS}}$。誤差棒は jackknife（64 領域）。
     (a) トライアル。灰色は人口だけを基準にしたもの、青は選択関数を入れたもので、濃いほど $R$ が小さい。
     (b) $R = 100\,\mathrm{km}$ でのトライアル、Coles、Woolworths。
-    (c) 帰無仮説の模擬データ 100 個での、$8.0$--$20.0\,\mathrm{km}$ の 2 ビンをまとめた値の分布（$R = 50\,\mathrm{km}$）と、トライアルの値。
-    \code{scripts/plot\_footprint.py} で描いた。}
+    (c) 帰無仮説の模擬データ 100 個での、$8.0$--$20.0\,\mathrm{km}$ の 2 ビンをまとめた値の分布（$R = 50\,\mathrm{km}$）と、トライアルの値。}
   \label{fig:footprint}
 \end{figure}
 
@@ -909,7 +897,6 @@ $R = 50\,\mathrm{km}$ の値が最も控えめな見積もりである。
 
 トライアルの店は 375 店しかないので、この方法そのものが見せかけの相関を作っていないかを、帰無仮説の模擬データ（\ref{sec:errors} 節）で確かめた。
 選択関数は $R = 50\,\mathrm{km}$ とし、乱数の種を変えて 100 回繰り返した。
-計算は \code{scripts/null\_mocks.sh 2026-11-03 jp 50 100 6} で行った。
 
 $8.0$--$20.0\,\mathrm{km}$ の 2 ビンをまとめた値は、模擬データでは平均 $-0.027$、標準偏差 $0.024$、最大 $0.049$ だった（図~\ref{fig:footprint}(c)）。
 平均が負なのは、選択関数が相関の一部を取り込むためである。
@@ -943,7 +930,6 @@ $\chi^2$ は相関の符号を見ないので、模擬データの負の偏り�
 \label{sec:res-seiyu}
 
 西友とトライアル、二社の相互相関の結果を図~\ref{fig:cross} にまとめる。
-計算はトライアルと西友の店のファイルを両方渡して行った（\code{cargo run --release --bin xi -- 2026-11-03 --country jp --stores <トライアル>,<西友> --cross TRIAL,SEIYU --footprint 50,100,200}）。
 \begin{figure}[t]
   \centering
   \includegraphics{xi_cross.pdf}
@@ -953,8 +939,7 @@ $\chi^2$ は相関の符号を見ないので、模擬データの負の偏り�
     (c) $R = 50\,\mathrm{km}$ で $8.0$--$20.0\,\mathrm{km}$ の 2 ビンをまとめた $\hat\xi_{\times}$ の、帰無仮説の模擬データ 100 個での分布と、実際の値（縦線）。
     薄い灰色は二社とも地方だけをそろえて撒き直した模擬データ、濃い灰色の破線は密集地への寄り方もそろえたもの、
     青はトライアルを実際の位置のまま残して西友だけを撒き直したもの、赤は西友を残してトライアルだけを撒き直したもの。
-    (d) (c) と同じものを $R = 100\,\mathrm{km}$、$8.0$--$31.7\,\mathrm{km}$ の 3 ビンで。
-    \code{scripts/plot\_cross.py} で描いた。}
+    (d) (c) と同じものを $R = 100\,\mathrm{km}$、$8.0$--$31.7\,\mathrm{km}$ の 3 ビンで。}
   \label{fig:cross}
 \end{figure}
 
@@ -1114,8 +1099,7 @@ Hamilton と Landy--Szalay の値はほぼ重なり、natural は他の 3 つと
 \begin{figure}[t]
   \centering
   \includegraphics{toy_poisson.pdf}
-  \caption{単位正方形のポアソン点に対する 4 つの推定量。
-    \code{cargo run --release --bin toy} の出力を \code{scripts/plot\_toy.py} で描いた。}
+  \caption{単位正方形のポアソン点に対する 4 つの推定量。}
   \label{fig:toy}
 \end{figure}
 
@@ -1137,8 +1121,7 @@ toy model では、jackknife は誤差をやや大きめに見積もったこと
   \includegraphics{jk_regions.pdf}
   \caption{jackknife の 64 の領域。
     人口に比例するランダムの点を、領域ごとの色で打った。
-    \code{cargo run --release --bin jk\_regions -- --country au}（\code{jp}）の出力を \code{scripts/plot\_jk\_regions.py} で描いた。
-    種と点の数と深さは xi の既定と同じで、本文の誤差に使った領域と同じ領域が出る。}
+    本文の誤差に使った領域と同じ。}
   \label{fig:jk-regions}
 \end{figure}
 
@@ -1322,8 +1305,7 @@ $N$ を $10{,}000$、$20{,}000$、$40{,}000$ と変え、$N = 20{,}000$ で乱�
   \centering
   \caption{オーストラリアの幾何の因子と、$DD$ の相対標準偏差 $\sqrt{\mathrm{Var}[DD]}/\mathbb{E}[DD]$。
     「固定」は店の数を固定した式~\eqref{eq:var-fixed}、「ポアソン」は店の数をポアソン分布で揺らした式~\eqref{eq:var-poisson} による。
-    $G_p$ と $G_t$ は人口に比例して撒いた $40{,}000$ 点のランダムカタログから式~\eqref{eq:g-estimate} で求めた。
-    \code{cargo run --release --bin var\_dd -- 2026-11-01} が書いた表。}
+    $G_p$ と $G_t$ は人口に比例して撒いた $40{,}000$ 点のランダムカタログから式~\eqref{eq:g-estimate} で求めた。}
   \label{tab:var-au}
   \small
   \input{../docs/tables/var_dd_au.tex}
@@ -1348,8 +1330,7 @@ $\hat\xi_{\mathrm{N}} = dd/rr - 1$ の誤差は式~\eqref{eq:var-fixed} から�
   \caption{オーストラリアの店の $\hat\xi$ の jackknife の誤差（点）と、$DD$ の相対標準偏差の式（線）。
     基準は人口に比例するランダムカタログ。
     実線は店の数を固定した式~\eqref{eq:var-fixed}、破線はその $n^2$ の項だけ。
-    黒丸は natural、白抜きの四角は Landy--Szalay の推定量の誤差。
-    \code{scripts/plot\_var\_dd.py} で描いた。}
+    黒丸は natural、白抜きの四角は Landy--Szalay の推定量の誤差。}
   \label{fig:var-au}
 \end{figure}
 
@@ -1389,5 +1370,54 @@ $\epsilon$ の揺れは、データの点がたまたまランダムカタログ
 式~\eqref{eq:id-ls} で $2\epsilon$ を引く Landy--Szalay は、この共通の揺れを打ち消す。
 \ref{app:var-dd} の $n^3$ の項がこの揺れに当たり、オーストラリアの $30$--$500\,\mathrm{km}$ で $\hat\xi_{\mathrm{LS}}$ の誤差が $\hat\xi_{\mathrm{N}}$ より小さかったのはこのためである（図~\ref{fig:var-au}）。
 式~\eqref{eq:id-ls}--\eqref{eq:id-h} は実装の関数で成り立つことをテストで確かめた（\code{cargo test --lib estimator\_identities}、\href{\repourl/blob/main/crates/retail-cosmology/src/engine/estimator.rs}{\nolinkurl{crates/retail-cosmology/src/engine/estimator.rs}}）。
+
+\section{再現の手順}
+\label{app:repro}
+
+本文の数値と図表は、リポジトリ \url{\repourl} の次のコマンドで作った。
+計算は Rust（\code{cargo run --release --bin …}）、描画は Python（\code{uv run scripts/…}）で行う。
+日付の引数は、店のデータを取った日である（オーストラリアの OSM は 2026-11-01、トライアルのサイトは 2026-11-03、西友のサイトは 2026-11-04）。
+描画のスクリプトの冒頭には、その図に要る計算のコマンドを順に書いてある。
+
+\paragraph{二点相関関数}
+\begin{itemize}
+  \item オーストラリア（\ref{sec:res-au} 節、図~\ref{fig:xi}）：\code{xi -- 2026-11-01}
+  \item トライアル（\ref{sec:res-trial} 節）：\code{xi -- 2026-11-03 --country jp --footprint 50,100,200}
+  \item 西友と相互相関（\ref{sec:res-seiyu}、\ref{sec:res-cross} 節）：\code{xi -- 2026-11-03 --country jp --stores \$T,\$S --cross TRIAL,SEIYU --footprint 50,100,200}\\
+    \code{\$T} はトライアルの店のファイル \code{data/trial\_site/trial\_site\_clean\_2026-11-03.csv}\\
+    \code{\$S} は西友の店のファイル \code{data/seiyu\_site/seiyu\_site\_clean\_2026-11-04.csv}
+  \item 設定を変えた計算（表~\ref{tab:robust}）：上に \code{--n-random 50000}、\code{--n-pop 10000}、\code{--depth 5}（32 領域）か \code{4}（16 領域）、\code{--seed 2} か \code{3} を足す。
+\end{itemize}
+
+\paragraph{帰無仮説の模擬データ}
+\begin{itemize}
+  \item トライアルの $R = 50\,\mathrm{km}$（\ref{sec:res-trial} 節）：\code{scripts/null\_mocks.sh 2026-11-03 jp 50 100 6}
+  \item 西友と相互相関：\code{scripts/null\_mocks\_cross.sh}（引数は \code{scripts/plot\_cross.py} の冒頭）
+  \item $\chi^2$ の校正（表~\ref{tab:chi2}）：模擬データを \code{scripts/chi2\_mocks.sh} と上の二つで作り、\code{chi2\_calibrate -- 2026-11-01 2026-11-03} で表にする。
+\end{itemize}
+
+\paragraph{表}
+\begin{itemize}
+  \item 表~\ref{tab:census}：\code{osm\_census -- 2026-11-01}
+  \item 表~\ref{tab:trial}：\code{trial\_census -- 2026-11-03 2026-11-01}
+  \item 表~\ref{tab:seiyu}：\code{seiyu\_census -- 2026-11-04 2026-11-03}
+  \item 表~\ref{tab:var-au}：\code{var\_dd -- 2026-11-01}
+\end{itemize}
+
+\paragraph{図}
+\begin{itemize}
+  \item 図~\ref{fig:patterns}：\code{scripts/plot\_patterns.py}
+  \item 図~\ref{fig:random}：\code{random\_points} のあと \code{scripts/plot\_random.py}
+  \item 図~\ref{fig:selection}：\code{selection\_map -- 2026-11-03} のあと \code{scripts/plot\_selection.py}
+  \item 図~\ref{fig:stores}：\code{scripts/plot\_stores.py}
+  \item 図~\ref{fig:stores-jp}：\code{scripts/plot\_stores\_jp.py}
+  \item 図~\ref{fig:xi}：\code{scripts/plot\_xi.py}
+  \item 図~\ref{fig:compare}：\code{scripts/plot\_compare.py}
+  \item 図~\ref{fig:footprint}：\code{scripts/plot\_footprint.py}
+  \item 図~\ref{fig:cross}：\code{scripts/plot\_cross.py}
+  \item 図~\ref{fig:toy}：\code{toy} のあと \code{scripts/plot\_toy.py}
+  \item 図~\ref{fig:jk-regions}：\code{jk\_regions -- --country au}（\code{jp}）のあと \code{scripts/plot\_jk\_regions.py}
+  \item 図~\ref{fig:var-au}：\code{scripts/plot\_var\_dd.py}
+\end{itemize}
 
 \end{document}
