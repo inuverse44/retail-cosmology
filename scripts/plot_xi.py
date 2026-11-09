@@ -60,13 +60,18 @@ def main() -> None:
         fs.errorbar(ax, r * fs.SHIFT[s], v, e, s, label="_")
         r, v, e = d[("dr_over_rr_minus_1", s, "population")]
         ax.plot(r * fs.SHIFT[s], v, color=fs.COLOR[s], ls=":", lw=1.0)
+        # 式 (n-minus-ls)：natural と LS の差が dr/rr - 1 の 2 倍になることを見せる
+        r, v, e = d[("natural", s, "population")]
+        ax.plot(r * fs.SHIFT[s], v, color=fs.COLOR[s], ls="--", lw=0.8)
     ax.set_xscale("log")
+    ax.set_ylim(-0.36, 0.16)  # 凡例を曲線の下に置く余白
     ax.set_xlabel(r"$r$ [km]")
     ax.set_ylabel(r"$\hat\xi$")
     fs.panel(ax, "c", "weighted by population")
     ax.legend(
         handles=[
             Line2D([], [], color="0.2", marker="o", label=r"$\hat\xi_{\mathrm{LS}}$"),
+            Line2D([], [], color="0.2", ls="--", label=r"$\hat\xi_{\mathrm{N}}$"),
             Line2D([], [], color="0.2", ls=":", label=r"$dr/rr - 1$"),
         ],
         loc="lower right",
