@@ -1,8 +1,8 @@
-//! ResourceAccess：結果のファイル（CSV、テキスト、TeX の表）を書く。xi が書いた χ² の行を読む。
+//! ResourceAccess：結果のファイル（CSV、テキスト、TeX の表）を書く。xi が書いた χ² の行とビンごとの値を読む。
 
 use std::path::Path;
 
-use crate::contract::Chi2Record;
+use crate::contract::{BinValue, Chi2Record};
 
 /// 文字列をファイルに書く。親のフォルダがなければ作る。
 pub fn write_text(path: &Path, text: &str) -> std::io::Result<()> {
@@ -20,6 +20,38 @@ pub fn read_chi2(path: &Path) -> std::io::Result<Vec<Chi2Record>> {
         .lines()
         .filter_map(parse_chi2_line)
         .collect())
+}
+
+/// ビンごとの値の CSV を読む。見出しが seed で始まれば模擬データの形
+/// （seed,quantity,sample,r_lo_km,r_hi_km,value,sigma）、そうでなければ xi の形
+/// （quantity,sample,random,r_lo_km,r_hi_km,value,sigma）として読む。
+pub fn read_bins(path: &Path) -> std::io::Result<Vec<BinValue>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut lines = text.lines();
+    let mock = lines.next().is_some_and(|h| h.starts_with("seed,"));
+    Ok(lines.filter_map(|l| parse_bin_line(l, mock)).collect())
+}
+
+fn parse_bin_line(line: &str, mock: bool) -> Option<BinValue> {
+    let f: Vec<&str> = line.split(',').collect();
+    if f.len() < 7 {
+        return None;
+    }
+    let (seed, random) = if mock {
+        (Some(f[0].parse().ok()?), String::new())
+    } else {
+        (None, f[2].to_string())
+    };
+    let (q, s) = if mock { (f[1], f[2]) } else { (f[0], f[1]) };
+    Some(BinValue {
+        seed,
+        quantity: q.into(),
+        sample: s.into(),
+        random,
+        r_lo_km: f[3].parse().ok()?,
+        r_hi_km: f[4].parse().ok()?,
+        value: f[5].parse().ok()?,
+    })
 }
 
 fn parse_chi2_line(line: &str) -> Option<Chi2Record> {
@@ -64,5 +96,28 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn parses_xi_and_mock_bin_lines() {
+        let x = parse_bin_line(
+            "ls_cross,TRIALxSEIYU,footprint_50,2,3.17,-0.145,0.264",
+            false,
+        )
+        .unwrap();
+        assert_eq!(x.seed, None);
+        assert_eq!(
+            (x.quantity.as_str(), x.random.as_str()),
+            ("ls_cross", "footprint_50")
+        );
+        assert_eq!((x.r_lo_km, x.r_hi_km, x.value), (2.0, 3.17, -0.145));
+        let m = parse_bin_line("7,ls,SEIYU,3.17,5.02,0.25,0.3", true).unwrap();
+        assert_eq!(m.seed, Some(7));
+        assert_eq!(
+            (m.quantity.as_str(), m.sample.as_str(), m.random.as_str()),
+            ("ls", "SEIYU", "")
+        );
+        assert_eq!(m.value, 0.25);
+        assert!(parse_bin_line("quantity,sample", false).is_none());
     }
 }

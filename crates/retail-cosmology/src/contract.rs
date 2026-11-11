@@ -104,6 +104,23 @@ pub struct Chi2Record {
     pub p: f64,
 }
 
+/// xi が書いたビンごとの値の一行（data/xi/xi_….csv）か、模擬データのビンごとの値の一行
+/// （scripts/null_mocks_cross.sh が書いた …_bins.csv）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct BinValue {
+    /// 模擬データの種（実際の店の値では None）
+    pub seed: Option<u64>,
+    /// 量（例：ls、ls_cross）
+    pub quantity: String,
+    /// 標本（例：TRIAL、TRIALxSEIYU）
+    pub sample: String,
+    /// 基準（例：footprint_50）。模擬データのファイルには列がないので空
+    pub random: String,
+    pub r_lo_km: f64,
+    pub r_hi_km: f64,
+    pub value: f64,
+}
+
 /// 決算資料にある地域ごとの店舗数。
 #[derive(Clone, Debug)]
 pub struct OfficialCount {
