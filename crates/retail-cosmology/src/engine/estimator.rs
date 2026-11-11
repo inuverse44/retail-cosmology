@@ -203,6 +203,36 @@ pub fn mock_sf(observed: f64, mocks: &[f64]) -> (usize, f64) {
     (k, k as f64 / mocks.len() as f64)
 }
 
+/// 模擬データの値の分布の要約と、実際の値との比べ方。
+#[derive(Clone, Debug, PartialEq)]
+pub struct MockSummary {
+    pub n: usize,
+    pub mean: f64,
+    /// 標本標準偏差（n - 1 で割る）
+    pub sd: f64,
+    pub min: f64,
+    pub max: f64,
+    /// 実際の値以上の模擬データの数
+    pub n_ge: usize,
+    /// 実際の値以下の模擬データの数
+    pub n_le: usize,
+}
+
+pub fn mock_summary(observed: f64, mocks: &[f64]) -> MockSummary {
+    let n = mocks.len();
+    let mean = mocks.iter().sum::<f64>() / n as f64;
+    let sd = (mocks.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / (n as f64 - 1.0)).sqrt();
+    MockSummary {
+        n,
+        mean,
+        sd,
+        min: mocks.iter().copied().fold(f64::INFINITY, f64::min),
+        max: mocks.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        n_ge: mock_sf(observed, mocks).0,
+        n_le: mocks.iter().filter(|m| **m <= observed).count(),
+    }
+}
+
 /// χ² 分布の上側確率 P(χ² > x)（自由度 dof は任意）。正則化された上側不完全ガンマ関数 Q(dof/2, x/2)。
 /// 級数（x < a + 1）と連分数（それ以外）で求める（Numerical Recipes の gammq と同じ方法）。
 pub fn chi2_sf(x: f64, dof: usize) -> f64 {
@@ -384,6 +414,14 @@ mod tests {
         let cov = vec![vec![1.0, 0.999], vec![0.999, 1.0]];
         let (_, s) = gls_mean(&[1.0, 1.0], &cov, 1.0).unwrap();
         assert!(s > 0.99);
+    }
+
+    #[test]
+    fn mock_summary_counts_both_sides() {
+        let m = mock_summary(2.0, &[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!((m.n, m.n_ge, m.n_le), (4, 3, 2));
+        assert_eq!((m.mean, m.min, m.max), (2.5, 1.0, 4.0));
+        assert!((m.sd - (5.0_f64 / 3.0).sqrt()).abs() < 1e-12);
     }
 
     #[test]

@@ -13,6 +13,7 @@
 #   という帰無仮説になる。
 #   例：scripts/null_mocks_cross.sh 2026-11-03 data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv TRIAL,SEIYU 50 100 6
 # 出力：data/xi/null_mocks_cross_<A>x<B>_<R>[_density][_grid][_keep<チェーン>].txt（模擬データごとに、A・B それぞれの ξ と相互相関の、χ² の行とまとめた値の行）
+#       同じ名前の _bins.csv（模擬データごとの、選択関数つきの ξ_LS と相互相関のビンごとの値。#50）
 set -euo pipefail
 date="${1:?日付}"; stores="${2:?店のファイル}"; pair="${3:?A,B}"; r="${4:?R}"; n="${5:?個数}"; jobs="${6:-4}"; mode="${7:-}"
 extra=""; suffix=""
@@ -30,11 +31,15 @@ one() {
   local s="$1"
   target/release/xi "$date" --country jp --stores "$stores" --cross "$pair" --footprint "$r" --mock "$r:$s" $extra --tag "crossmock$s" 2>/dev/null
   { echo "== 種 $s"; grep "footprint_$r" "data/xi/chi2_jp_${date}_crossmock$s.txt"; } > "$work/$s.txt"
+  # ビンごとの値（8 km より短い距離を比べるため、#50）：種,量,標本,r_lo,r_hi,値,誤差
+  grep -E "^(ls|ls_cross),[^,]+,footprint_$r," "data/xi/xi_jp_${date}_crossmock$s.csv" \
+    | cut -d, -f1,2,4- | sed "s/^/$s,/" > "$work/$s.csv"
   rm "data/xi/chi2_jp_${date}_crossmock$s.txt" "data/xi/xi_jp_${date}_crossmock$s.csv"
 }
 export -f one
 seq 1 "$n" | xargs -P "$jobs" -n 1 bash -c 'one "$0"'
 out="data/xi/null_mocks_cross_${label}_${r}${suffix}.txt"
 for s in $(seq 1 "$n"); do cat "$work/$s.txt"; done > "$out"
+{ echo "seed,quantity,sample,r_lo_km,r_hi_km,value,sigma"; for s in $(seq 1 "$n"); do cat "$work/$s.csv"; done; } > "${out%.txt}_bins.csv"
 rm -r "$work"
 echo "$out"
