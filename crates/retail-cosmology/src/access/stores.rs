@@ -1,12 +1,14 @@
 //! ResourceAccess：店のカタログを読み書きする。
 //! OSM の TSV（`scripts/osm/fetch.sh` が書く）、トライアルの公式サイトの JSON（`scripts/trial_site/fetch.sh` が書く）、
 //! 西友の公式サイトの HTML（`scripts/seiyu_site/fetch.sh` が書く）、
+//! コスモスの公式サイトの都道府県ごとの一覧の HTML（ブラウザで保存したもの）と、住所から推定した座標の TSV
+//! （`scripts/cosmos_site/geocode.sh` が書く）、
 //! 選び出した店の CSV（`*_clean_*.csv`）と、二重とみなした組の CSV。
 
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::contract::{OsmElement, SiteStore, Store};
+use crate::contract::{Geocoded, ListedStore, OsmElement, SiteStore, Store};
 use crate::util::geo::LatLon;
 
 /// OSM の TSV のファイルを読む。
@@ -241,6 +243,118 @@ pub fn write_near_pairs(path: &Path, rows: &[NearPairRow]) -> std::io::Result<()
         .unwrap();
     }
     std::fs::write(path, csv)
+}
+
+/// コスモスの公式サイトの、都道府県ごとの店舗一覧のページ（ブラウザで保存した HTML）を読む。
+/// 同じ店が二つのファイルに載っていれば一つにする（`id` は店のページの番号）。
+pub fn read_cosmos_site(dir: &Path) -> Result<Vec<ListedStore>, Box<dyn std::error::Error>> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "html"))
+        .collect();
+    files.sort();
+    let mut out: Vec<ListedStore> = Vec::new();
+    for f in files {
+        for s in parse_cosmos_list(&std::fs::read_to_string(&f)?) {
+            if !out.iter().any(|o| o.id == s.id) {
+                out.push(s);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 一覧のページ。店ごとの `<div class="mix shop-list_box …">` の中に、店のページへのリンク
+/// （…/shop/<地方>/<県>/<番号>.html）、店名（`<h3>` の中のルビつきの名前）、〒のあとの住所がある。
+/// 店名のあとに「オープン予定」とある店は `planned` にする。
+pub fn parse_cosmos_list(text: &str) -> Vec<ListedStore> {
+    let mut out = Vec::new();
+    for block in text.split(r#"<div class="mix shop-list_box"#).skip(1) {
+        let Some(href) = attr(block, "href") else {
+            continue;
+        };
+        let mut parts = href.rsplit('/');
+        let _file = parts.next();
+        let _pref = parts.next();
+        let area = parts.next().unwrap_or_default().to_string();
+        let id = href
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(".html")
+            .to_string();
+        let h3 = block
+            .split_once("<h3>")
+            .and_then(|(_, r)| r.split_once("</h3>"))
+            .map(|(h, _)| h)
+            .unwrap_or_default();
+        let planned = h3.contains("オープン予定");
+        // ルビの読み（<rt>…</rt>）と、店名のあとの注記（<span class="sub">…</span>）を外してから、タグを消す
+        let mut name = String::new();
+        let mut rest = h3.split(r#"<span class="sub">"#).next().unwrap_or_default();
+        while let Some((a, b)) = rest.split_once("<rt>") {
+            name.push_str(a);
+            rest = b.split_once("</rt>").map(|(_, c)| c).unwrap_or_default();
+        }
+        name.push_str(rest);
+        let name = strip_tags(&name);
+        let address = block
+            .split_once(r#"<span class="zip">"#)
+            .and_then(|(_, r)| r.split_once("<br>"))
+            .and_then(|(_, r)| r.split_once("</dd>"))
+            .map(|(a, _)| strip_tags(a).trim().to_string())
+            .unwrap_or_default();
+        out.push(ListedStore {
+            id,
+            area,
+            name,
+            address,
+            planned,
+        });
+    }
+    out
+}
+
+fn strip_tags(s: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for c in s.chars() {
+        match c {
+            '<' => inside = true,
+            '>' => inside = false,
+            _ if !inside => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 住所を引く店の一覧を TSV に書く（id、住所）。`scripts/cosmos_site/geocode.sh` がこれを読む。
+pub fn write_addresses(path: &Path, stores: &[ListedStore]) -> std::io::Result<()> {
+    let mut s = String::new();
+    for st in stores {
+        let _ = writeln!(s, "{}\t{}", st.id, st.address);
+    }
+    std::fs::write(path, s)
+}
+
+/// `scripts/cosmos_site/geocode.sh` が書いた TSV（id、経度、緯度、当たった住所）を読む。
+pub fn read_geocoded(path: &Path) -> std::io::Result<Vec<Geocoded>> {
+    Ok(std::fs::read_to_string(path)?
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() >= 4).then_some(())?;
+            Some(Geocoded {
+                id: f[0].to_string(),
+                pos: LatLon {
+                    lon: f[1].parse().ok()?,
+                    lat: f[2].parse().ok()?,
+                },
+                matched: f[3].to_string(),
+            })
+        })
+        .collect())
 }
 
 #[cfg(test)]
