@@ -450,10 +450,10 @@ pub fn seiyu_site(
 /// コスモスの決算短信の地区（表の順）
 const COSMOS_REGIONS: [&str; 6] = ["関東", "中部", "関西", "中国", "四国", "九州"];
 
-/// 推定した座標がどの細かさで当たったか。住所検索が返した住所が「番」か「号」で終われば街区まで、
+/// 推定した座標がどの細かさで当たったか。住所検索が返した住所が「番」「号」「番地」で終われば街区か地番まで、
 /// そうでなければ町・字（大字）までしか当たっていない。
 fn geocode_level(matched: &str) -> &'static str {
-    if matched.ends_with('番') || matched.ends_with('号') {
+    if matched.ends_with('番') || matched.ends_with('号') || matched.ends_with("番地") {
         "街区"
     } else {
         "町字"

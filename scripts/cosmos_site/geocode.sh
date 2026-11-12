@@ -16,12 +16,8 @@ in="$dir/addresses.tsv"
 out="$dir/geocode.tsv"
 touch "$out"
 ua="retail-cosmology research script"
-n=0
-fail=0
-while IFS=$'\t' read -r id addr; do
-  if grep -q "^${id}"$'\t' "$out"; then continue; fi
-  json="$(curl -sS --max-time 30 -A "$ua" -G --data-urlencode "q=$addr" https://msearch.gsi.go.jp/address-search/AddressSearch || true)"
-  line="$(printf '%s' "$json" | python3 -I -c '
+# 住所検索の答え（JSON）から、最初の候補の経度、緯度、当たった住所をタブ区切りで出す
+parse='
 import json, sys
 try:
     r = json.load(sys.stdin)
@@ -31,7 +27,19 @@ if r:
     lon, lat = r[0]["geometry"]["coordinates"]
     title = r[0]["properties"]["title"]
     print(f"{lon}\t{lat}\t{title}")
-')"
+'
+n=0
+fail=0
+while IFS=$'\t' read -r id addr; do
+  if grep -q "^${id}"$'\t' "$out"; then continue; fi
+  json="$(curl -sS --max-time 30 -A "$ua" -G --data-urlencode "q=$addr" https://msearch.gsi.go.jp/address-search/AddressSearch || true)"
+  line="$(printf '%s' "$json" | python3 -I -c "$parse")"
+  if [ -z "$line" ] && [[ "$addr" == *丁目* ]]; then
+    # 「３丁目６」が実際には「３番６号」の町がある（愛知県蒲郡市八百富町）。丁目を「-」にして引き直す
+    sleep 1
+    json="$(curl -sS --max-time 30 -A "$ua" -G --data-urlencode "q=${addr//丁目/-}" https://msearch.gsi.go.jp/address-search/AddressSearch || true)"
+    line="$(printf '%s' "$json" | python3 -I -c "$parse")"
+  fi
   if [ -n "$line" ]; then
     printf '%s\t%s\n' "$id" "$line" >> "$out"
     fail=0
