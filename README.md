@@ -101,6 +101,7 @@ cargo run --release --bin cost -- 100 40000            # data/cost/cost_R100.csv
 uv run scripts/plot_cost.py                            # docs/figures/cost_*.{pdf,png}
 cd notes && latexmk -lualatex algorithm-cost.tex
 cd notes && latexmk -lualatex retail-cosmology.tex
+scripts/check_note.sh   # PR の前に：組んで、「付録 付録C」の重なり・はみ出し・未定義の参照を探す
 
 # コードの構成を変える前と後で、すべての出力が変わらないことを確かめる
 scripts/check_outputs.sh > before.txt   # 変える前
