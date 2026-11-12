@@ -55,6 +55,9 @@ pub struct Params {
     pub mock_keep: Vec<String>,
     /// 相互相関を測る二つのチェーンの名前（例：TRIAL と SEIYU）。None なら測らない
     pub cross: Option<(String, String)>,
+    /// この都道府県（番号 1〜47）の中だけで測る（日本だけ、#51）。空なら国全体。
+    /// 人口の格子をこれらの県の 3 次メッシュに限り、店もその格子に入るものだけを残す。
+    pub prefectures: Vec<u32>,
 }
 
 impl Params {
@@ -75,6 +78,7 @@ impl Params {
             selection_grid: false,
             mock_keep: Vec::new(),
             cross: None,
+            prefectures: Vec::new(),
         }
     }
 }
@@ -107,10 +111,20 @@ fn dataset(root: &Path, p: &Params) -> Result<Dataset, Box<dyn std::error::Error
         }
         "jp" => {
             default_path = format!("data/trial_site/trial_site_clean_{}.csv", p.date);
+            let grid = if p.prefectures.is_empty() {
+                population::read_estat(&root.join("data/estat"))?
+            } else {
+                let keep = population::read_mesh_prefectures(
+                    &root.join("data/estat/mesh_pref"),
+                    &p.prefectures,
+                )
+                .map_err(|e| format!("scripts/estat/fetch_mesh_prefecture.sh を先に：{e}"))?;
+                population::read_estat_in(&root.join("data/estat"), |c| keep.contains(&c))?
+            };
             Dataset {
-                grid: population::read_estat(&root.join("data/estat"))?,
+                grid,
                 store_path: String::new(),
-                chains: vec!["TRIAL", "SEIYU"],
+                chains: vec!["TRIAL", "SEIYU", "COSMOS"],
                 prefix: "jp_",
             }
         }
@@ -152,6 +166,14 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
                 .ok_or_else(|| format!("{path} に知らないチェーン：{chain}"))?
                 .1
                 .push(pos);
+        }
+    }
+    if !p.prefectures.is_empty() {
+        // 県の中だけで測るときは、その県の格子に入る店だけを残す
+        for (c, v) in stores.iter_mut() {
+            let before = v.len();
+            v.retain(|q| grid.geometry.cell_of(q).is_some());
+            eprintln!("{c}：県 {:?} の格子に入る店 {} / {before}", p.prefectures, v.len());
         }
     }
     // 店のファイルに出てこないチェーンは測らない
@@ -553,19 +575,27 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             summaries.push(summarize(&format!("{s} の dr/rr - 1（人口が基準）"), &drr));
             // Landy–Szalay が全部のビンで 0 と合うかを、共分散を使った χ² で調べる。
             // jackknife の共分散の逆行列の偏りを Hartlap の因子 (K - p - 2)/(K - 1) で直す。
-            let x = &ls.value[first..];
-            let cov: Vec<Vec<f64>> = ls.cov[first..]
+            // 組のないビン（九州の中だけで測るときの長い距離など、#51）は値が NaN になるので外す
+            let use_bins: Vec<usize> = (first..bins.len())
+                .filter(|b| ls.value[*b].is_finite() && ls.cov[*b][*b].is_finite())
+                .collect();
+            let x: Vec<f64> = use_bins.iter().map(|b| ls.value[*b]).collect();
+            let cov: Vec<Vec<f64>> = use_bins
                 .iter()
-                .map(|row| row[first..].to_vec())
+                .map(|i| use_bins.iter().map(|j| ls.cov[*i][*j]).collect())
                 .collect();
             let pn = x.len();
             let hartlap = (k as f64 - pn as f64 - 2.0) / (k as f64 - 1.0);
-            let line = match chi2(x, &cov) {
-                Some(c2) if hartlap > 0.0 && pn.is_multiple_of(2) => {
+            let line = match chi2(&x, &cov) {
+                Some(c2) if hartlap > 0.0 && pn > 0 => {
                     let c2h = c2 * hartlap;
-                    format!(
-                        "{s} / {r}：{CHI2_MIN_KM} km 以上の {pn} ビン、χ² = {c2h:.1}（Hartlap {hartlap:.3} をかけた値）、上側確率 {:.3}",
+                    let p_up = if pn.is_multiple_of(2) {
                         chi2_sf_even(c2h, pn)
+                    } else {
+                        chi2_sf(c2h, pn)
+                    };
+                    format!(
+                        "{s} / {r}：{CHI2_MIN_KM} km 以上の {pn} ビン、χ² = {c2h:.1}（Hartlap {hartlap:.3} をかけた値）、上側確率 {p_up:.3}"
                     )
                 }
                 _ => format!("{s} / {r}：χ² を計算できない（領域 {k}、ビン {pn}）"),
@@ -585,6 +615,7 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
             .map_or(f64::INFINITY, |r_km| r_km / 2.0);
         let use_bins: Vec<usize> = (0..bins.len())
             .filter(|b| ed[*b] >= CHI2_MIN_KM && ed[b + 1] <= r_max)
+            .filter(|b| ls.value[*b].is_finite() && ls.cov[*b][*b].is_finite())
             .collect();
         let x: Vec<f64> = use_bins.iter().map(|b| ls.value[*b]).collect();
         let cov: Vec<Vec<f64>> = use_bins

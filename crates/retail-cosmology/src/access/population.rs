@@ -112,6 +112,11 @@ pub fn read_abs(path: &Path) -> Result<PopulationGrid, Box<dyn std::error::Error
 
 /// フォルダの中の tblT001140S*.txt をすべて読む。人口は 5 列目（T001140001、人口総数）。
 pub fn read_estat(dir: &Path) -> std::io::Result<PopulationGrid> {
+    read_estat_in(dir, |_| true)
+}
+
+/// `read_estat` と同じだが、`keep` が真を返す 3 次メッシュの番号の格子だけを読む（#51、九州の中だけの測定）。
+pub fn read_estat_in(dir: &Path, keep: impl Fn(u64) -> bool) -> std::io::Result<PopulationGrid> {
     let (mut values, mut sw, mut index) = (Vec::new(), Vec::new(), HashMap::new());
     let mut names: Vec<_> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -134,6 +139,9 @@ pub fn read_estat(dir: &Path) -> std::io::Result<PopulationGrid> {
             let (Ok(code), Ok(pop)) = (f[0].parse::<u64>(), f[4].parse::<f64>()) else {
                 continue;
             };
+            if !keep(code) {
+                continue;
+            }
             index.insert(code, values.len());
             sw.push(code_to_sw(code));
             values.push(pop as f32);
@@ -145,4 +153,26 @@ pub fn read_estat(dir: &Path) -> std::io::Result<PopulationGrid> {
         geometry: GridGeometry::Mesh { sw, index },
         has_land: false,
     })
+}
+
+/// 総務省統計局の「市区町村別メッシュ・コード一覧」（scripts/estat/fetch_mesh_prefecture.sh が書いた
+/// data/estat/mesh_pref/<県>.csv）から、`prefectures`（都道府県の番号 1〜47）に入る 3 次メッシュの番号を集める。
+/// 県境にまたがる格子は両方の県に載っているので、どちらの県を選んでも入る。
+pub fn read_mesh_prefectures(
+    dir: &Path,
+    prefectures: &[u32],
+) -> std::io::Result<std::collections::HashSet<u64>> {
+    let mut out = std::collections::HashSet::new();
+    for n in prefectures {
+        let bytes = std::fs::read(dir.join(format!("{n:02}.csv")))?;
+        // 見出しの 1 行は Shift_JIS の日本語。データの行の 1 列目と 3 列目は数字なので、そのまま読める。
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines().skip(1) {
+            let f: Vec<&str> = line.split(',').collect();
+            if let Some(code) = f.get(2).and_then(|c| c.trim().parse::<u64>().ok()) {
+                out.insert(code);
+            }
+        }
+    }
+    Ok(out)
 }

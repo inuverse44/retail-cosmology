@@ -32,7 +32,7 @@ const TRIAL_REGIONS: [&str; 7] = [
     "九州",
 ];
 
-/// OSM の店を選び出し、公式の数と比べる。`dataset` は stores（Coles と Woolworths）か trial。
+/// OSM の店を選び出し、公式の数と比べる。`dataset` は stores（Coles と Woolworths）、trial、cosmos。
 pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std::error::Error>> {
     let (chains, near_name, table_name): (&[Chain], String, &str) = match dataset {
         "stores" => (
@@ -45,7 +45,12 @@ pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std
             format!("trial_near_pairs_{date}.csv"),
             "osm_census_jp.tex",
         ),
-        _ => return Err("stores か trial を渡す".into()),
+        "cosmos" => (
+            &[Chain::Cosmos],
+            format!("cosmos_near_pairs_{date}.csv"),
+            "osm_census_cosmos.tex",
+        ),
+        _ => return Err("stores か trial か cosmos を渡す".into()),
     };
     let elements = stores::read_osm_tsv(&root.join(format!("data/osm/{dataset}_{date}.tsv")))
         .map_err(|e| format!("TSV がない。scripts/osm/fetch.sh を先に：{e}"))?;
@@ -437,6 +442,158 @@ pub fn seiyu_site(
         &root.join("docs/tables/seiyu_site_census.tex"),
         &format!(
             "% cargo run --release --bin seiyu_census -- {day} {trial_day} が書いた表\n\\begin{{tabular}}{{lrrr}}\n\\toprule\n地方 & サイト & 公式 & サイト/公式 \\\\\n\\midrule\n{table}\\bottomrule\n\\end{{tabular}}\n"
+        ),
+    )?;
+    Ok(report)
+}
+
+/// コスモスの決算短信の地区（表の順）
+const COSMOS_REGIONS: [&str; 6] = ["関東", "中部", "関西", "中国", "四国", "九州"];
+
+/// 推定した座標がどの細かさで当たったか。住所検索が返した住所が「番」「号」「番地」で終われば街区か地番まで、
+/// そうでなければ町・字（大字）までしか当たっていない。
+fn geocode_level(matched: &str) -> &'static str {
+    if matched.ends_with('番') || matched.ends_with('号') || matched.ends_with("番地") {
+        "街区"
+    } else {
+        "町字"
+    }
+}
+
+/// コスモスの公式サイトの店を数え、公式の数と OSM の店と比べる（#51）。
+/// サイトには座標がないので、住所から推定した座標（scripts/cosmos_site/geocode.sh）を使う。
+/// まず住所の一覧（data/cosmos_site/<日>/addresses.tsv）を書き、推定がまだそろっていなければそこで止まる。
+pub fn cosmos_site(
+    root: &Path,
+    day: &str,
+    osm_date: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let dir = root.join(format!("data/cosmos_site/{day}"));
+    let all = stores::read_cosmos_site(&dir)?;
+    let (open, planned): (Vec<_>, Vec<_>) = all.into_iter().partition(|s| !s.planned);
+    stores::write_addresses(&dir.join("addresses.tsv"), &open)?;
+    let geo: BTreeMap<String, crate::contract::Geocoded> =
+        stores::read_geocoded(&dir.join("geocode.tsv"))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|g| (g.id.clone(), g))
+            .collect();
+    let missing = open.iter().filter(|s| !geo.contains_key(&s.id)).count();
+    if missing > 0 {
+        return Err(format!(
+            "{missing} 店の座標がまだない。scripts/cosmos_site/geocode.sh {day} を先に（住所の一覧は addresses.tsv に書いた）"
+        )
+        .into());
+    }
+
+    let mut site: Vec<Store> = Vec::new();
+    let mut levels: BTreeMap<&str, usize> = BTreeMap::new();
+    for s in &open {
+        let g = &geo[&s.id];
+        let reg = crate::engine::selection::cosmos_area(&s.area)
+            .ok_or_else(|| format!("知らない地区：{}", s.area))?;
+        let code = prefecture_of_address(&s.address)
+            .ok_or_else(|| format!("住所から都道府県がわからない：{}", s.address))?;
+        let level = geocode_level(&g.matched);
+        *levels.entry(level).or_default() += 1;
+        site.push(Store {
+            chain: Chain::Cosmos,
+            region: reg.to_string(),
+            state: code,
+            pos: g.pos,
+            kind: "site".into(),
+            id: 0,
+            brand: level.into(),
+            name: format!("{}（{}）", s.name, s.id),
+        });
+    }
+
+    let osm: Vec<LatLon> =
+        stores::read_selected(&root.join(format!("data/osm/cosmos_clean_{osm_date}.csv")))
+            .map_err(|e| format!("osm_census を先に：{e}"))?
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect();
+    let site_pos: Vec<LatLon> = site.iter().map(|s| s.pos).collect();
+    // OSM の店からいちばん近いサイトの店までの距離。OSM の位置を正しいとみなせば、推定した座標のずれの目安になる
+    let offsets: Vec<f64> = osm
+        .iter()
+        .map(|p| nearest_km(p, &site_pos) * 1000.0)
+        .collect();
+    let mut offsets_by_level: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+    for p in &osm {
+        let (i, d) = site_pos
+            .iter()
+            .enumerate()
+            .map(|(i, q)| (i, crate::util::geo::great_circle_km(p, q)))
+            .fold((0, f64::INFINITY), |a, b| if b.1 < a.1 { b } else { a });
+        offsets_by_level
+            .entry(if site[i].brand == "街区" { "街区" } else { "町字" })
+            .or_default()
+            .push(d * 1000.0);
+    }
+
+    let official: BTreeMap<String, usize> =
+        official::read_official(&root.join("reference/official_store_counts.csv"))?
+            .into_iter()
+            .filter(|o| o.chain == "COSMOS")
+            .map(|o| (o.region, o.count))
+            .collect();
+    let mut n_site: BTreeMap<&str, usize> = BTreeMap::new();
+    for s in &site {
+        *n_site.entry(s.region.as_str()).or_default() += 1;
+    }
+    let mut report = String::new();
+    let mut table = String::new();
+    writeln!(report, "{:<6} {:>5} {:>5} {:>8}", "地区", "サイト", "公式", "サイト/公式")?;
+    let (mut ts, mut to) = (0, 0);
+    for r in COSMOS_REGIONS {
+        let (s, o) = (n_site.get(r).copied().unwrap_or(0), official[r]);
+        ts += s;
+        to += o;
+        writeln!(report, "{r:<6} {s:>5} {o:>5} {:>8.3}", s as f64 / o as f64)?;
+        writeln!(table, "{r} & {s} & {o} & {:.2} \\\\", s as f64 / o as f64)?;
+    }
+    for (r, s) in &n_site {
+        if !COSMOS_REGIONS.contains(r) {
+            ts += s;
+            writeln!(report, "{r:<6} {s:>5}     -        -")?;
+            writeln!(table, "{r} & {s} & --- & --- \\\\")?;
+        }
+    }
+    writeln!(report, "{:<6} {ts:>5} {to:>5} {:>8.3}", "計", ts as f64 / to as f64)?;
+    writeln!(
+        table,
+        "\\midrule\n計 & {ts} & {to} & {:.2} \\\\",
+        ts as f64 / to as f64
+    )?;
+    writeln!(report, "\nオープン予定で除いた店：{}", planned.len())?;
+    writeln!(report, "座標の細かさ：{levels:?}")?;
+    writeln!(
+        report,
+        "OSM の店（{} 店）からいちばん近いサイトの店まで：中央値 {:.0} m、90% 点 {:.0} m、1 km 以内 {} 店",
+        osm.len(),
+        quantile(&mut offsets.clone(), 0.5),
+        quantile(&mut offsets.clone(), 0.9),
+        offsets.iter().filter(|d| **d < 1000.0).count()
+    )?;
+    for (lv, v) in offsets_by_level.iter_mut() {
+        writeln!(
+            report,
+            "  いちばん近いサイトの店が{lv}まで当たったもの（{} 店）：中央値 {:.0} m、90% 点 {:.0} m",
+            v.len(),
+            quantile(&mut v.clone(), 0.5),
+            quantile(v, 0.9)
+        )?;
+    }
+    stores::write_selected(
+        &root.join(format!("data/cosmos_site/cosmos_site_clean_{day}.csv")),
+        &site,
+    )?;
+    results::write_text(
+        &root.join("docs/tables/cosmos_site_census.tex"),
+        &format!(
+            "% cargo run --release --bin cosmos_census -- {day} {osm_date} が書いた表\n\\begin{{tabular}}{{lrrr}}\n\\toprule\n地区 & サイト & 公式 & サイト/公式 \\\\\n\\midrule\n{table}\\bottomrule\n\\end{{tabular}}\n"
         ),
     )?;
     Ok(report)

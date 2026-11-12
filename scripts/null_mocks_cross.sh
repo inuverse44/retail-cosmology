@@ -4,6 +4,7 @@
 # つまり「二社は出店する地方を選ぶが、地方の中では互いに無関係に店を置く」という帰無仮説である。
 # 使い方：scripts/null_mocks_cross.sh <日付> <店のファイル,…> <A,B> <R [km]> <個数> [並列の数] [density,grid]
 #   7 つ目の引数は、density、grid、keep:<チェーン> をカンマで区切って並べる（どれか一つでもよい）。
+#   kyushu を渡すと、九州（福岡〜鹿児島の 7 県）の中だけで測り、撒く（xi の --prefectures 40-46、#51）。
 #   keep:TRIAL を渡すと、トライアルは撒き直さず実際の位置のまま使う（xi の --mock-keep、#13）。
 #   実際の店の固まりを残したまま、もう一方のチェーンを無関係に撒いた帰無仮説になる。
 #   grid を渡すと、選択関数を約 10 km の格子ごとに一度だけ求める近似を使う（xi の --selection-grid on、#12）。
@@ -12,13 +13,14 @@
 #   （xi の --mock-density on）。「二社は出店する地方と、人の密集地への寄り方を選ぶが、互いには無関係に店を置く」
 #   という帰無仮説になる。
 #   例：scripts/null_mocks_cross.sh 2026-11-03 data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv TRIAL,SEIYU 50 100 6
-# 出力：data/xi/null_mocks_cross_<A>x<B>_<R>[_density][_grid][_keep<チェーン>].txt（模擬データごとに、A・B それぞれの ξ と相互相関の、χ² の行とまとめた値の行）
+# 出力：data/xi/null_mocks_cross_<A>x<B>_<R>[_density][_grid][_kyushu][_keep<チェーン>].txt（模擬データごとに、A・B それぞれの ξ と相互相関の、χ² の行とまとめた値の行）
 #       同じ名前の _bins.csv（模擬データごとの、選択関数つきの ξ_LS と相互相関のビンごとの値。#50）
 set -euo pipefail
 date="${1:?日付}"; stores="${2:?店のファイル}"; pair="${3:?A,B}"; r="${4:?R}"; n="${5:?個数}"; jobs="${6:-4}"; mode="${7:-}"
 extra=""; suffix=""
 case ",$mode," in *,density,*) extra="$extra --mock-density on"; suffix="${suffix}_density";; esac
 case ",$mode," in *,grid,*) extra="$extra --selection-grid on"; suffix="${suffix}_grid";; esac
+case ",$mode," in *,kyushu,*) extra="$extra --prefectures 40-46"; suffix="${suffix}_kyushu";; esac
 keep="$(echo ",$mode," | grep -oE ',keep:[A-Za-z]+,' | tr -d ',' | cut -d: -f2 || true)"
 if [ -n "$keep" ]; then extra="$extra --mock-keep $keep"; suffix="${suffix}_keep${keep}"; fi
 root="$(cd "$(dirname "$0")/.." && pwd)"

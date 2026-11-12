@@ -4,6 +4,7 @@
 //!                                            [--n-ref 50000]
 //!                                            [--n-pop 2000] [--depth 6] [--seed 1] [--tag 名前]
 //!                                            [--footprint 50,100,200]
+//!                                            [--prefectures 40-46]（日本だけ。この都道府県の中だけで測る）
 //!
 //! --n-ref：選択関数で人口の密度を表す、人口に比例して撒いた参照の点の数（既定 50,000）。
 //! --footprint：出店している地方を選択関数としてランダムカタログに入れる。値はならす幅 R [km] の一覧。
@@ -56,6 +57,16 @@ fn main() {
                 p.cross = Some((a.into(), b.into()));
             }
             "--footprint" => p.footprint = v.split(',').map(|x| x.parse().unwrap()).collect(),
+            "--prefectures" => {
+                // 「40-46」か「40,41,42」の形
+                p.prefectures = v
+                    .split(',')
+                    .flat_map(|x| match x.split_once('-') {
+                        Some((a, b)) => (a.parse::<u32>().unwrap()..=b.parse().unwrap()).collect(),
+                        None => vec![x.parse().unwrap()],
+                    })
+                    .collect();
+            }
             _ => panic!("知らない引数：{k}"),
         }
     }

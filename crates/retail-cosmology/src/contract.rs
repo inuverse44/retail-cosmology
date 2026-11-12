@@ -11,6 +11,7 @@ pub enum Chain {
     Woolworths,
     Trial,
     Seiyu,
+    Cosmos,
 }
 
 impl Chain {
@@ -20,6 +21,7 @@ impl Chain {
             Chain::Woolworths => "Woolworths",
             Chain::Trial => "TRIAL",
             Chain::Seiyu => "SEIYU",
+            Chain::Cosmos => "COSMOS",
         }
     }
 }
@@ -48,6 +50,26 @@ pub struct SiteStore {
     pub pos: LatLon,
     pub prefecture: String,
     pub address: String,
+}
+
+/// 座標のない公式サイトの店（コスモス）。住所から座標を推定する前の形。
+/// `area` はサイトの地区（店のページの URL の …/shop/<地区>/<県>/ の地区、kyushu など）。
+/// `planned` は「オープン予定」の店（まだ開いていない）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListedStore {
+    pub id: String,
+    pub area: String,
+    pub name: String,
+    pub address: String,
+    pub planned: bool,
+}
+
+/// 住所から推定した座標。`matched` は住所検索が当てた住所の文字列（どの細かさで当たったかがわかる）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Geocoded {
+    pub id: String,
+    pub pos: LatLon,
+    pub matched: String,
 }
 
 /// 選び出した店。OSM の店では `kind` と `id` が OSM の要素、公式サイトの店では `kind` が site、`id` が 0。

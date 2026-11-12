@@ -8,6 +8,8 @@ use crate::util::geo::great_circle_km;
 
 /// トライアルの Wikidata の項目
 pub const TRIAL_QID: &str = "Q11321723";
+/// OSM のコスモス薬品（ドラッグストアコスモス）の項目。
+pub const COSMOS_QID: &str = "Q11302127";
 
 /// 各社が決算資料で使う地域の分け方に、州・都道府県のコードを寄せる。
 pub fn region(chain: Chain, state: &str) -> &'static str {
@@ -20,6 +22,7 @@ pub fn region(chain: Chain, state: &str) -> &'static str {
         (Chain::Woolworths, "AU-VIC") => "VIC",
         (Chain::Woolworths, "AU-TAS") => "TAS",
         (Chain::Trial | Chain::Seiyu, s) => jp_region(s),
+        (Chain::Cosmos, s) => cosmos_region(s),
         _ => "other",
     }
 }
@@ -42,6 +45,37 @@ fn jp_region(code: &str) -> &'static str {
     }
 }
 
+/// 都道府県のコードを、コスモス薬品の決算短信の地区（関東、中部、関西、中国、四国、九州）に寄せる。
+/// 地区の分け方は公式サイトの店のページの URL（…/shop/<地区>/<県>/）に従う。
+/// 8 地方区分と違うのは三重県で、サイトでは中部（chubu/mie）に入る。近畿のほかの府県は関西、中国と四国は分ける。
+fn cosmos_region(code: &str) -> &'static str {
+    if code == "JP-24" {
+        return "中部";
+    }
+    match jp_region(code) {
+        "近畿" => "関西",
+        "中国・四国" => match code.strip_prefix("JP-").and_then(|n| n.parse::<u32>().ok()) {
+            Some(31..=35) => "中国",
+            _ => "四国",
+        },
+        r => r,
+    }
+}
+
+/// コスモスの公式サイトの地区（URL の地区）を、決算短信の地区の名前にする。
+pub fn cosmos_area(slug: &str) -> Option<&'static str> {
+    Some(match slug {
+        "tohoku" => "東北",
+        "kanto" => "関東",
+        "chubu" => "中部",
+        "kansai" => "関西",
+        "chugoku" => "中国",
+        "shikoku" => "四国",
+        "kyushu" => "九州",
+        _ => return None,
+    })
+}
+
 /// 選び方。
 ///
 /// Coles と Woolworths：`shop=supermarket` で、`brand` が次のどれか。
@@ -55,6 +89,9 @@ pub fn classify(e: &OsmElement) -> Option<Chain> {
     if is_trial(e) {
         return Some(Chain::Trial);
     }
+    if is_cosmos(e) {
+        return Some(Chain::Cosmos);
+    }
     if e.shop != "supermarket" {
         return None;
     }
@@ -63,6 +100,28 @@ pub fn classify(e: &OsmElement) -> Option<Chain> {
         "Woolworths" | "Woolworths Metro" => Some(Chain::Woolworths),
         _ => None,
     }
+}
+
+/// コスモス：`shop` が小売の店を表すタグで、`brand:wikidata` がコスモス薬品の項目であるか、
+/// `brand` か `name` がチェーンの店名（ドラッグストアコスモス、ディスカウントドラッグコスモス）を含むもの。
+/// 名前の空白は無視する。「予定地」「跡地」は開いていない店なので除く。
+fn is_cosmos(e: &OsmElement) -> bool {
+    const SHOPS: [&str; 6] = [
+        "chemist",
+        "supermarket",
+        "variety_store",
+        "convenience",
+        "yes",
+        "mall",
+    ];
+    let named = |s: &str| {
+        let t: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+        t.contains("ドラッグストアコスモス") || t.contains("ディスカウントドラッグコスモス") || t == "コスモス"
+    };
+    SHOPS.contains(&e.shop.as_str())
+        && !e.name.contains("予定地")
+        && !e.name.contains("跡地")
+        && (e.wikidata == COSMOS_QID || named(&e.brand) || named(&e.name))
 }
 
 fn is_trial(e: &OsmElement) -> bool {
