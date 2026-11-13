@@ -142,6 +142,23 @@ fn is_walmart(e: &OsmElement) -> bool {
         && (qid || e.brand.starts_with("Walmart") || e.name.starts_with("Walmart"))
 }
 
+/// 10-K の Walmart U.S. の業態（表の順）
+pub const WALMART_FORMATS: [&str; 3] = ["Supercenter", "Discount Store", "Neighborhood Market"];
+
+/// 名前からわかる Walmart の業態。名前に Supercenter（Supercentre）とあれば Supercenter、
+/// Neighborhood Market か Market で終われば Neighborhood Market（10-K ではほかの小型店と合わせて数える）、
+/// それ以外（名前が Walmart だけなど）は Discount Store とみなす。
+pub fn walmart_format(e: &OsmElement) -> &'static str {
+    let n = &e.name;
+    if n.contains("Supercent") {
+        "Supercenter"
+    } else if n.contains("Neighborhood") || n.ends_with("Market") {
+        "Neighborhood Market"
+    } else {
+        "Discount Store"
+    }
+}
+
 /// コスモス：`shop` が小売の店を表すタグで、`brand:wikidata` がコスモス薬品の項目であるか、
 /// `brand` か `name` がチェーンの店名（ドラッグストアコスモス、ディスカウントドラッグコスモス）を含むもの。
 /// 名前の空白は無視する。「予定地」「跡地」は開いていない店なので除く。

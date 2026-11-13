@@ -799,7 +799,23 @@ OSM の店からいちばん近いサイトの店までの距離は、街区か�
 店の中の売り場（薬局、ガーデンセンター、オートケア、眼鏡）、ガソリンスタンドに併設の店（\code{shop=convenience}）、注文した品を受け取るだけの施設は数えなかった。
 会員制の Sam's Club は別のブランドなので入らない。
 オーストラリアと同じく $100\,\mathrm{m}$ より近い組を同じ店とみなし、8 店を落とした。
-残った店は 4,564 店で、名前で分けると Supercenter が 3,547 店、Neighborhood Market が 676 店、名前が Walmart だけの店が 340 店である。
+残った店は 4,564 店である。
+
+OSM がどれだけ店を拾えているかを、10-K \cite{WalmartFY26} にある 2026年1月31日時点の店数と比べた（表~\ref{tab:walmart}）。
+10-K にあるのは全米（50 州、ワシントン D.C.、プエルトリコ）の業態ごとの合計で、州ごとの数はない。
+そこで、米国本土の外（アラスカ、ハワイ、プエルトリコ）の店も同じ規則で OSM から取り出して足した（\href{\repourl/blob/main/scripts/osm/walmart_outside.overpassql}{\nolinkurl{scripts/osm/walmart_outside.overpassql}}）。
+業態は名前で分け、名前に Supercenter とあれば Supercenter、Neighborhood Market（か Market で終わる名前）なら Neighborhood Market、それ以外（名前が Walmart だけの店など）は Discount Store とみなした。
+\begin{table}[t]
+  \centering
+  \caption{Walmart の業態ごとの店数。OSM は 2026年11月12--13日、10-K は 2026年1月31日時点。
+    10-K の Neighborhood Market はほかの小型店を含む。}
+  \label{tab:walmart}
+  \small
+  \input{../docs/tables/osm_census_walmart.tex}
+\end{table}
+全米の合計では、OSM が 4,603 店、10-K が 4,611 店で、OSM は 10-K の $99.8\%$ だった。
+業態ごとにも $97$--$102\%$ に収まる。
+ただし、名前の Walmart だけの店がすべて Discount Store とは限らず、業態ごとの数は名前の付け方に左右される。
 
 \subsubsection{人口}
 
@@ -1730,6 +1746,7 @@ $\epsilon$ の揺れは、データの点がたまたまランダムカタログ
     に \code{--tag cosmosfp}（全国）か \code{--prefectures 40-46 --tag kyushu}（九州）を付ける。\\
     \code{\$C} はコスモスの店のファイル \code{data/cosmos\_site/cosmos\_site\_clean\_2026-11-12.csv}。\\
     九州の格子は \code{scripts/estat/fetch\_mesh\_prefecture.sh} で取る。模擬データは \code{scripts/null\_mocks\_cosmos.sh}、表は \code{short\_range -- 2026-11-03 cosmos}。
+  \item 表~\ref{tab:walmart}：\code{scripts/osm/fetch.sh 2026-11-13 walmart\_outside} のあと \code{osm\_census -- 2026-11-13 walmart}。
   \item 表~\ref{tab:walmart-mocks}：店は \code{scripts/osm/fetch.sh 2026-11-13 walmart} と \code{osm\_census -- 2026-11-13 walmart}、\\
     人口は \code{scripts/ghsl/fetch.sh}、州境は \code{scripts/naturalearth/fetch.sh} で取る。\\
     実際の値は \code{xi -- 2026-11-13 --country us --footprint 50,100,200 --tag fp}、\\

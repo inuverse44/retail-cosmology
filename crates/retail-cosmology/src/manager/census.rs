@@ -13,8 +13,8 @@ use crate::access::{boundary, official, results, stores};
 use crate::contract::{Chain, OsmElement, Store};
 use crate::engine::census::{MATCH_KM, nearest_km, quantile};
 use crate::engine::selection::{
-    classify, deduplicate, is_open_seiyu, is_trial_format, prefecture_code, prefecture_of_address,
-    region, seiyu_status, state_of, trial_format,
+    WALMART_FORMATS, classify, deduplicate, is_open_seiyu, is_trial_format, prefecture_code,
+    prefecture_of_address, region, seiyu_status, state_of, trial_format, walmart_format,
 };
 use crate::util::geo::LatLon;
 
@@ -129,7 +129,13 @@ pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std
         "{:<11} {:<10} {:>5} {:>5} {:>7}",
         "chain", "region", "OSM", "公式", "OSM/公式"
     )?;
-    for o in official::read_official(&root.join("reference/official_store_counts.csv"))? {
+    let official_counts =
+        official::read_official(&root.join("reference/official_store_counts.csv"))?;
+    for o in &official_counts {
+        // Walmart の公式の数は業態ごと（10-K）なので、地域ごとには比べない。下の walmart_table で比べる
+        if dataset == "walmart" {
+            continue;
+        }
         let Some(chain) = chains.iter().copied().find(|c| c.name() == o.chain) else {
             continue;
         };
@@ -196,6 +202,12 @@ pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std
         }
         writeln!(report, "名前からわかる業態：{formats:?}")?;
     }
+    if dataset == "walmart" {
+        let main: Vec<&OsmElement> = dedup.kept.iter().map(|(e, _)| *e).collect();
+        let tex = walmart_table(root, date, &main, &official_counts, &mut report)?;
+        results::write_text(&root.join(format!("docs/tables/{table_name}")), &tex)?;
+        return Ok(report);
+    }
     results::write_text(
         &root.join(format!("docs/tables/{table_name}")),
         &format!(
@@ -203,6 +215,73 @@ pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std
         ),
     )?;
     Ok(report)
+}
+
+/// Walmart の OSM の店を業態ごとに数え、10-K の全米の店数（50 州、D.C.、プエルトリコ）と比べる表を作る。
+/// `main` は米国本土の店（重複を落としたもの）。本土の外の店は data/osm/walmart_outside_<日付>.tsv から
+/// 同じ規則で選んで足す。10-K には州ごとの数がないので、全米の合計を業態ごとに比べる。
+fn walmart_table(
+    root: &Path,
+    date: &str,
+    main: &[&OsmElement],
+    official_counts: &[crate::contract::OfficialCount],
+    report: &mut String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let outside_all =
+        stores::read_osm_tsv(&root.join(format!("data/osm/walmart_outside_{date}.tsv")))
+            .map_err(|e| format!("scripts/osm/fetch.sh {date} walmart_outside を先に：{e}"))?;
+    let selected: Vec<(&OsmElement, Chain)> = outside_all
+        .iter()
+        .filter(|e| classify(e) == Some(Chain::Walmart))
+        .map(|e| (e, Chain::Walmart))
+        .collect();
+    let outside_dedup = deduplicate(&selected, DUP_RADIUS_KM);
+    let outside: Vec<&OsmElement> = outside_dedup.kept.iter().map(|(e, _)| *e).collect();
+    let count = |v: &[&OsmElement], f: &str| v.iter().filter(|e| walmart_format(e) == f).count();
+    let mut tex = format!(
+        "% cargo run --release --bin osm_census -- {date} walmart が書いた表\n\\begin{{tabular}}{{lrrrrr}}\n\\toprule\n\
+         業態 & 本土 & 本土の外 & OSM 計 & 10-K & OSM/10-K \\\\\n\\midrule\n"
+    );
+    let (mut t_main, mut t_out, mut t_off) = (0, 0, 0);
+    writeln!(report, "\n業態ごとの店数（本土、本土の外、10-K）：")?;
+    for f in WALMART_FORMATS {
+        let off = official_counts
+            .iter()
+            .find(|o| o.chain == "WALMART" && o.region == f)
+            .ok_or(format!(
+                "reference/official_store_counts.csv に WALMART の {f} がない"
+            ))?
+            .count;
+        let (a, b) = (count(main, f), count(&outside, f));
+        (t_main, t_out, t_off) = (t_main + a, t_out + b, t_off + off);
+        writeln!(
+            report,
+            "  {f:<20} {a:>5} {b:>4} {:>5} {off:>5} {:.3}",
+            a + b,
+            (a + b) as f64 / off as f64
+        )?;
+        writeln!(
+            tex,
+            "{f} & {a} & {b} & {} & {off} & {:.2} \\\\",
+            a + b,
+            (a + b) as f64 / off as f64
+        )?;
+    }
+    writeln!(
+        report,
+        "  {:<20} {t_main:>5} {t_out:>4} {:>5} {t_off:>5} {:.3}（本土の外で重複とみなして落とした数 {}）",
+        "計",
+        t_main + t_out,
+        (t_main + t_out) as f64 / t_off as f64,
+        selected.len() - outside.len()
+    )?;
+    writeln!(
+        tex,
+        "\\midrule\n計 & {t_main} & {t_out} & {} & {t_off} & {:.2} \\\\\n\\bottomrule\n\\end{{tabular}}",
+        t_main + t_out,
+        (t_main + t_out) as f64 / t_off as f64
+    )?;
+    Ok(tex)
 }
 
 /// トライアルの公式サイトの店を数え、公式の数と OSM の店と比べる。

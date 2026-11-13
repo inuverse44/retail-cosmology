@@ -6,6 +6,7 @@
 #   cosmos：コスモス（日本、#51）
 #   walmart：Walmart（米国、#51）。日付を固定できないので、日付は取り出した日を渡す。
 #     データの時刻は data/osm/walmart_<日付>.timestamp に残す
+#   walmart_outside：米国本土の外の Walmart（10-K の全米の店数と比べるだけ、#51）
 # 出力：data/osm/<名前>_<日付>.tsv（OSM のデータは ODbL。© OpenStreetMap contributors）
 set -euo pipefail
 date="${1:?取り出す日付（YYYY-MM-DD）}"
@@ -31,7 +32,7 @@ for attempt in 1 2 3 4 5; do
     fi
     mv "$out.part" "$out"
     echo "$out ($(($(wc -l < "$out") - 1)) 行)"
-    if [ "$name" = walmart ]; then
+    if [ "$name" = walmart ] || [ "$name" = walmart_outside ]; then
       # 日付を固定しない問い合わせなので、データの時刻を別に聞いて残す（軽い問い合わせ）
       ts=$(curl -sS --max-time 120 -A "retail-cosmology research script" --data-urlencode 'data=[out:json][timeout:25];node(1);out ids;' "$endpoint" \
         | grep -o '"timestamp_osm_base": *"[^"]*"' | grep -o '[0-9][^"]*Z' || true)
