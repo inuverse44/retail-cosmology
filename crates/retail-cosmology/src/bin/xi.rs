@@ -1,6 +1,6 @@
 //! Client：店舗の二点相関関数を、いくつかのランダムカタログで測り、jackknife で誤差をつける。
 //!
-//! cargo run --release --bin xi -- 2026-11-01 [--country au|jp] [--stores パス] [--n-random 20000]
+//! cargo run --release --bin xi -- 2026-11-01 [--country au|jp|us] [--stores パス] [--n-random 20000]
 //!                                            [--n-ref 50000]
 //!                                            [--n-pop 2000] [--depth 6] [--seed 1] [--tag 名前]
 //!                                            [--footprint 50,100,200]
@@ -26,6 +26,11 @@
 //!   西友（data/seiyu_site/seiyu_site_clean_<日>.csv）に替えたり、足したりできる。
 //!   読むもの：data/trial_site/trial_site_clean_<日付>.csv、data/estat/tblT001140S*.txt
 //!   書くもの：data/xi/xi_jp_<日付>[_名前].csv、data/xi/chi2_jp_<日付>[_名前].txt
+//! us：Walmart（#51）。人口は GHS-POP（2020 年、1 km）を米国本土 48 州と D.C. の州境で切り出したもの。
+//!   基準は陸地・人が住む格子・人口。日付は OSM から取り出した日。
+//!   読むもの：data/osm/walmart_clean_<日付>.csv、data/ghsl/GHS_POP_E2020_GLOBE_R2023A_54009_1000_V1_0.tif、
+//!             data/naturalearth/ne_10m_admin_1_states_provinces.geojson
+//!   書くもの：data/xi/xi_us_<日付>[_名前].csv、data/xi/chi2_us_<日付>[_名前].txt
 
 use std::path::PathBuf;
 

@@ -2,6 +2,7 @@
 //!
 //! [`run`]（#50）：トライアルと西友の 8 km より短い距離。比べる量は 3.2–8.0 km の 2 ビンの単純な平均と、2.0–3.2 km のビン。
 //! [`run_cosmos`]（#51）：トライアルとコスモスの、全国と九州の中だけ。比べる量は 8 km から R/2 までの単純な平均と、3.2–8.0 km の平均。
+//! [`run_walmart`]（#51）：米国の Walmart。比べる量は [`run_cosmos`] の二つと、2.0–3.2 km のビン。
 //!
 //! 実際の値は xi が書いた data/xi/xi_jp_<日付>_<名前>.csv、模擬データの値は
 //! scripts/null_mocks_cross.sh が書いた …_bins.csv から読む。
@@ -51,6 +52,7 @@ fn sample_name(s: &str) -> &'static str {
         "TRIAL" => "トライアル",
         "SEIYU" => "西友",
         "COSMOS" => "コスモス",
+        "WALMART" => "Walmart",
         _ => "相互相関",
     }
 }
@@ -161,10 +163,7 @@ pub fn run(root: &Path, jp: &str) -> Result<String, Box<dyn std::error::Error>> 
             ("_density_grid_keepTRIAL", "トライアルを残す", cross.clone()),
             ("_density_grid_keepSEIYU", "西友を残す", cross),
         ],
-        ranges: vec![
-            ("3.2--8.0", 3.0, Some(8.5)),
-            ("2.0--3.2", 1.9, Some(3.3)),
-        ],
+        ranges: vec![("3.2--8.0", 3.0, Some(8.5)), ("2.0--3.2", 1.9, Some(3.3))],
     };
     let mut report = String::new();
     let mut tex = format!(
@@ -192,12 +191,10 @@ pub fn run_cosmos(root: &Path, jp: &str) -> Result<String, Box<dyn std::error::E
          \\begin{{tabular}}{{lllllrrrr}}\n\\toprule\n\
          範囲 & $R$ & 模擬データ & 標本 & 距離 [km] & 実際 & 模擬データ & 以上 & 以下 \\\\\n\\midrule\n"
     );
-    for (i, (tag, area_suffix, area_name)) in [
-        ("cosmosfp", "", "全国"),
-        ("kyushu", "_kyushu", "九州"),
-    ]
-    .into_iter()
-    .enumerate()
+    for (i, (tag, area_suffix, area_name)) in
+        [("cosmosfp", "", "全国"), ("kyushu", "_kyushu", "九州")]
+            .into_iter()
+            .enumerate()
     {
         if i > 0 {
             tex.push_str("\\midrule\n");
@@ -211,14 +208,42 @@ pub fn run_cosmos(root: &Path, jp: &str) -> Result<String, Box<dyn std::error::E
                 ("_grid", "地方だけ", all.clone()),
                 ("_density_grid", "密集地も", all.clone()),
             ],
-            ranges: vec![
-                ("8.0--R/2", 7.9, None),
-                ("3.2--8.0", 3.0, Some(8.5)),
-            ],
+            ranges: vec![("8.0--R/2", 7.9, None), ("3.2--8.0", 3.0, Some(8.5))],
         };
         compare(root, &c, &mut report, &mut tex)?;
     }
     tex.push_str("\\bottomrule\n\\end{tabular}\n");
     results::write_text(&root.join("docs/tables/cosmos_mocks.tex"), &tex)?;
+    Ok(report)
+}
+
+/// 米国の Walmart（#51）。表を docs/tables/walmart_mocks.tex に書く。
+/// 実際の値は data/xi/xi_us_<us>_fp.csv、模擬データは scripts/null_mocks_walmart.sh が書いたもの。
+pub fn run_walmart(root: &Path, us: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let walmart = vec![("ls", "WALMART")];
+    let c = Compare {
+        real: format!("data/xi/xi_us_{us}_fp.csv"),
+        mock_prefix: "null_mocks_us_WALMART",
+        area_suffix: "",
+        area_name: "",
+        sets: vec![
+            ("_grid", "地方だけ", walmart.clone()),
+            ("_density_grid", "密集地も", walmart),
+        ],
+        ranges: vec![
+            ("8.0--R/2", 7.9, None),
+            ("3.2--8.0", 3.0, Some(8.5)),
+            ("2.0--3.2", 1.9, Some(3.3)),
+        ],
+    };
+    let mut report = String::new();
+    let mut tex = format!(
+        "% cargo run --release --bin short_range -- {us} walmart が書いた表\n\
+         \\begin{{tabular}}{{llllrrrr}}\n\\toprule\n\
+         $R$ & 模擬データ & 標本 & 距離 [km] & 実際 & 模擬データ & 以上 & 以下 \\\\\n\\midrule\n"
+    );
+    compare(root, &c, &mut report, &mut tex)?;
+    tex.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/walmart_mocks.tex"), &tex)?;
     Ok(report)
 }

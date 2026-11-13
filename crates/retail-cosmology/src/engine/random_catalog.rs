@@ -151,20 +151,20 @@ pub fn sample_selected(
 mod tests {
     use super::*;
     use crate::util::albers::Albers;
-    use crate::util::grid::GridGeometry;
+    use crate::util::grid::{GridGeometry, Projection};
 
     fn tiny() -> PopulationGrid {
         // 2 × 2 の格子：左上は海、右上は無人、左下に 1 人、右下に 3 人
         PopulationGrid {
             values: vec![-1.0, 0.0, 1.0, 3.0],
-            geometry: GridGeometry::Albers {
+            geometry: GridGeometry::Planar {
                 width: 2,
                 height: 2,
                 x0: 0.0,
                 y0: -3_000_000.0,
                 dx: 1000.0,
                 dy: 1000.0,
-                proj: Albers::epsg3577(),
+                proj: Projection::Albers(Albers::epsg3577()),
             },
             has_land: true,
         }

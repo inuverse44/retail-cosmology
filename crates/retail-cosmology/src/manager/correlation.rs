@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::access::{population, results, stores};
+use crate::access::{boundary, population, results, stores};
 use crate::contract::PopulationGrid;
 use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, jackknife, plain_mean};
 use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions, count_auto_by_region};
@@ -28,7 +28,8 @@ pub const N_REF: usize = 50_000;
 #[derive(Clone, Debug)]
 pub struct Params {
     pub date: String,
-    /// au（Coles と Woolworths、ABS の格子人口）か jp（トライアル、e-Stat のメッシュ）
+    /// au（Coles と Woolworths、ABS の格子人口）か jp（トライアル、e-Stat のメッシュ）か
+    /// us（Walmart、GHS-POP を米国本土に限ったもの）
     pub country: String,
     /// 店のファイル（リポジトリの根からの相対パス）。カンマで区切って複数渡せる。空なら国ごとの既定
     pub stores: String,
@@ -128,6 +129,23 @@ fn dataset(root: &Path, p: &Params) -> Result<Dataset, Box<dyn std::error::Error
                 prefix: "jp_",
             }
         }
+        "us" => {
+            default_path = format!("data/osm/walmart_clean_{}.csv", p.date);
+            let states = boundary::read_us_states(
+                &root.join("data/naturalearth/ne_10m_admin_1_states_provinces.geojson"),
+            )
+            .map_err(|e| format!("scripts/naturalearth/fetch.sh を先に：{e}"))?;
+            Dataset {
+                grid: population::read_ghsl(
+                    &root.join("data/ghsl/GHS_POP_E2020_GLOBE_R2023A_54009_1000_V1_0.tif"),
+                    &states,
+                )
+                .map_err(|e| format!("scripts/ghsl/fetch.sh を先に：{e}"))?,
+                store_path: String::new(),
+                chains: vec!["WALMART"],
+                prefix: "us_",
+            }
+        }
         c => return Err(format!("知らない国：{c}").into()),
     };
     let store_path = if p.stores.is_empty() {
@@ -144,6 +162,13 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
     let t0 = Instant::now();
     let ds = dataset(root, p)?;
     let grid = &ds.grid;
+    if p.country == "us" {
+        let (land, total) = grid.land_and_total();
+        eprintln!(
+            "GHS-POP の格子 {} 個のうち米国本土の陸地 {land} 個、人口の合計 {total:.0}",
+            grid.values.len()
+        );
+    }
     if !grid.has_land {
         let (_, total) = grid.land_and_total();
         eprintln!("メッシュ {} 個、人口の合計 {total:.0}", grid.values.len());
@@ -173,7 +198,11 @@ pub fn run(root: &Path, p: &Params) -> Result<(), Box<dyn std::error::Error>> {
         for (c, v) in stores.iter_mut() {
             let before = v.len();
             v.retain(|q| grid.geometry.cell_of(q).is_some());
-            eprintln!("{c}：県 {:?} の格子に入る店 {} / {before}", p.prefectures, v.len());
+            eprintln!(
+                "{c}：県 {:?} の格子に入る店 {} / {before}",
+                p.prefectures,
+                v.len()
+            );
         }
     }
     // 店のファイルに出てこないチェーンは測らない

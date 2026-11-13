@@ -39,7 +39,7 @@ pub fn run(
             .map(|(code, _)| code / 100)
             .collect::<HashSet<u64>>()
             .len(),
-        GridGeometry::Albers { .. } => 0,
+        GridGeometry::Planar { .. } => 0,
     };
     put("cells_1km", n1 as f64);
     put("cells_10km", n10 as f64);
