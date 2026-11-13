@@ -1,28 +1,56 @@
 //! 格子の形：格子の番号と緯度・経度を行き来する。
 //!
-//! ABS の格子人口は EPSG:3577（Albers 図法）の 1 km の正方形、e-Stat の 3 次メッシュは
-//! 緯度 30 秒・経度 45 秒の長方形。どちらも「格子の中の点」「点が入る格子」「jackknife の領域を作る平面座標」
-//! を同じ形で返す。
+//! ABS の格子人口は EPSG:3577（Albers 図法）の 1 km の正方形、JRC の GHS-POP は ESRI:54009
+//! （Mollweide 図法）の 1 km の正方形、e-Stat の 3 次メッシュは緯度 30 秒・経度 45 秒の長方形。
+//! どれも「格子の中の点」「点が入る格子」「jackknife の領域を作る平面座標」を同じ形で返す。
 
 use std::collections::HashMap;
 
 use crate::util::albers::Albers;
 use crate::util::geo::LatLon;
+use crate::util::mollweide::Mollweide;
 
 /// 3 次メッシュの大きさ：緯度 30 秒、経度 45 秒
 pub const DLAT: f64 = 30.0 / 3600.0;
 pub const DLON: f64 = 45.0 / 3600.0;
 
+/// 正方形の格子が載る地図の投影。どちらも正積図法なので、格子の面積はどこでも同じ。
+#[derive(Clone, Copy, Debug)]
+pub enum Projection {
+    /// EPSG:3577（オーストラリア、ABS の格子人口）
+    Albers(Albers),
+    /// ESRI:54009（米国、GHS-POP）
+    Mollweide(Mollweide),
+}
+
+impl Projection {
+    /// 緯度・経度 → 平面座標 (x, y) [m]
+    pub fn forward(&self, p: &LatLon) -> (f64, f64) {
+        match self {
+            Projection::Albers(a) => a.forward(p),
+            Projection::Mollweide(m) => m.forward(p),
+        }
+    }
+
+    /// 平面座標 (x, y) [m] → 緯度・経度
+    pub fn inverse(&self, x: f64, y: f64) -> LatLon {
+        match self {
+            Projection::Albers(a) => a.inverse(x, y),
+            Projection::Mollweide(m) => m.inverse(x, y),
+        }
+    }
+}
+
 pub enum GridGeometry {
-    /// 行ごとに並んだ正方形の格子（左上の格子の左上の角が (x0, y0)）
-    Albers {
+    /// 正積図法の平面に、行ごとに並んだ正方形の格子（左上の格子の左上の角が (x0, y0)）
+    Planar {
         width: usize,
         height: usize,
         x0: f64,
         y0: f64,
         dx: f64,
         dy: f64,
-        proj: Albers,
+        proj: Projection,
     },
     /// 3 次メッシュ。`sw` は格子ごとの南西の角、`index` はメッシュの番号から格子の番号へ
     Mesh {
@@ -32,10 +60,10 @@ pub enum GridGeometry {
 }
 
 impl GridGeometry {
-    /// 格子 i の中の点。u, v は [0, 1) の数で、Albers では東西・南北、メッシュでは南北・東西の位置。
+    /// 格子 i の中の点。u, v は [0, 1) の数で、平面の格子では東西・南北、メッシュでは南北・東西の位置。
     pub fn point(&self, i: usize, u: f64, v: f64) -> LatLon {
         match self {
-            GridGeometry::Albers {
+            GridGeometry::Planar {
                 width,
                 x0,
                 y0,
@@ -60,11 +88,11 @@ impl GridGeometry {
     }
 
     /// 点が入る約 10 km の粗い格子の番号と、その中心の緯度・経度。
-    /// メッシュでは 2 次メッシュ（3 次メッシュ 10×10 個、緯度 5 分・経度 7.5 分）、Albers では 1 km の格子 10×10 個。
-    /// Albers で格子の範囲の外なら None。
+    /// メッシュでは 2 次メッシュ（3 次メッシュ 10×10 個、緯度 5 分・経度 7.5 分）、平面の格子では 1 km の格子 10×10 個。
+    /// 平面の格子で範囲の外なら None。
     pub fn coarse_cell(&self, p: &LatLon) -> Option<(u64, LatLon)> {
         match self {
-            GridGeometry::Albers {
+            GridGeometry::Planar {
                 width,
                 height,
                 x0,
@@ -101,7 +129,7 @@ impl GridGeometry {
     /// 点が入る格子の番号。格子の外（メッシュでは載っていない格子）なら None。
     pub fn cell_of(&self, p: &LatLon) -> Option<usize> {
         match self {
-            GridGeometry::Albers {
+            GridGeometry::Planar {
                 width,
                 height,
                 x0,
@@ -122,11 +150,11 @@ impl GridGeometry {
         }
     }
 
-    /// jackknife の領域を作る平面座標。Albers ではその平面座標 [m]、
+    /// jackknife の領域を作る平面座標。平面の格子ではその平面座標 [m]、
     /// 日本では北緯 36° で経度を縮めた正距円筒図法 [km]（領域を分けるだけなので、これで足りる）。
     pub fn plane(&self, p: &LatLon) -> (f64, f64) {
         match self {
-            GridGeometry::Albers { proj, .. } => proj.forward(p),
+            GridGeometry::Planar { proj, .. } => proj.forward(p),
             GridGeometry::Mesh { .. } => {
                 (p.lon * 36f64.to_radians().cos() * 111.32, p.lat * 110.57)
             }
@@ -219,14 +247,14 @@ mod tests {
 
     #[test]
     fn points_fall_in_their_cells() {
-        let albers = GridGeometry::Albers {
+        let albers = GridGeometry::Planar {
             width: 3,
             height: 2,
             x0: 0.0,
             y0: -3_000_000.0,
             dx: 1000.0,
             dy: 1000.0,
-            proj: Albers::epsg3577(),
+            proj: Projection::Albers(Albers::epsg3577()),
         };
         let (lat0, lon0) = code_to_sw(53394611);
         let mesh = GridGeometry::Mesh {

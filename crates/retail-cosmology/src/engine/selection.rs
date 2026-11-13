@@ -3,13 +3,17 @@
 
 use std::collections::HashSet;
 
-use crate::contract::{Chain, OsmElement};
+use crate::contract::{Chain, OsmElement, StateBoundary};
 use crate::util::geo::great_circle_km;
+use crate::util::polygon::point_inside;
 
 /// トライアルの Wikidata の項目
 pub const TRIAL_QID: &str = "Q11321723";
 /// OSM のコスモス薬品（ドラッグストアコスモス）の項目。
 pub const COSMOS_QID: &str = "Q11302127";
+/// Walmart と Walmart Neighborhood Market の Wikidata の項目
+pub const WALMART_QID: &str = "Q483551";
+pub const WALMART_NM_QID: &str = "Q7963529";
 
 /// 各社が決算資料で使う地域の分け方に、州・都道府県のコードを寄せる。
 pub fn region(chain: Chain, state: &str) -> &'static str {
@@ -23,6 +27,7 @@ pub fn region(chain: Chain, state: &str) -> &'static str {
         (Chain::Woolworths, "AU-TAS") => "TAS",
         (Chain::Trial | Chain::Seiyu, s) => jp_region(s),
         (Chain::Cosmos, s) => cosmos_region(s),
+        (Chain::Walmart, s) => us_census_region(s),
         _ => "other",
     }
 }
@@ -62,6 +67,22 @@ fn cosmos_region(code: &str) -> &'static str {
     }
 }
 
+/// 州のコード（US-TX など）を、米国勢調査局の 4 地域（Census Regions）に寄せる。
+/// Walmart の 10-K は州ごとの店数を載せるが、ノートの表を短くするため 4 地域にまとめて比べる。
+fn us_census_region(code: &str) -> &'static str {
+    match code.strip_prefix("US-").unwrap_or("") {
+        "CT" | "ME" | "MA" | "NH" | "RI" | "VT" | "NJ" | "NY" | "PA" => "Northeast",
+        "IL" | "IN" | "MI" | "OH" | "WI" | "IA" | "KS" | "MN" | "MO" | "NE" | "ND" | "SD" => {
+            "Midwest"
+        }
+        "DE" | "DC" | "FL" | "GA" | "MD" | "NC" | "SC" | "VA" | "WV" | "AL" | "KY" | "MS"
+        | "TN" | "AR" | "LA" | "OK" | "TX" => "South",
+        "AZ" | "CO" | "ID" | "MT" | "NV" | "NM" | "UT" | "WY" | "AK" | "CA" | "HI" | "OR"
+        | "WA" => "West",
+        _ => "other",
+    }
+}
+
 /// コスモスの公式サイトの地区（URL の地区）を、決算短信の地区の名前にする。
 pub fn cosmos_area(slug: &str) -> Option<&'static str> {
     Some(match slug {
@@ -92,6 +113,9 @@ pub fn classify(e: &OsmElement) -> Option<Chain> {
     if is_cosmos(e) {
         return Some(Chain::Cosmos);
     }
+    if is_walmart(e) {
+        return Some(Chain::Walmart);
+    }
     if e.shop != "supermarket" {
         return None;
     }
@@ -100,6 +124,22 @@ pub fn classify(e: &OsmElement) -> Option<Chain> {
         "Woolworths" | "Woolworths Metro" => Some(Chain::Woolworths),
         _ => None,
     }
+}
+
+/// Walmart：`shop` が supermarket（Supercenter と Neighborhood Market）か department_store（Discount Store）で、
+/// `brand:wikidata` が Walmart か Neighborhood Market の項目であるか、`brand` か `name` が Walmart で始まるもの。
+/// 10-K の米国の店数（Supercenter、Discount Store、Neighborhood Market とほかの小型店）に合わせる。
+/// 店の中の売り場（薬局、ガーデンセンター、オートケア、眼鏡）と、ガソリンスタンドに併設の店（convenience）、
+/// 注文した品を受け取るだけの施設（名前に Pickup とあるもの）は数えない。
+/// 会員制の Sam's Club は別のブランド（別の Wikidata の項目）なので入らない。
+fn is_walmart(e: &OsmElement) -> bool {
+    let qid = e
+        .wikidata
+        .split(';')
+        .any(|q| q == WALMART_QID || q == WALMART_NM_QID);
+    matches!(e.shop.as_str(), "supermarket" | "department_store")
+        && !e.name.contains("Pickup")
+        && (qid || e.brand.starts_with("Walmart") || e.name.starts_with("Walmart"))
 }
 
 /// コスモス：`shop` が小売の店を表すタグで、`brand:wikidata` がコスモス薬品の項目であるか、
@@ -116,7 +156,9 @@ fn is_cosmos(e: &OsmElement) -> bool {
     ];
     let named = |s: &str| {
         let t: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-        t.contains("ドラッグストアコスモス") || t.contains("ディスカウントドラッグコスモス") || t == "コスモス"
+        t.contains("ドラッグストアコスモス")
+            || t.contains("ディスカウントドラッグコスモス")
+            || t == "コスモス"
     };
     SHOPS.contains(&e.shop.as_str())
         && !e.name.contains("予定地")
@@ -182,6 +224,15 @@ pub fn trial_format(e: &OsmElement) -> &'static str {
     } else {
         "不明"
     }
+}
+
+/// 点が入る州のコード。どの州にも入らなければ None（米国本土の外、または境界の線のすぐ外の海の上）。
+/// 州の境界は経度・緯度のまま扱う（点が多角形の内側にあるかは、どの図法でも変わらない）。
+pub fn state_of<'a>(states: &'a [StateBoundary], p: &crate::util::geo::LatLon) -> Option<&'a str> {
+    states
+        .iter()
+        .find(|s| point_inside(&s.rings, (p.lon, p.lat), |q| (q.lon, q.lat)))
+        .map(|s| s.state.as_str())
 }
 
 /// 同じチェーンで `radius_km` より近い組を返す。同じ店が node と way の両方で描かれている候補。
@@ -361,6 +412,42 @@ node\t13\t-33.87\t151.21\t\tsupermarket\tWoolworths Metro\tQ111772555\tMetro
         assert_eq!(region(Chain::Coles, "AU-TAS"), "VIC & TAS");
         assert_eq!(region(Chain::Woolworths, "AU-TAS"), "TAS");
         assert_eq!(region(Chain::Woolworths, "AU-ACT"), "NSW & ACT");
+        assert_eq!(region(Chain::Walmart, "US-AR"), "South");
+        assert_eq!(region(Chain::Walmart, "US-DC"), "South");
+        assert_eq!(region(Chain::Walmart, "US-PA"), "Northeast");
+    }
+
+    #[test]
+    fn classify_walmart() {
+        let w = |e: OsmElement| classify(&e) == Some(Chain::Walmart);
+        assert!(w(el(
+            "supermarket",
+            "Walmart",
+            WALMART_QID,
+            "Walmart Supercenter"
+        )));
+        assert!(w(el("department_store", "Walmart", WALMART_QID, "Walmart")));
+        assert!(w(el(
+            "supermarket",
+            "Walmart Neighborhood Market;Walmart",
+            "Q7963529;Q483551",
+            "Walmart Neighborhood Market"
+        )));
+        assert!(w(el("supermarket", "", "", "Walmart")));
+        assert!(!w(el(
+            "garden_centre",
+            "Walmart",
+            WALMART_QID,
+            "Walmart Garden Center"
+        )));
+        assert!(!w(el("convenience", "Walmart", WALMART_QID, "Walmart")));
+        assert!(!w(el("", "Walmart", WALMART_QID, "Walmart Pharmacy")));
+        assert!(!w(el(
+            "department_store",
+            "Walmart",
+            WALMART_QID,
+            "Walmart Express Pickup"
+        )));
     }
 
     fn el(shop: &str, brand: &str, qid: &str, name: &str) -> OsmElement {

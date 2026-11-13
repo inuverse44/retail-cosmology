@@ -1,6 +1,7 @@
 //! ResourceAccess：人口の格子を読む。
 //! オーストラリアは ABS の格子人口（GeoTIFF、1 km、EPSG:3577）、日本は e-Stat の令和2年国勢調査
-//! 1 km メッシュ（T001140）。どちらも `PopulationGrid` で返す。
+//! 1 km メッシュ（T001140）、米国は JRC の GHS-POP（GeoTIFF、1 km、ESRI:54009）を本土 48 州と D.C. の境界で切り出したもの。
+//! どれも `PopulationGrid` で返す。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -8,9 +9,11 @@ use std::path::Path;
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
 
-use crate::contract::PopulationGrid;
+use crate::contract::{PopulationGrid, StateBoundary};
 use crate::util::albers::Albers;
-use crate::util::grid::{GridGeometry, code_to_sw};
+use crate::util::grid::{GridGeometry, Projection, code_to_sw};
+use crate::util::mollweide::Mollweide;
+use crate::util::polygon::cells_inside;
 
 /// GeoTIFF の ModelPixelScaleTag と ModelTiepointTag
 const MODEL_PIXEL_SCALE: u16 = 33550;
@@ -97,14 +100,147 @@ pub fn read_abs(path: &Path) -> Result<PopulationGrid, Box<dyn std::error::Error
     }
     Ok(PopulationGrid {
         values,
-        geometry: GridGeometry::Albers {
+        geometry: GridGeometry::Planar {
             width: w,
             height: h,
             x0,
             y0,
             dx,
             dy,
-            proj: Albers::epsg3577(),
+            proj: Projection::Albers(Albers::epsg3577()),
+        },
+        has_land: true,
+    })
+}
+
+/// GHS-POP（BigTIFF、タイルごとの LZW 圧縮、予測なし、64 ビット浮動小数、1 バンド、ESRI:54009）から、
+/// `states` の境界を囲む範囲だけを読み、どの州の内側にも中心がない格子を陸地の外（−1）にする。
+/// GHS-POP は海が「値なし」（−200）、陸地は人口 0 以上なので、州の内側の陸地の格子だけが 0 以上になる。
+/// 州ごとに塗ってから重ねる（隣り合う州の境界の頂点がずれていても、境界の上の格子を落とさない）。
+pub fn read_ghsl(
+    path: &Path,
+    states: &[StateBoundary],
+) -> Result<PopulationGrid, Box<dyn std::error::Error>> {
+    let proj = Mollweide::esri54009();
+    let bytes = std::fs::read(path)?;
+    let mut dec = Decoder::new(std::io::Cursor::new(&bytes))?;
+    let (w, h) = dec.dimensions()?;
+    let (w, h) = (w as usize, h as usize);
+    let compression = dec.get_tag_u32(Tag::Compression)?;
+    let predictor = dec.find_tag_unsigned::<u32>(Tag::Predictor)?.unwrap_or(1);
+    let bits = dec.get_tag_u32(Tag::BitsPerSample)?;
+    let format = dec.get_tag_u32(Tag::SampleFormat)?;
+    if (compression, predictor, bits, format) != (5, 1, 64, 3) {
+        return Err(format!(
+            "想定外の形式：圧縮 {compression}、予測 {predictor}、{bits} ビット、型 {format}"
+        )
+        .into());
+    }
+    let tw = dec.get_tag_u32(Tag::TileWidth)? as usize;
+    let th = dec.get_tag_u32(Tag::TileLength)? as usize;
+    let offsets = dec.get_tag_u64_vec(Tag::TileOffsets)?;
+    let counts = dec.get_tag_u64_vec(Tag::TileByteCounts)?;
+    let little = bytes.starts_with(b"II");
+    let scale = dec.get_tag_f64_vec(Tag::Unknown(MODEL_PIXEL_SCALE))?;
+    let tie = dec.get_tag_f64_vec(Tag::Unknown(MODEL_TIEPOINT))?;
+    let (dx, dy) = (scale[0], scale[1]);
+    let gx0 = tie[3] - tie[0] * dx;
+    let gy0 = tie[4] + tie[1] * dy;
+
+    // 境界を平面に移し、それを囲む格子の範囲（列 c0..c1、行 r0..r1）を求める
+    let plane: Vec<Vec<Vec<(f64, f64)>>> = states
+        .iter()
+        .map(|s| {
+            s.rings
+                .iter()
+                .map(|r| r.iter().map(|p| proj.forward(p)).collect())
+                .collect()
+        })
+        .collect();
+    let (mut xmin, mut xmax, mut ymin, mut ymax) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    for &(x, y) in plane.iter().flatten().flatten() {
+        (xmin, xmax, ymin, ymax) = (xmin.min(x), xmax.max(x), ymin.min(y), ymax.max(y));
+    }
+    let c0 = (((xmin - gx0) / dx).floor().max(0.0) as usize).min(w);
+    let c1 = (((xmax - gx0) / dx).ceil().max(0.0) as usize).min(w);
+    let r0 = (((gy0 - ymax) / dy).floor().max(0.0) as usize).min(h);
+    let r1 = (((gy0 - ymin) / dy).ceil().max(0.0) as usize).min(h);
+    let (cw, ch) = (c1 - c0, r1 - r0);
+    let (x0, y0) = (gx0 + c0 as f64 * dx, gy0 - r0 as f64 * dy);
+
+    let across = w.div_ceil(tw);
+    let mut values = vec![-1.0f32; cw * ch];
+    let mut tile = vec![0u8; tw * th * 8];
+    for tr in r0 / th..r1.div_ceil(th) {
+        for tc in c0 / tw..c1.div_ceil(tw) {
+            let t = tr * across + tc;
+            let (off, len) = (offsets[t] as usize, counts[t] as usize);
+            if len == 0 {
+                continue;
+            }
+            let input = &bytes[off..off + len];
+            let mut lzw =
+                weezl::decode::Configuration::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+                    .build();
+            let (mut i, mut o) = (0, 0);
+            while o < tile.len() {
+                let r = lzw.decode_bytes(&input[i..], &mut tile[o..]);
+                i += r.consumed_in;
+                o += r.consumed_out;
+                match r.status? {
+                    weezl::LzwStatus::Ok => {}
+                    weezl::LzwStatus::Done | weezl::LzwStatus::NoProgress => break,
+                }
+            }
+            if o < tile.len() {
+                return Err(format!("GeoTIFF のタイル {t} を展開しきれなかった").into());
+            }
+            for r in 0..th {
+                let row = tr * th + r;
+                if row < r0 || row >= r1 {
+                    continue;
+                }
+                for c in 0..tw {
+                    let col = tc * tw + c;
+                    if col < c0 || col >= c1 {
+                        continue;
+                    }
+                    let k = (r * tw + c) * 8;
+                    let b: [u8; 8] = tile[k..k + 8].try_into().unwrap();
+                    let v = if little {
+                        f64::from_le_bytes(b)
+                    } else {
+                        f64::from_be_bytes(b)
+                    };
+                    values[(row - r0) * cw + (col - c0)] = if v >= 0.0 { v as f32 } else { -1.0 };
+                }
+            }
+        }
+    }
+    let mut inside = vec![false; cw * ch];
+    for rings in &plane {
+        for (k, b) in cells_inside(rings, cw, ch, (x0, y0), (dx, dy))
+            .into_iter()
+            .enumerate()
+        {
+            inside[k] |= b;
+        }
+    }
+    for (v, keep) in values.iter_mut().zip(&inside) {
+        if !keep {
+            *v = -1.0;
+        }
+    }
+    Ok(PopulationGrid {
+        values,
+        geometry: GridGeometry::Planar {
+            width: cw,
+            height: ch,
+            x0,
+            y0,
+            dx,
+            dy,
+            proj: Projection::Mollweide(proj),
         },
         has_land: true,
     })

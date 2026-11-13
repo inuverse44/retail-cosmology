@@ -92,6 +92,15 @@ scripts/chi2_mocks.sh 2026-11-01 au 0 100 6
 for R in 50 100 200; do scripts/chi2_mocks.sh 2026-11-01 au $R 100 6; done
 cargo run --release --bin chi2_calibrate -- 2026-11-01 2026-11-03   # docs/tables/chi2_calibrated.tex
 
+# 米国（Walmart、#51）
+scripts/osm/fetch.sh 2026-11-13 walmart                # data/osm/walmart_2026-11-13.tsv（日付を固定できないので取り出した日。時刻は .timestamp）
+scripts/naturalearth/fetch.sh                          # 州境（店を州に割り振り、人口の格子を米国本土に限る）
+scripts/ghsl/fetch.sh                                  # data/ghsl/（GHS-POP、2020 年、1 km、約 320 MB）
+cargo run --release --bin osm_census -- 2026-11-13 walmart   # data/osm/walmart_clean_2026-11-13.csv
+cargo run --release --bin xi -- 2026-11-13 --country us --footprint 50,100,200 --tag fp
+scripts/null_mocks_walmart.sh 2026-11-13 100 6         # 帰無仮説の模擬データ 100 個 ×4 組（6 並列で約 32 分）
+cargo run --release --bin short_range -- 2026-11-13 walmart  # docs/tables/walmart_mocks.tex
+
 # 模擬データの計算量（notes/algorithm-cost.tex）
 target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --mock 50:1 --mock-density on --tag costlog 2> data/cost/mock_log_R50.txt
 target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --tag costreal 2> data/cost/real_log_R50.txt
@@ -121,7 +130,10 @@ cd lean && lake build           # 証明を検査する。通れば付録 B の�
 - トライアルの店舗：公式サイトの[店舗検索](https://www.trial-net.co.jp/shops)（業態・緯度・経度・都道府県）。著作権はトライアルグループにあるので、取ったデータはコミットしない。
 - 西友の店舗：公式サイトの[店舗検索](https://www.seiyu.co.jp/searchshop/)（店名・住所・緯度・経度）。一覧に載っていないトライアル西友は、サイトマップから店のページを取る。著作権は西友にあるので、取ったデータはコミットしない。
 - 日本の人口：e-Stat の令和2年国勢調査 1 km メッシュ（T001140、政府標準利用規約 第2.0版）。
+- 米国の店舗：OpenStreetMap。ほかの国と違い日付を固定できなかったので、取り出したときのデータを使い、その時刻を `data/osm/walmart_<日付>.timestamp` に残す（2026-11-12T23:56:10Z）。
+- 米国の人口：JRC の [GHS-POP R2023A](https://data.jrc.ec.europa.eu/dataset/2ff68a52-5b5b-4a22-8f40-c41da8332cfe)（2020 年、1 km 格子、ESRI:54009、CC BY 4.0）を、[Natural Earth](https://www.naturalearthdata.com/) の州境（1:10m Admin 1、パブリックドメイン）で米国本土 48 州と D.C. に切り出す。
 - 公式の店舗数：[`reference/`](reference/README.md)。Coles と Woolworths の決算資料（2026年6月28日時点）。
 
 OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）、トライアルが 232 店（公式 378 店）。
 公式サイトから取った店舗数は、トライアルが 375 店（公式 378 店）、西友が 243 店（公式 243 店）。
+米国本土の Walmart は OSM から 4,564 店（公式の州別の店数との比較はまだ。10-K を取ってから）。

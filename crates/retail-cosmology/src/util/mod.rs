@@ -3,5 +3,7 @@
 pub mod albers;
 pub mod geo;
 pub mod grid;
+pub mod mollweide;
+pub mod polygon;
 pub mod rng;
 pub mod spatial;

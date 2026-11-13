@@ -12,6 +12,7 @@ pub enum Chain {
     Trial,
     Seiyu,
     Cosmos,
+    Walmart,
 }
 
 impl Chain {
@@ -22,11 +23,12 @@ impl Chain {
             Chain::Trial => "TRIAL",
             Chain::Seiyu => "SEIYU",
             Chain::Cosmos => "COSMOS",
+            Chain::Walmart => "WALMART",
         }
     }
 }
 
-/// OSM の要素（店舗の候補）。`state` は ISO 3166-2 のコード（AU-NSW、JP-40 など）。
+/// OSM の要素（店舗の候補）。`state` は ISO 3166-2 のコード（AU-NSW、JP-40、US-TX など）。
 #[derive(Clone, Debug)]
 pub struct OsmElement {
     pub kind: String,
@@ -171,4 +173,12 @@ impl PopulationGrid {
             .sum();
         (land, total)
     }
+}
+
+/// 州の境界。`state` は ISO 3166-2 のコード（US-TX など）、`rings` は多角形の輪（経度・緯度）。
+/// 外周と穴は区別せず、偶奇の規則で内側を決める。
+#[derive(Clone, Debug)]
+pub struct StateBoundary {
+    pub state: String,
+    pub rings: Vec<Vec<LatLon>>,
 }

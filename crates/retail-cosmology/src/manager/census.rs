@@ -9,12 +9,12 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::access::{official, results, stores};
+use crate::access::{boundary, official, results, stores};
 use crate::contract::{Chain, OsmElement, Store};
 use crate::engine::census::{MATCH_KM, nearest_km, quantile};
 use crate::engine::selection::{
     classify, deduplicate, is_open_seiyu, is_trial_format, prefecture_code, prefecture_of_address,
-    region, seiyu_status, trial_format,
+    region, seiyu_status, state_of, trial_format,
 };
 use crate::util::geo::LatLon;
 
@@ -32,7 +32,7 @@ const TRIAL_REGIONS: [&str; 7] = [
     "九州",
 ];
 
-/// OSM の店を選び出し、公式の数と比べる。`dataset` は stores（Coles と Woolworths）、trial、cosmos。
+/// OSM の店を選び出し、公式の数と比べる。`dataset` は stores（Coles と Woolworths）、trial、cosmos、walmart。
 pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std::error::Error>> {
     let (chains, near_name, table_name): (&[Chain], String, &str) = match dataset {
         "stores" => (
@@ -50,10 +50,32 @@ pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std
             format!("cosmos_near_pairs_{date}.csv"),
             "osm_census_cosmos.tex",
         ),
-        _ => return Err("stores か trial か cosmos を渡す".into()),
+        "walmart" => (
+            &[Chain::Walmart],
+            format!("walmart_near_pairs_{date}.csv"),
+            "osm_census_walmart.tex",
+        ),
+        _ => return Err("stores か trial か cosmos か walmart を渡す".into()),
     };
-    let elements = stores::read_osm_tsv(&root.join(format!("data/osm/{dataset}_{date}.tsv")))
+    let mut elements = stores::read_osm_tsv(&root.join(format!("data/osm/{dataset}_{date}.tsv")))
         .map_err(|e| format!("TSV がない。scripts/osm/fetch.sh を先に：{e}"))?;
+    // 米国は州ごとに問い合わせず矩形で取り出したので、州をここで決め、米国本土の外（カナダ、メキシコ）を落とす
+    let mut outside = 0;
+    if dataset == "walmart" {
+        let states = boundary::read_us_states(
+            &root.join("data/naturalearth/ne_10m_admin_1_states_provinces.geojson"),
+        )
+        .map_err(|e| format!("scripts/naturalearth/fetch.sh を先に：{e}"))?;
+        let before = elements.len();
+        elements.retain_mut(|e| match state_of(&states, &e.pos) {
+            Some(s) => {
+                e.state = s.to_string();
+                true
+            }
+            None => false,
+        });
+        outside = before - elements.len();
+    }
 
     // 選ばなかったもの：(shop, brand) ごとの数
     let mut excluded: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -153,6 +175,9 @@ pub fn osm(root: &Path, date: &str, dataset: &str) -> Result<String, Box<dyn std
         .map(|(_, n)| n)
         .sum();
     writeln!(report, "\n州が決まらなかった店舗：{other}")?;
+    if dataset == "walmart" {
+        writeln!(report, "米国本土の州の外にあって落とした要素：{outside}")?;
+    }
     writeln!(
         report,
         "重複とみなして落とした数：{}（{} m 以内の組 {} 個）",
@@ -528,7 +553,11 @@ pub fn cosmos_site(
             .map(|(i, q)| (i, crate::util::geo::great_circle_km(p, q)))
             .fold((0, f64::INFINITY), |a, b| if b.1 < a.1 { b } else { a });
         offsets_by_level
-            .entry(if site[i].brand == "街区" { "街区" } else { "町字" })
+            .entry(if site[i].brand == "街区" {
+                "街区"
+            } else {
+                "町字"
+            })
             .or_default()
             .push(d * 1000.0);
     }
@@ -545,7 +574,11 @@ pub fn cosmos_site(
     }
     let mut report = String::new();
     let mut table = String::new();
-    writeln!(report, "{:<6} {:>5} {:>5} {:>8}", "地区", "サイト", "公式", "サイト/公式")?;
+    writeln!(
+        report,
+        "{:<6} {:>5} {:>5} {:>8}",
+        "地区", "サイト", "公式", "サイト/公式"
+    )?;
     let (mut ts, mut to) = (0, 0);
     for r in COSMOS_REGIONS {
         let (s, o) = (n_site.get(r).copied().unwrap_or(0), official[r]);
@@ -561,7 +594,12 @@ pub fn cosmos_site(
             writeln!(table, "{r} & {s} & --- & --- \\\\")?;
         }
     }
-    writeln!(report, "{:<6} {ts:>5} {to:>5} {:>8.3}", "計", ts as f64 / to as f64)?;
+    writeln!(
+        report,
+        "{:<6} {ts:>5} {to:>5} {:>8.3}",
+        "計",
+        ts as f64 / to as f64
+    )?;
     writeln!(
         table,
         "\\midrule\n計 & {ts} & {to} & {:.2} \\\\",

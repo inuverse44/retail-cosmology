@@ -396,7 +396,10 @@ mod tests {
         for k in 0..n.len() {
             let tol = 1e-12;
             assert!((n[k] - ls[k] - 2.0 * eps[k]).abs() < tol, "bin {k}: N - LS");
-            assert!((dp[k] - ((1.0 + n[k]) / (1.0 + eps[k]) - 1.0)).abs() < tol, "bin {k}: DP");
+            assert!(
+                (dp[k] - ((1.0 + n[k]) / (1.0 + eps[k]) - 1.0)).abs() < tol,
+                "bin {k}: DP"
+            );
             assert!(
                 (h[k] - ((1.0 + n[k]) / (1.0 + eps[k]).powi(2) - 1.0)).abs() < tol,
                 "bin {k}: H"
