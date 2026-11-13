@@ -732,7 +732,8 @@ OSM の店とサイトの店を突き合わせると、OSM が拾えていたの
 \begin{figure}[t]
   \centering
   \includegraphics{stores_jp.pdf}
-  \caption{公式サイトから取ったトライアル（2026年11月3日）と西友（2026年11月4日）の店舗。
+  \caption{公式サイトから取った (a) トライアル（2026年11月3日）、(b) 西友（2026年11月4日）、(c) コスモス（2026年11月12日）の店舗。
+    コスモスの座標は住所から推定した（\ref{sec:data-cosmos} 節）。
     灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}。
     店のない沖縄は範囲の外にある。}
   \label{fig:stores-jp}
@@ -750,6 +751,7 @@ OSM でトライアルと同じように店を取り出すと（2026年11月1日
 そこで、住所から国土地理院の住所検索 \cite{GSIAddressSearch} で座標を引いた。
 「オープン予定」の 11 店は除いた。
 取ったデータの著作権はコスモス薬品にあるので、リポジトリには載せていない。
+店を図~\ref{fig:stores-jp}(c) に示す。
 
 数えた店は 1,735 店で、地区ごとに決算短信の数と比べると $0$--$5\%$ 多い（表~\ref{tab:cosmos}）。
 多い分は 6 月以降の開店で、決算短信が「新商勢圏」として出店を広げるとしている関東と中部で多い \cite{CosmosFY26}。
@@ -799,7 +801,15 @@ OSM の店からいちばん近いサイトの店までの距離は、街区か�
 店の中の売り場（薬局、ガーデンセンター、オートケア、眼鏡）、ガソリンスタンドに併設の店（\code{shop=convenience}）、注文した品を受け取るだけの施設は数えなかった。
 会員制の Sam's Club は別のブランドなので入らない。
 オーストラリアと同じく $100\,\mathrm{m}$ より近い組を同じ店とみなし、8 店を落とした。
-残った店は 4,564 店である。
+残った店は 4,564 店である（図~\ref{fig:stores-us}）。
+\begin{figure}[t]
+  \centering
+  \includegraphics{stores_us.pdf}
+  \caption{OSM から取り出した米国本土の Walmart の店舗（2026年11月12日 23時56分（UTC）時点）。
+    店は東部と南部に多く、西部の山地と砂漠では都市の周りにしかない。
+    灰色の線は Natural Earth の海岸線 \cite{NaturalEarth}、薄い線は州境 \cite{NaturalEarthAdmin1}。}
+  \label{fig:stores-us}
+\end{figure}
 
 OSM がどれだけ店を拾えているかを、10-K \cite{WalmartFY26} にある 2026年1月31日時点の店数と比べた（表~\ref{tab:walmart}）。
 10-K にあるのは全米（50 州、ワシントン D.C.、プエルトリコ）の業態ごとの合計で、州ごとの数はない。
@@ -1191,7 +1201,14 @@ $8\,\mathrm{km}$ 以上で見えた負の値は、これより短い距離には
 残った店はトライアル 145 店、コスモス 674 店である。
 西友は九州に店がないので、九州の中だけの計算には入らない。
 帰無仮説の模擬データは、\ref{sec:errors} 節と同じ地方だけをそろえたものと密集地への寄り方もそろえたものを 100 個ずつ作り、選択関数は 10 km 格子の表で求めた（\ref{app:grid}）。
-結果を表~\ref{tab:cosmos-mocks} にまとめる。
+結果を表~\ref{tab:cosmos-mocks} にまとめ、$R = 50\,\mathrm{km}$ のビンごとの値を図~\ref{fig:xi-cosmos} に示す。
+\begin{figure}[t]
+  \centering
+  \includegraphics{xi_cosmos.pdf}
+  \caption{トライアルとコスモスの選択関数つきの $\hat\xi_{\mathrm{LS}}$ と、二社の相互相関 $\hat\xi_{\times}$（$R = 50\,\mathrm{km}$）。
+    (a) 日本全体、(b) 九州 7 県の格子と店だけで計算した値。誤差は jackknife。}
+  \label{fig:xi-cosmos}
+\end{figure}
 \begin{table}[t]
   \centering
   \caption{トライアルとコスモスの選択関数つきの $\hat\xi_{\mathrm{LS}}$ と相互相関 $\hat\xi_{\times}$ を、帰無仮説の模擬データ 100 個と比べた値。
@@ -1236,7 +1253,16 @@ $R = 100\,\mathrm{km}$ では、トライアルは $+0.098$（100 個のうち 1
 
 米国の Walmart（\ref{sec:data-us} 節）について、トライアルと同じ計算を行った。
 帰無仮説の模擬データは、地方だけをそろえたものと密集地への寄り方もそろえたものを $R = 50$、$100\,\mathrm{km}$ で 100 個ずつ作り、選択関数は 10 km 格子の表で求めた（\ref{app:grid}）。
-結果を表~\ref{tab:walmart-mocks} にまとめる。
+結果を図~\ref{fig:xi-walmart} と表~\ref{tab:walmart-mocks} にまとめる。
+\begin{figure}[t]
+  \centering
+  \includegraphics{xi_walmart.pdf}
+  \caption{Walmart の選択関数つきの $\hat\xi_{\mathrm{LS}}$。
+    (a) 人口だけを基準にしたもの（灰色）と、選択関数の幅 $R = 50$、$100$、$200\,\mathrm{km}$ の基準。
+    (b) $R = 50\,\mathrm{km}$ の値と、密集地への寄り方もそろえた帰無仮説の模擬データ 100 個のビンごとの平均と標準偏差（灰色の帯）。
+    (c) $R = 100\,\mathrm{km}$ での Coles、Woolworths、トライアル、Walmart。}
+  \label{fig:xi-walmart}
+\end{figure}
 \begin{table}[t]
   \centering
   \caption{Walmart の選択関数つきの $\hat\xi_{\mathrm{LS}}$ を、帰無仮説の模擬データ 100 個と比べた値。
@@ -1763,6 +1789,9 @@ $\epsilon$ の揺れは、データの点がたまたまランダムカタログ
   \item 図~\ref{fig:selection}：\code{selection\_map -- 2026-11-03} のあと \code{scripts/plot\_selection.py}
   \item 図~\ref{fig:stores}：\code{scripts/plot\_stores.py}
   \item 図~\ref{fig:stores-jp}：\code{scripts/plot\_stores\_jp.py}
+  \item 図~\ref{fig:stores-us}：\code{scripts/plot\_stores\_us.py}
+  \item 図~\ref{fig:xi-cosmos}：\code{scripts/plot\_cosmos.py}
+  \item 図~\ref{fig:xi-walmart}：\code{scripts/plot\_walmart.py}
   \item 図~\ref{fig:xi}：\code{scripts/plot\_xi.py}
   \item 図~\ref{fig:compare}：\code{scripts/plot\_compare.py}
   \item 図~\ref{fig:footprint}：\code{scripts/plot\_footprint.py}

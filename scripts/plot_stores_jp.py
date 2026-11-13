@@ -1,9 +1,10 @@
-"""トライアルと西友の店舗を、海岸線つきの日本の地図に打つ。店は公式サイトから取ったもの。
+"""トライアル、西友、コスモスの店舗を、海岸線つきの日本の地図に打つ。店は公式サイトから取ったもの。
 
 cargo run --release --bin trial_census -- 2026-11-03 2026-11-01
 cargo run --release --bin seiyu_census -- 2026-11-04 2026-11-03
+cargo run --release --bin cosmos_census -- 2026-11-12 2026-11-01
 scripts/naturalearth/fetch.sh
-uv run scripts/plot_stores_jp.py 2026-11-03 2026-11-04
+uv run scripts/plot_stores_jp.py 2026-11-03 2026-11-04 2026-11-12
 """
 
 import csv
@@ -18,6 +19,7 @@ ROOT = fs.ROOT
 CHAINS = [
     ("TRIAL", "trial_site/trial_site_clean_{}.csv"),
     ("SEIYU", "seiyu_site/seiyu_site_clean_{}.csv"),
+    ("COSMOS", "cosmos_site/cosmos_site_clean_{}.csv"),
 ]
 # 九州から北海道まで（店のない沖縄は入れない）[deg]
 LON = (128.5, 146.0)
@@ -25,9 +27,9 @@ LAT = (30.5, 45.7)
 
 
 def main() -> None:
-    dates = sys.argv[1:3]
-    fig, axes = fs.figure(1, 2, height=3.4, sharex=True, sharey=True)
-    for ax, tag, (chain, path), date in zip(axes, "ab", CHAINS, dates, strict=True):
+    dates = sys.argv[1:4]
+    fig, axes = fs.figure(1, 3, height=2.6, sharex=True, sharey=True)
+    for ax, tag, (chain, path), date in zip(axes, "abc", CHAINS, dates, strict=True):
         rows = csv.DictReader(open(ROOT / "data" / path.format(date), encoding="utf-8"))
         pts = np.array([(float(r["lon"]), float(r["lat"])) for r in rows if r["chain"] == chain])
         coastline.draw(ax, LON, LAT)
@@ -37,7 +39,7 @@ def main() -> None:
         ax.set_aspect(1 / np.cos(np.radians(38)))
         ax.set_xlabel("longitude [deg]")
     axes[0].set_ylabel("latitude [deg]")
-    axes[1].text(0.97, 0.03, coastline.CREDIT, transform=axes[1].transAxes, fontsize=6, color="0.4", ha="right")
+    axes[-1].text(0.97, 0.03, coastline.CREDIT, transform=axes[-1].transAxes, fontsize=6, color="0.4", ha="right")
     fs.save(fig, "stores_jp")
 
 

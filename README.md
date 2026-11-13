@@ -71,7 +71,7 @@ uv run scripts/plot_footprint.py 2026-11-01 2026-11-03 # docs/figures/xi_footpri
 # 西友と、トライアルとの相互相関
 scripts/seiyu_site/fetch.sh                            # data/seiyu_site/<取得日>/（公式サイトの店舗）
 cargo run --release --bin seiyu_census -- 2026-11-04 2026-11-03
-uv run scripts/plot_stores_jp.py 2026-11-03 2026-11-04 # docs/figures/stores_jp.{pdf,png}
+uv run scripts/plot_stores_jp.py 2026-11-03 2026-11-04 2026-11-12   # docs/figures/stores_jp.{pdf,png}（コスモスも）
 S=data/trial_site/trial_site_clean_2026-11-03.csv,data/seiyu_site/seiyu_site_clean_2026-11-04.csv
 cargo run --release --bin xi -- 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50,100,200 --tag crossfp
 scripts/null_mocks_cross.sh 2026-11-03 $S TRIAL,SEIYU 50 100 6    # 帰無仮説の模擬データ 100 個（6 並列）
@@ -101,6 +101,9 @@ cargo run --release --bin osm_census -- 2026-11-13 walmart   # data/osm/walmart_
 cargo run --release --bin xi -- 2026-11-13 --country us --footprint 50,100,200 --tag fp
 scripts/null_mocks_walmart.sh 2026-11-13 100 6         # 帰無仮説の模擬データ 100 個 ×4 組（6 並列で約 32 分）
 cargo run --release --bin short_range -- 2026-11-13 walmart  # docs/tables/walmart_mocks.tex
+uv run scripts/plot_stores_us.py 2026-11-13                  # docs/figures/stores_us.{pdf,png}
+uv run scripts/plot_walmart.py 2026-11-13 2026-11-01 2026-11-03   # docs/figures/xi_walmart.{pdf,png}
+uv run scripts/plot_cosmos.py 2026-11-03                     # docs/figures/xi_cosmos.{pdf,png}（コスモスと九州の中だけ）
 
 # 模擬データの計算量（notes/algorithm-cost.tex）
 target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --footprint 50 --mock 50:1 --mock-density on --tag costlog 2> data/cost/mock_log_R50.txt
