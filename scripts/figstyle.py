@@ -24,12 +24,15 @@ TEXTWIDTH = 445.5 / 72.27
 
 # 図をまたいで出てくるものの色。同じパネルに並ぶ組（オーストラリアの 2 社、日本の 2 社と相互相関、
 # 比較の図の Coles・Woolworths・トライアル）は、色覚の検査（dataviz の validate_palette.js、--pairs all）を通した。
+# コスモス（#51）はトライアル・相互相関と、Walmart（#51）は Coles・Woolworths・トライアルと並べて通した（2026-11-13）。
 COLOR = {
     "Coles": "#eb6834",
     "Woolworths": "#1baf7a",
     "TRIAL": "#2a78d6",
     "SEIYU": "#e34948",
-    "cross": "#008300",  # トライアル × 西友の相互相関
+    "COSMOS": "#c2398f",
+    "WALMART": "#9c5b00",
+    "cross": "#008300",  # 相互相関（トライアル × 西友、トライアル × コスモス。一つの図に二つの組は並べない）
     "population": "0.45",  # 人口そのもの、人口だけを基準にしたもの
     "mock": "0.65",  # 帰無仮説の模擬データ
     "data": "0.0",
@@ -42,6 +45,8 @@ MARKER = {
     "Woolworths": "s",
     "TRIAL": "D",
     "SEIYU": "^",
+    "COSMOS": "P",
+    "WALMART": "X",
     "cross": "v",
     "population": "x",
 }
@@ -53,7 +58,16 @@ ESTIMATOR = {
     "landy_szalay": {"color": "0.1", "marker": "s", "mfc": "white"},
 }
 # 同じビンの点が重ならないよう横にずらす倍率
-SHIFT = {"Coles": 0.97, "Woolworths": 1.03, "TRIAL": 1.0, "SEIYU": 1.0, "cross": 1.0, "population": 1.0}
+SHIFT = {
+    "Coles": 0.97,
+    "Woolworths": 1.03,
+    "TRIAL": 1.0,
+    "SEIYU": 1.0,
+    "COSMOS": 1.03,
+    "WALMART": 1.0,
+    "cross": 0.97,
+    "population": 1.0,
+}
 
 # 選択関数の幅 R [km] の濃淡：小さい R ほど濃い
 R_SHADE = {50: -0.35, 100: 0.0, 200: 0.45}
