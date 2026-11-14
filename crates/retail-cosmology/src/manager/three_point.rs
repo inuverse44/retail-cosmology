@@ -12,8 +12,10 @@ use std::time::Instant;
 
 use crate::access::{boundary, population, results, stores};
 use crate::contract::{Bins, Chain, PairCounts, PopulationGrid, TripleCounts};
-use crate::engine::estimator::mock_summary;
-use crate::engine::random_catalog::{Weight, sample, sample_reweighted, sample_selected};
+use crate::engine::estimator::{density_ratio_summary, mock_summary};
+use crate::engine::random_catalog::{
+    Weight, count_coarse_cells, sample, sample_conditional_children, sample_reweighted, sample_selected,
+};
 use crate::engine::selection_function::{
     RegionalRatio, SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
 };
@@ -54,6 +56,8 @@ pub struct Params {
     pub mock: Option<u64>,
     /// 模擬データの重みに人口密度 ρ の γ 乗も掛け、人の密集地への寄り方を実際の店にそろえる
     pub mock_density: bool,
+    /// clustered_mocks に一点密度をそろえた第三の基準を足す
+    pub match_density: bool,
     /// 辺のビン：[lo, hi) km を対数で n 等分
     pub sides_km: (f64, f64, usize),
     /// 出力のファイル名につける名前（空でなければ "_名前" の形）
@@ -76,6 +80,7 @@ impl Params {
             write_xi: false,
             mock: None,
             mock_density: false,
+            match_density: false,
             sides_km: (2.0, 32.0, 4),
             tag: String::new(),
         }
@@ -870,10 +875,11 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
 ///
 /// 親は実際の店から作った選択関数と人口に比例して撒き、その親のまわりに標準偏差 `sigma_km` で `m` 個ずつ子を撒く。
 /// 子の数の合計は実際の店の数に合わせる（親の数は店の数 ÷ `m`、端数は切り上げて余りを捨てる）。
-/// 一つの模擬データを二通りに測る。
-/// - true：模擬データを作った重み（実際の店の選択関数 × 人口）で撒いたランダムカタログ。正しい基準にあたる。
+/// 同じ模擬データを true・proc で測り、指定した基準も追加する。
+/// - true：従来の列名。親を作った重み（実際の店の選択関数 × 人口）を基準にする。子の一点密度と一致する保証はない。
 /// - proc：模擬データそのものから選択関数を作り直したランダムカタログ。実際の店と同じ手順。
 /// - regional（指定時）：同じ模擬データの行政区別店舗数 / 人口で作ったランダムカタログ。
+/// - match（指定時）：親ごとに最初の子を一個だけ選び直す独立な基準。
 ///
 /// 見込みの ζ は、同じ親の子である三角形の数を、true の RRR を点の数で写した値で割ったもの。
 /// 実際の店の ξ（true と同じランダムカタログ）も測り、run = -1 の行に書く。
@@ -886,6 +892,15 @@ pub fn clustered_mocks(
     runs: usize,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let t0 = Instant::now();
+    let wall0 = std::time::SystemTime::now();
+    if m == 0 || runs == 0 || p.n_random < 3 || !sigma_km.is_finite() || sigma_km <= 0.0 {
+        return Err("children, runs, sigma は正、n-random は3以上が必要".into());
+    }
+    if p.match_density && p.tag.is_empty() {
+        return Err("--match on では新規の --tag が必要".into());
+    }
+    let mut timing = String::from("stage,run,instant_s,wall_s\n");
+    let mut completed = 0usize;
     let r_km = p.footprint.ok_or("--footprint R が要る")?;
     let (grid, prefix) = grid_of(root, &p.country)?;
     let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
@@ -896,9 +911,6 @@ pub fn clustered_mocks(
         .collect();
     if pts.is_empty() {
         return Err(format!("{} に {} の店がない", p.stores, p.chain).into());
-    }
-    if runs == 0 || m == 0 || sigma_km <= 0.0 {
-        return Err("runs, children, sigma は正の値が要る".into());
     }
     let basis = p
         .regional
@@ -943,36 +955,66 @@ pub fn clustered_mocks(
         })
         .transpose()?;
     let real_xi_regional = regional_real_randoms.as_ref().map(|r| xi_of(&real, r));
-    let mut xi_out = if p.regional.is_some() {
-        String::from("run,k,r_km,xi_true,xi_proc,xi_regional\n")
-    } else {
-        String::from("run,k,r_km,xi_true,xi_proc\n")
-    };
-    for (k, v) in xi_of(&real, &r_true).iter().enumerate() {
-        if let Some(xi) = &real_xi_regional {
-            writeln!(xi_out, "-1,{k},{:.3},{v:.6},,{:.6}", c[k], xi[k])?;
-        } else {
-            writeln!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
-        }
-    }
-    let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+    let mut xi_out = String::from("run,k,r_km,xi_true,xi_proc");
     if p.regional.is_some() {
-        z_out = z_out.replace("expected\n", "expected,zeta_regional\n");
+        xi_out.push_str(",xi_regional");
     }
+    if p.match_density {
+        xi_out.push_str(",xi_match");
+    }
+    xi_out.push('\n');
+    for (k, v) in xi_of(&real, &r_true).iter().enumerate() {
+        write!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
+        if let Some(xi) = &real_xi_regional {
+            write!(xi_out, ",{:.6}", xi[k])?;
+        }
+        if p.match_density {
+            write!(xi_out, ",")?;
+        }
+        writeln!(xi_out)?;
+    }
+    let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected");
+    if p.regional.is_some() {
+        z_out.push_str(",zeta_regional");
+    }
+    if p.match_density {
+        z_out.push_str(",zeta_match,expected_match");
+    }
+    z_out.push('\n');
     let n_p = pts.len().div_ceil(m);
     let mut rng_m = SplitMix64::new(p.seed ^ 0xC1A5_7E00_0000_0000);
     // 点の池：基準の重み（人口 × 実際の店の選択関数）で撒いた点。親も子もこの池から選ぶので、
-    // 模擬の店は人の住む格子にしか置かれず、基準とのずれ（ζ̂ ≈ ⟨(w−1)³⟩）が入らない。
+    // 子は人の住む格子だけに置かれるが、親ごとの正規化で一点密度が池の密度とずれる可能性はある。
     let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_m));
     let cut = km_to_chord2(3.0 * sigma_km);
     let two_s2 = 2.0 * km_to_chord2(sigma_km);
     let g_pool = crate::util::spatial::UnitGrid::build(&pool, cut.sqrt());
     eprintln!(
-        "点の池 {} 点（{:.1} 秒）",
+        "点の池 {} 点（Instant {:.1} 秒、壁時計 {:.1} 秒）",
         pool.len(),
-        t0.elapsed().as_secs_f64()
+        t0.elapsed().as_secs_f64(),
+        wall0.elapsed()?.as_secs_f64()
     );
+    writeln!(
+        timing,
+        "pool,-1,{:.3},{:.3}",
+        t0.elapsed().as_secs_f64(),
+        wall0.elapsed()?.as_secs_f64()
+    )?;
+    let pool_cells = if p.match_density {
+        count_coarse_cells(&pool, &grid.geometry)
+    } else {
+        Default::default()
+    };
+    let true_cells = if p.match_density {
+        count_coarse_cells(&r_true, &grid.geometry)
+    } else {
+        Default::default()
+    };
+    let mut match_a = std::collections::BTreeMap::<u64, u64>::new();
+    let mut match_b = std::collections::BTreeMap::<u64, u64>::new();
     for run in 0..runs {
+        let step_wall = std::time::SystemTime::now();
         // 親を池から一様に選び、子は親から 3σ 以内の池の点を、距離の正規分布の重みで m 個選ぶ（同じ点は選ばない）。
         // 子は親ごとに m 個続けて並ぶ。店の数を超えた分は最後の親の子から捨てる
         // 近くの池の点が m 個に満たない親は使わず、選び直す（正解の数え上げで、子を m 個ずつ区切るため）
@@ -1015,6 +1057,28 @@ pub fn clustered_mocks(
             })
             .transpose()?;
         let xr = r_regional.as_ref().map(|r| xi_of(&d, r));
+        let r_match = if p.match_density {
+            let mut rng_match = SplitMix64::new(p.seed ^ 0x4D44_454E_5300_0000 ^ run as u64);
+            let r = sample_conditional_children(
+                &pool,
+                &g_pool,
+                sigma_km,
+                m,
+                p.n_random,
+                &mut rng_match,
+            )?;
+            let mid = r.len() / 2;
+            for (key, count) in count_coarse_cells(&r[..mid], &grid.geometry) {
+                *match_a.entry(key).or_default() += count;
+            }
+            for (key, count) in count_coarse_cells(&r[mid..], &grid.geometry) {
+                *match_b.entry(key).or_default() += count;
+            }
+            Some(r)
+        } else {
+            None
+        };
+        let xm = r_match.as_ref().map(|r| xi_of(&d, r));
         for (k, (a, b)) in xi_of(&d, &r_true)
             .iter()
             .zip(xi_of(&d, &r_proc))
@@ -1023,6 +1087,9 @@ pub fn clustered_mocks(
             write!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
             if let Some(xr) = &xr {
                 write!(xi_out, ",{:.6}", xr[k])?;
+            }
+            if let Some(xm) = &xm {
+                write!(xi_out, ",{:.6}", xm[k])?;
             }
             writeln!(xi_out)?;
         }
@@ -1033,6 +1100,10 @@ pub fn clustered_mocks(
             .as_ref()
             .map(|r| TripleCounts::compute(&d, r, &bins));
         let zr = tr.as_ref().map(TripleCounts::szapudi_szalay);
+        let t_match = r_match
+            .as_ref()
+            .map(|r| TripleCounts::compute(&d, r, &bins));
+        let zm = t_match.as_ref().map(TripleCounts::szapudi_szalay);
         let same = same_parent_triples(&d, m, &bins);
         let scale = c3(d.len() as f64) / c3(r_true.len() as f64);
         for b in bins.used() {
@@ -1056,9 +1127,35 @@ pub fn clustered_mocks(
             if let Some(zr) = &zr {
                 write!(z_out, ",{:.6}", zr[b])?;
             }
+            if let (Some(tm), Some(zm)) = (&t_match, &zm) {
+                let em = if tm.rrr[b] > 0 {
+                    same[b] as f64 / (tm.rrr[b] as f64 * scale)
+                } else {
+                    f64::NAN
+                };
+                write!(z_out, ",{:.6},{em:.6}", zm[b])?;
+            }
             writeln!(z_out)?;
         }
-        eprintln!("{} 回目（{:.1} 秒）", run + 1, t0.elapsed().as_secs_f64());
+        completed = run + 1;
+        let wall = wall0.elapsed()?.as_secs_f64();
+        eprintln!(
+            "{} 回目（Instant {:.1} 秒、壁時計 {wall:.1} 秒）",
+            completed,
+            t0.elapsed().as_secs_f64()
+        );
+        writeln!(
+            timing,
+            "run,{run},{:.3},{wall:.3}",
+            t0.elapsed().as_secs_f64()
+        )?;
+        if p.match_density
+            && completed < runs
+            && wall + 1.2 * step_wall.elapsed()?.as_secs_f64() > 3600.0
+        {
+            eprintln!("壁時計で1時間を超える見込みのため {completed}/{runs} 回で保存して終了");
+            break;
+        }
     }
     let stem = format!(
         "data/zeta/clustered_{prefix}{}_{}_m{m}_s{sigma_km}{}",
@@ -1066,6 +1163,52 @@ pub fn clustered_mocks(
         p.chain.to_lowercase(),
         p.tag
     );
+    if p.match_density {
+        let mut cells = String::from(
+            "coarse_id,pool_count,true_count,match_a,match_b,g_match_over_pool,g_match_over_true\n",
+        );
+        let mut pc = Vec::new();
+        let mut ac = Vec::new();
+        let mut bc = Vec::new();
+        let nm = match_a.values().sum::<u64>() + match_b.values().sum::<u64>();
+        for (&key, &np) in &pool_cells {
+            let nt = true_cells.get(&key).copied().unwrap_or(0);
+            let a = match_a.get(&key).copied().unwrap_or(0);
+            let b = match_b.get(&key).copied().unwrap_or(0);
+            let gp = (a + b) as f64 / nm as f64 / (np as f64 / pool.len() as f64);
+            let gt = if nt > 0 {
+                (a + b) as f64 / nm as f64 / (nt as f64 / r_true.len() as f64)
+            } else {
+                f64::NAN
+            };
+            writeln!(cells, "{key},{np},{nt},{a},{b},{gp:.9},{gt:.9}")?;
+            pc.push(np);
+            ac.push(a);
+            bc.push(b);
+        }
+        results::write_text(&root.join(format!("{stem}_density_cells.csv")), &cells)?;
+        let ds = density_ratio_summary(&pc, &ac, &bc, 20);
+        let density = format!(
+            "min_pool_count,pool_points,match_points,cells,mass_fraction,g_mean,g_variance,split_cross_mse,g_q10,g_q50,g_q90\n20,{},{nm},{},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9}\n",
+            pool.len(),
+            ds.cells,
+            ds.mass_fraction,
+            ds.mean,
+            ds.variance,
+            ds.cross_mse,
+            ds.q10,
+            ds.q50,
+            ds.q90
+        );
+        results::write_text(&root.join(format!("{stem}_density_summary.csv")), &density)?;
+        writeln!(
+            timing,
+            "completed,{completed},{:.3},{:.3}",
+            t0.elapsed().as_secs_f64(),
+            wall0.elapsed()?.as_secs_f64()
+        )?;
+        results::write_text(&root.join(format!("{stem}_timing.csv")), &timing)?;
+    }
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
     let path = format!("{stem}.csv");
     results::write_text(&root.join(&path), &z_out)?;
@@ -1922,6 +2065,150 @@ pub fn summarize_external_selection(
     Ok(out)
 }
 
+/// matched-density の paired residual、二点、約10km格子の密度比を Rust でまとめる。
+pub fn summarize_mock_density(
+    root: &Path,
+    stem: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let rows = results::read_numeric_csv(&root.join(format!("{stem}.csv")))?;
+    let xis = results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))?;
+    let density = results::read_numeric_csv(&root.join(format!("{stem}_density_summary.csv")))?;
+    let timing = results::read_numeric_csv(&root.join(format!("{stem}_timing.csv")))?;
+    let key = |r: &std::collections::HashMap<String, f64>| {
+        (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize)
+    };
+    let keys: std::collections::BTreeSet<_> = rows.iter().map(key).collect();
+    let mut out = format!(
+        "# Mock density test\n\nStem: `{stem}`.\n\nζ differences are paired within each mock; errors are sample SD / sqrt(N). Match uses its own RRR for expected_match. Columns true/proc use the original expected.\n\n| sides (km) | runs | match − expected_match | true − expected | proc − expected |\n|---|---:|---:|---:|---:|\n"
+    );
+    let mut csv = String::from(
+        "k1,k2,k3,r1_km,r2_km,r3_km,runs,match_diff_mean,match_diff_se,true_diff_mean,true_diff_se,proc_diff_mean,proc_diff_se\n",
+    );
+    let mut bins = 0usize;
+    let mut se_bins = 0usize;
+    let mut beyond = [0usize; 3];
+    for k in keys {
+        let v: Vec<_> = rows
+            .iter()
+            .filter(|r| key(r) == k)
+            .filter(|r| {
+                [
+                    "zeta_match",
+                    "expected_match",
+                    "zeta_true",
+                    "zeta_proc",
+                    "expected",
+                ]
+                .iter()
+                .all(|name| r.get(*name).is_some_and(|x| x.is_finite()))
+            })
+            .collect();
+        if v.is_empty() {
+            continue;
+        }
+        if v.len() >= 2 {
+            se_bins += 1;
+        }
+        let residual = |name: &str, expected: &str| {
+            let values: Vec<_> = v.iter().map(|r| r[name] - r[expected]).collect();
+            let stat = mock_summary(0.0, &values);
+            (stat.mean, stat.sd / (stat.n as f64).sqrt())
+        };
+        let stats = [
+            residual("zeta_match", "expected_match"),
+            residual("zeta_true", "expected"),
+            residual("zeta_proc", "expected"),
+        ];
+        let (a, b, c) = (v[0]["r1_km"], v[0]["r2_km"], v[0]["r3_km"]);
+        write!(out, "| {a:.3}, {b:.3}, {c:.3} | {}", v.len())?;
+        write!(
+            csv,
+            "{},{},{},{a:.3},{b:.3},{c:.3},{}",
+            k.0,
+            k.1,
+            k.2,
+            v.len()
+        )?;
+        for (i, (mean, se)) in stats.iter().enumerate() {
+            write!(out, " | {mean:+.6} ± {se:.6}")?;
+            write!(csv, ",{mean:.6},{se:.6}")?;
+            if se.is_finite() && mean.abs() > 2.0 * se {
+                beyond[i] += 1;
+            }
+        }
+        writeln!(out, " |")?;
+        writeln!(csv)?;
+        bins += 1;
+    }
+    writeln!(
+        out,
+        "\nBins: {bins}; bins with at least two runs: {se_bins}. Bins exceeding 2 standard errors (absolute residual): match {}/{se_bins}; true {}/{se_bins}; proc {}/{se_bins}. Gaussian null expected count: {:.3} (bins are correlated; this is not a global test).\n",
+        beyond[0],
+        beyond[1],
+        beyond[2],
+        se_bins as f64 * 0.045_500_263_896_358_4
+    )?;
+    results::write_text(&root.join(format!("{stem}_density_test_summary.csv")), &csv)?;
+    out.push_str("ξ means ± standard error across mocks:\n\n| r (km) | runs | true | match | proc |\n|---|---:|---:|---:|---:|\n");
+    let ks: std::collections::BTreeSet<_> = xis
+        .iter()
+        .filter(|r| r["run"] >= 0.0)
+        .map(|r| r["k"] as usize)
+        .collect();
+    let mut xc = String::from(
+        "k,r_km,runs,true_mean,true_se,true_sd,match_mean,match_se,match_sd,proc_mean,proc_se,proc_sd\n",
+    );
+    for k in ks {
+        let v: Vec<_> = xis
+            .iter()
+            .filter(|r| r["run"] >= 0.0 && r["k"] as usize == k)
+            .collect();
+        let r = v[0]["r_km"];
+        write!(out, "| {r:.3} | {}", v.len())?;
+        write!(xc, "{k},{r:.3},{}", v.len())?;
+        for col in ["xi_true", "xi_match", "xi_proc"] {
+            let values: Vec<_> = v.iter().map(|r| r[col]).collect();
+            let stat = mock_summary(0.0, &values);
+            let se = stat.sd / (stat.n as f64).sqrt();
+            write!(out, " | {:.6} ± {se:.6}", stat.mean)?;
+            write!(xc, ",{:.6},{se:.6},{:.6}", stat.mean, stat.sd)?;
+        }
+        writeln!(out, " |")?;
+        writeln!(xc)?;
+    }
+    results::write_text(
+        &root.join(format!("{stem}_density_test_xi_summary.csv")),
+        &xc,
+    )?;
+    let d = density.first().ok_or("密度の診断がない")?;
+    out.push_str("\nDensity ratio g on the approximately 10 km grid:\n\n");
+    writeln!(
+        out,
+        "Pool = {:.0} points (large sample of the true baseline); aggregate match = {:.0} points. Retain cells with pool count ≥ {:.0}: {:.0} cells, {:.6} of pool mass. All ratios normalized by catalog size and weighted by pool counts.\n",
+        d["pool_points"], d["match_points"], d["min_pool_count"], d["cells"], d["mass_fraction"]
+    )?;
+    writeln!(
+        out,
+        "g mean {:.6}; raw variance {:.6}; weighted 10/50/90% quantiles {:.6} / {:.6} / {:.6}.\n",
+        d["g_mean"], d["g_variance"], d["g_q10"], d["g_q50"], d["g_q90"]
+    )?;
+    writeln!(
+        out,
+        "Split-sample cross mean-square displacement from g=1: {:.6}; sqrt(max(0, cross)) = {:.6}. Independent match halves remove the self product of sampling noise; the pool stays fixed. Raw ratios against the smaller true random catalog are also saved in density_cells.csv.\n",
+        d["split_cross_mse"],
+        d["split_cross_mse"].max(0.0).sqrt()
+    )?;
+    if let Some(t) = timing.last() {
+        writeln!(
+            out,
+            "Completed {:.0} runs. Instant {:.3} s; wall clock {:.3} s.\n",
+            t["run"], t["instant_s"], t["wall_s"]
+        )?;
+    }
+    results::write_text(&root.join(format!("{stem}_density_test.md")), &out)?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1995,6 +2282,117 @@ mod tests {
         .unwrap();
         assert!(analyze_field(&root, "real.csv", "missing", &sources).is_err());
         assert!(!root.join("missing.csv").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod combined_reference_tests {
+    use super::*;
+
+    fn project_csv(text: &str, names: &[&str]) -> String {
+        let mut lines = text.lines();
+        let header: Vec<_> = lines.next().unwrap().split(',').collect();
+        let columns: Vec<_> = names
+            .iter()
+            .map(|name| header.iter().position(|h| h == name).unwrap())
+            .collect();
+        let mut projected = names.join(",");
+        projected.push('\n');
+        for line in lines {
+            let values: Vec<_> = line.split(',').collect();
+            projected.push_str(
+                &columns
+                    .iter()
+                    .map(|&i| values[i])
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            projected.push('\n');
+        }
+        projected
+    }
+
+    #[test]
+    fn combined_references_preserve_each_standalone_catalog_and_legacy_columns() {
+        // 小さな実ファイルを通し、4通りの設定で乱数列と出力列の独立性を確かめる。
+        let root = std::env::temp_dir().join(format!(
+            "retail-combined-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let popdir = root.join("data/estat");
+        let prefdir = popdir.join("mesh_pref");
+        std::fs::create_dir_all(&prefdir).unwrap();
+        let codes = [50303500u64, 50303501, 50303502];
+        let mut pop = String::from("header\nheader\n");
+        for code in codes {
+            writeln!(pop, "{code},0,0,0,1000").unwrap();
+        }
+        std::fs::write(popdir.join("tblT001140S5030.txt"), pop).unwrap();
+        for pref in 1..=47 {
+            let mut rows = String::from("header\n");
+            if pref == 40 {
+                for code in codes {
+                    writeln!(rows, "40000,city,{code}").unwrap();
+                }
+            }
+            std::fs::write(prefdir.join(format!("{pref:02}.csv")), rows).unwrap();
+        }
+        let mut stores = String::from("chain,region,state,lat,lon,kind\n");
+        for code in codes {
+            let (lat, lon) = crate::util::grid::code_to_sw(code);
+            for i in 0..4 {
+                let f = 0.1 + i as f64 * 0.2;
+                writeln!(
+                    stores,
+                    "COSMOS,九州,JP-40,{},{},site",
+                    lat + f / 120.0,
+                    lon + f / 80.0
+                )
+                .unwrap();
+            }
+        }
+        std::fs::write(root.join("stores.csv"), stores).unwrap();
+        let mut outputs = Vec::new();
+        for (name, regional, matched) in [
+            ("base", None, false),
+            ("regional", Some(RegionalScale::Prefecture), false),
+            ("matched", None, true),
+            ("both", Some(RegionalScale::Prefecture), true),
+        ] {
+            let mut p = Params::new("fixture".into());
+            p.stores = "stores.csv".into();
+            p.chain = "COSMOS".into();
+            p.n_random = 64;
+            p.n_ref = 128;
+            p.footprint = Some(50.0);
+            p.regional = regional;
+            p.match_density = matched;
+            p.sides_km = (0.1, 8.0, 1);
+            p.tag = format!("_{name}");
+            let path = clustered_mocks(&root, &p, 3, 1.0, 1).unwrap();
+            outputs.push((
+                std::fs::read_to_string(root.join(&path)).unwrap(),
+                std::fs::read_to_string(root.join(path.replace(".csv", "_xi.csv"))).unwrap(),
+            ));
+        }
+        for reference in &outputs[..3] {
+            for (expected, actual) in [(&reference.0, &outputs[3].0), (&reference.1, &outputs[3].1)]
+            {
+                let names: Vec<_> = expected.lines().next().unwrap().split(',').collect();
+                assert_eq!(project_csv(actual, &names), *expected);
+            }
+        }
+        assert!(outputs[3].0.starts_with("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected,zeta_regional,zeta_match,expected_match\n"));
+        assert!(
+            outputs[3]
+                .1
+                .starts_with("run,k,r_km,xi_true,xi_proc,xi_regional,xi_match\n")
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

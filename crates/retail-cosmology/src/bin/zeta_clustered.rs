@@ -8,6 +8,7 @@
 //! 書くもの：data/zeta/clustered_<jp_|us_><日付>_<チェーン>_m<m>_s<σ>[_名前].csv と _xi.csv
 
 //! --regional on|prefecture：地方別または都道府県別の店舗数 / 人口を使う（clustered は従来の proc に追加して比較）。
+//! --match on：親ごとに子を一つ選ぶ独立の基準を追加。新規の --tag が必要。
 
 use std::path::PathBuf;
 
@@ -34,6 +35,7 @@ fn main() {
                     _ => panic!("--regional on|prefecture|off"),
                 }
             }
+            "--match" => p.match_density = v == "on",
             "--footprint" => p.footprint = Some(v.parse().unwrap()),
             "--children" => m = v.parse().unwrap(),
             "--sigma" => sigma = v.parse().unwrap(),
