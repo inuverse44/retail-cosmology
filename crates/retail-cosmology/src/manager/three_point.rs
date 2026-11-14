@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::access::{boundary, population, results, stores};
-use crate::contract::{Bins, PopulationGrid, TripleCounts};
+use crate::contract::{Bins, PairCounts, PopulationGrid, TripleCounts};
 use crate::engine::estimator::mock_summary;
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
 use crate::engine::selection_function::{
@@ -435,6 +435,200 @@ pub fn selection_bias_toy(root: &Path, runs: usize) -> Result<String, Box<dyn st
     }
     results::write_text(&root.join("data/toy/zeta_selection_bias_summary.csv"), &sum)?;
     Ok(path)
+}
+
+/// 二点の固まりを実際の店にそろえ、ζ がわかっている模擬データ（Neyman–Scott の模型）を作り、
+/// 選択関数の偏りを実際の地形の上で測る（#81）。
+///
+/// 親は実際の店から作った選択関数と人口に比例して撒き、その親のまわりに標準偏差 `sigma_km` で `m` 個ずつ子を撒く。
+/// 子の数の合計は実際の店の数に合わせる（親の数は店の数 ÷ `m`、端数は切り上げて余りを捨てる）。
+/// 一つの模擬データを二通りに測る。
+/// - true：模擬データを作った重み（実際の店の選択関数 × 人口）で撒いたランダムカタログ。正しい基準にあたる。
+/// - proc：模擬データそのものから選択関数を作り直したランダムカタログ。実際の店と同じ手順。
+///
+/// 見込みの ζ は、同じ親の子である三角形の数を、true の RRR を点の数で写した値で割ったもの。
+/// 実際の店の ξ（true と同じランダムカタログ）も測り、run = -1 の行に書く。
+/// 書くもの：data/zeta/clustered_<前置き><日付>_<チェーン>_m<m>_s<σ>.csv（ζ）と、同じ名前の _xi.csv（ξ）。
+pub fn clustered_mocks(
+    root: &Path,
+    p: &Params,
+    m: usize,
+    sigma_km: f64,
+    runs: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let t0 = Instant::now();
+    let r_km = p.footprint.ok_or("--footprint R が要る")?;
+    let (grid, prefix) = grid_of(root, &p.country)?;
+    let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
+        .map_err(|e| format!("{} がない：{e}", p.stores))?
+        .into_iter()
+        .filter(|(c, _)| *c == p.chain)
+        .map(|(_, q)| q)
+        .collect();
+    if pts.is_empty() {
+        return Err(format!("{} に {} の店がない", p.stores, p.chain).into());
+    }
+    let mut rng_ref = SplitMix64::new(p.seed ^ 0x3E7A_0000_0000_0000);
+    let refs: Vec<Unit> = sample(&grid, p.n_ref, Weight::Population, &mut rng_ref)
+        .iter()
+        .map(Unit::from)
+        .collect();
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
+        sample_selected(&grid, n, Weight::Population, |q| sr.eval(&Unit::from(q)), 2 * n, rng).points
+    };
+    let real = units(&pts);
+    let sr_real = SmoothRatio::new(&real, &refs, r_km);
+    let mut rng = SplitMix64::new(p.seed);
+    let r_true = units(&draw(&sr_real, p.n_random, &mut rng));
+
+    let (lo, hi, n) = p.sides_km;
+    let sides_km = Bins::log(lo, hi, n);
+    let cb = sides_km.map(km_to_chord2);
+    let bins = TriangleBins::new(cb.clone());
+    let c = sides_km.centers();
+    let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+    let xi_of = |d: &[Unit], r: &[Unit]| PairCounts::compute(d, r, &cb, chord2).landy_szalay();
+
+    let mut xi_out = String::from("run,k,r_km,xi_true,xi_proc\n");
+    for (k, v) in xi_of(&real, &r_true).iter().enumerate() {
+        writeln!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
+    }
+    let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+    let n_p = pts.len().div_ceil(m);
+    let mut rng_m = SplitMix64::new(p.seed ^ 0xC1A5_7E00_0000_0000);
+    // 点の池：基準の重み（人口 × 実際の店の選択関数）で撒いた点。親も子もこの池から選ぶので、
+    // 模擬の店は人の住む格子にしか置かれず、基準とのずれ（ζ̂ ≈ ⟨(w−1)³⟩）が入らない。
+    let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_m));
+    let cut = km_to_chord2(3.0 * sigma_km);
+    let two_s2 = 2.0 * km_to_chord2(sigma_km);
+    let g_pool = crate::util::spatial::UnitGrid::build(&pool, cut.sqrt());
+    eprintln!("点の池 {} 点（{:.1} 秒）", pool.len(), t0.elapsed().as_secs_f64());
+    for run in 0..runs {
+        // 親を池から一様に選び、子は親から 3σ 以内の池の点を、距離の正規分布の重みで m 個選ぶ（同じ点は選ばない）。
+        // 子は親ごとに m 個続けて並ぶ。店の数を超えた分は最後の親の子から捨てる
+        // 近くの池の点が m 個に満たない親は使わず、選び直す（正解の数え上げで、子を m 個ずつ区切るため）
+        let mut d = Vec::with_capacity(n_p * m);
+        while d.len() < n_p * m {
+            let parent = pool[(rng_m.next_f64() * pool.len() as f64) as usize];
+            let mut near: Vec<(usize, f64)> = Vec::new();
+            g_pool.for_each_near(&parent, cut.sqrt(), |i| {
+                let c2 = chord2(&parent, &pool[i]);
+                if c2 < cut {
+                    near.push((i, (-c2 / two_s2).exp()));
+                }
+            });
+            if near.len() < m {
+                continue;
+            }
+            for _ in 0..m {
+                let total: f64 = near.iter().map(|x| x.1).sum();
+                let mut u = rng_m.next_f64() * total;
+                let mut pick = near.len() - 1;
+                for (j, x) in near.iter().enumerate() {
+                    if u < x.1 {
+                        pick = j;
+                        break;
+                    }
+                    u -= x.1;
+                }
+                d.push(pool[near.swap_remove(pick).0]);
+            }
+        }
+        d.truncate(pts.len());
+        let sr_mock = SmoothRatio::new(&d, &refs, r_km);
+        let r_proc = units(&draw(&sr_mock, p.n_random, &mut rng_m));
+        for (k, (a, b)) in xi_of(&d, &r_true).iter().zip(xi_of(&d, &r_proc)).enumerate() {
+            writeln!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
+        }
+        let t_true = TripleCounts::compute(&d, &r_true, &bins);
+        let t_proc = TripleCounts::compute(&d, &r_proc, &bins);
+        let (zt, zp) = (t_true.szapudi_szalay(), t_proc.szapudi_szalay());
+        let same = same_parent_triples(&d, m, &bins);
+        let scale = c3(d.len() as f64) / c3(r_true.len() as f64);
+        for b in bins.used() {
+            if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
+                continue;
+            }
+            let (x, y, z) = bins.unflatten(b);
+            writeln!(
+                z_out,
+                "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},{:.6}",
+                c[x],
+                c[y],
+                c[z],
+                zt[b],
+                zp[b],
+                same[b] as f64 / (t_true.rrr[b] as f64 * scale)
+            )?;
+        }
+        eprintln!("{} 回目（{:.1} 秒）", run + 1, t0.elapsed().as_secs_f64());
+    }
+    let stem = format!(
+        "data/zeta/clustered_{prefix}{}_{}_m{m}_s{sigma_km}{}",
+        p.date,
+        p.chain.to_lowercase(),
+        p.tag
+    );
+    results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
+    let path = format!("{stem}.csv");
+    results::write_text(&root.join(&path), &z_out)?;
+    Ok(path)
+}
+
+/// zeta_clustered が書いた模擬データ（`stem`.csv と `stem`_xi.csv）を、ビンごとにまとめて `stem`_summary.csv と
+/// `stem`_xi_summary.csv に書く。実際の店の ζ̂（zeta が書いた `real`、同じランダムカタログと設定のもの）も並べ、
+/// 実際と同じ手順（proc）の模擬データの分布の中でどこにあるかを数える。
+pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let rows = results::read_numeric_csv(&root.join(format!("{stem}.csv")))?;
+    let xis = results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))?;
+    let real = results::read_zeta(&root.join(real))?;
+    let mean_sd = |v: &[f64]| {
+        let n = v.len() as f64;
+        let m = v.iter().sum::<f64>() / n;
+        (m, (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt())
+    };
+    let key = |r: &std::collections::HashMap<String, f64>| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize);
+
+    let mut out = String::from(
+        "k1,k2,k3,r1_km,r2_km,r3_km,runs,true_mean,true_sd,proc_mean,proc_sd,expected_mean,real,real_sigma_proc,n_le_real\n",
+    );
+    for z in &real {
+        let v: Vec<_> = rows.iter().filter(|r| key(r) == z.k).collect();
+        if v.len() < 2 {
+            continue;
+        }
+        let col = |name: &str| v.iter().map(|r| r[name]).collect::<Vec<f64>>();
+        let (tm, ts) = mean_sd(&col("zeta_true"));
+        let (pm, ps) = mean_sd(&col("zeta_proc"));
+        let (em, _) = mean_sd(&col("expected"));
+        let n_le = col("zeta_proc").iter().filter(|x| **x <= z.zeta).count();
+        let (a, b, c) = z.r_km;
+        writeln!(
+            out,
+            "{},{},{},{a:.3},{b:.3},{c:.3},{},{tm:.6},{ts:.6},{pm:.6},{ps:.6},{em:.6},{:.6},{:.2},{n_le}",
+            z.k.0,
+            z.k.1,
+            z.k.2,
+            v.len(),
+            z.zeta,
+            (z.zeta - pm) / ps
+        )?;
+    }
+    results::write_text(&root.join(format!("{stem}_summary.csv")), &out)?;
+
+    let mut xo = String::from("k,r_km,real,mock_true_mean,mock_true_sd,mock_proc_mean,mock_proc_sd\n");
+    let ks: std::collections::BTreeSet<usize> = xis.iter().map(|r| r["k"] as usize).collect();
+    for k in ks {
+        let real_xi = xis.iter().find(|r| r["run"] < 0.0 && r["k"] as usize == k).map_or(f64::NAN, |r| r["xi_true"]);
+        let m: Vec<_> = xis.iter().filter(|r| r["run"] >= 0.0 && r["k"] as usize == k).collect();
+        let r_km = m.first().map_or(f64::NAN, |r| r["r_km"]);
+        let (tm, ts) = mean_sd(&m.iter().map(|r| r["xi_true"]).collect::<Vec<_>>());
+        let (pm, ps) = mean_sd(&m.iter().map(|r| r["xi_proc"]).collect::<Vec<_>>());
+        writeln!(xo, "{k},{r_km:.3},{real_xi:.6},{tm:.6},{ts:.6},{pm:.6},{ps:.6}")?;
+    }
+    results::write_text(&root.join(format!("{stem}_xi_summary.csv")), &xo)?;
+    Ok(format!("{stem}_summary.csv"))
 }
 
 /// 実際の店の ζ（`real`）を、帰無仮説の模擬データの ζ（`mocks`）とビンごとに比べた表を、文字列で返す。
