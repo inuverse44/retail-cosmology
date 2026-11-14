@@ -88,6 +88,34 @@ pub fn sample(grid: &PopulationGrid, n: usize, w: Weight, rng: &mut SplitMix64) 
     (0..n).map(|_| s.draw(grid, rng)).collect()
 }
 
+/// 人口などの重み × 格子ごとの追加重みで直接抽出する。上限推定や棄却はしない。
+/// 既存の sample / sample_selected の乱数列には影響しない。
+pub fn sample_reweighted(
+    grid: &PopulationGrid,
+    n: usize,
+    w: Weight,
+    selection: &[f64],
+    rng: &mut SplitMix64,
+) -> Vec<LatLon> {
+    assert_eq!(selection.len(), grid.values.len());
+    let mut sp = Sampler {
+        idx: Vec::new(),
+        cum: Vec::new(),
+        acc: 0.0,
+    };
+    for (i, (&v, &s)) in grid.values.iter().zip(selection).enumerate() {
+        assert!(s.is_finite() && s >= 0.0, "格子の追加重みが不正");
+        let wt = if v >= 0.0 { w.of(v as f64) * s } else { 0.0 };
+        if wt > 0.0 {
+            sp.acc += wt;
+            sp.idx.push(i);
+            sp.cum.push(sp.acc);
+        }
+    }
+    assert!(sp.acc.is_finite() && sp.acc > 0.0, "格子の重みの合計が不正");
+    (0..n).map(|_| sp.draw(grid, rng)).collect()
+}
+
 /// 選択関数をかけて撒いた結果。
 pub struct Selected {
     pub points: Vec<LatLon>,
@@ -198,6 +226,29 @@ mod tests {
         assert_eq!((c[0], c[1]), (0, 0));
         let frac = c[3] as f64 / n as f64; // 期待値 1/2
         assert!((frac - 0.5).abs() < 0.01, "{c:?}");
+    }
+
+    #[test]
+    fn direct_reweighting_preserves_population_times_selection() {
+        let g = tiny();
+        let mut rng = SplitMix64::new(9);
+        let points = sample_reweighted(
+            &g,
+            40_000,
+            Weight::Population,
+            &[0.0, 1.0, 3.0, 1.0],
+            &mut rng,
+        );
+        let left = points
+            .iter()
+            .filter(|p| g.geometry.cell_of(p) == Some(2))
+            .count();
+        assert!((left as f64 / points.len() as f64 - 0.5).abs() < 0.01);
+        assert!(
+            points
+                .iter()
+                .all(|p| matches!(g.geometry.cell_of(p), Some(2 | 3)))
+        );
     }
 
     #[test]

@@ -77,6 +77,61 @@ impl SmoothRatio {
     }
 }
 
+/// 地方内では一定の店舗数 / 人口。局所的な店の並び方には依存しない。
+/// メッシュの地方と地方人口は Manager が外部データから用意する。
+pub struct RegionalRatio {
+    mesh_region: HashMap<u64, usize>,
+    ratios: Vec<f64>,
+    pub counts: Vec<usize>,
+}
+
+impl RegionalRatio {
+    pub fn new(
+        stores: &[LatLon],
+        mesh_region: &HashMap<u64, usize>,
+        population: &[f64],
+    ) -> Result<Self, String> {
+        if population.iter().any(|p| !p.is_finite() || *p < 0.0)
+            || mesh_region.values().any(|r| *r >= population.len())
+        {
+            return Err("地方の人口または対応が不正".into());
+        }
+        let mut counts = vec![0usize; population.len()];
+        for q in stores {
+            let r = mesh_region
+                .get(&crate::util::grid::code_of(q))
+                .ok_or_else(|| format!("店舗のメッシュに地方の対応がない：{},{}", q.lat, q.lon))?;
+            if *r >= population.len() || population[*r] <= 0.0 {
+                return Err(format!("店舗がある地方 {r} の人口がない"));
+            }
+            counts[*r] += 1;
+        }
+        let ratios = counts
+            .iter()
+            .zip(population)
+            .map(|(n, pop)| if *pop > 0.0 { *n as f64 / pop } else { 0.0 })
+            .collect();
+        Ok(Self {
+            mesh_region: mesh_region.clone(),
+            ratios,
+            counts,
+        })
+    }
+
+    pub fn eval(&self, q: &LatLon) -> f64 {
+        self.mesh_region
+            .get(&crate::util::grid::code_of(q))
+            .map_or(0.0, |r| self.ratios[*r])
+    }
+
+    /// 格子ごとの追加重み。人口は抽出 Engine 側で掛ける。
+    pub fn cell_weights(&self, geometry: &GridGeometry, n: usize) -> Vec<f64> {
+        (0..n)
+            .map(|i| self.eval(&geometry.point(i, 0.5, 0.5)))
+            .collect()
+    }
+}
+
 /// 選択関数を約 10 km の粗い格子ごとに一度だけ求め、格子の中では同じ値を返す（#12）。
 /// S は幅 R（50 km 以上）でならした関数なので、格子の中ではほとんど変わらない、という近似。
 /// 格子の値は、初めて聞かれたときに格子の中心で求めて覚えておく。
@@ -152,6 +207,41 @@ mod tests {
     use super::*;
     use crate::util::geo::LatLon;
     use crate::util::rng::SplitMix64;
+
+    #[test]
+    fn regional_ratio_uses_only_totals_and_conserves_store_count() {
+        use crate::util::grid::{code_of, code_to_sw};
+        let point = |code, a: f64| {
+            let (lat, lon) = code_to_sw(code);
+            LatLon {
+                lat: lat + a / 120.0,
+                lon: lon + a / 80.0,
+            }
+        };
+        let a = point(53394611, 0.2);
+        let b = point(53394612, 0.2);
+        let c = point(53394613, 0.2);
+        let map = HashMap::from([(code_of(&a), 0), (code_of(&b), 0), (code_of(&c), 1)]);
+        let pop = [100.0, 300.0, 50.0];
+        let first = RegionalRatio::new(&[a, a, c], &map, &pop).unwrap();
+        let moved = RegionalRatio::new(&[b, b, c], &map, &pop).unwrap();
+        assert_eq!(first.counts, vec![2, 1, 0]);
+        assert_eq!(first.ratios, moved.ratios);
+        assert_eq!(first.eval(&a), first.eval(&b));
+        assert!(
+            (first
+                .ratios
+                .iter()
+                .zip(pop)
+                .map(|(s, p)| s * p)
+                .sum::<f64>()
+                - 3.0)
+                .abs()
+                < 1e-12
+        );
+        assert!(RegionalRatio::new(&[point(53394614, 0.2)], &map, &pop).is_err());
+        assert!(RegionalRatio::new(&[a], &map, &[0.0, 300.0, 50.0]).is_err());
+    }
 
     fn uniform(n: usize, lon: (f64, f64), rng: &mut SplitMix64) -> Vec<Unit> {
         (0..n)

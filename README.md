@@ -10,6 +10,7 @@
 - 概要の記事：[inuverse.dev](https://inuverse.dev/posts/2026-11-08-retail-cosmology/)
 - 計算量のノート：[`notes/algorithm-cost.pdf`](notes/algorithm-cost.pdf)
 - 先の研究のノート（書きかけ。三点相関関数、九州の主なチェーンの比較）：[`notes/retail-cosmology-beyond.pdf`](notes/retail-cosmology-beyond.pdf)
+- 行政区別の選択関数の実験（#81、再現コマンドと二点・三点の比較）：[実験記録](docs/experiments/selection-external-81.md)
 - 発表：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
 
 ## 結果の要点
