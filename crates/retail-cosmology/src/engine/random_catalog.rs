@@ -3,8 +3,8 @@
 
 use crate::contract::PopulationGrid;
 use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
-use crate::util::spatial::UnitGrid;
 use crate::util::rng::SplitMix64;
+use crate::util::spatial::UnitGrid;
 
 /// ランダムカタログの格子の重み。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

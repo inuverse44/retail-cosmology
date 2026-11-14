@@ -1254,6 +1254,9 @@ pub struct FieldModel {
     pub runs: usize,
     /// 明示すると run ごとの種で分割する。None かつ second=None なら旧来の連続した乱数列。
     pub start: Option<usize>,
+    /// 店を半分ずつ A・B に分け、B を正しい基準・B 自身の選択関数・A の選択関数の三通りで測る列を足す（#94）。
+    /// 分け方は run ごとの別の乱数列で決めるので、もとの列は変わらない。
+    pub split: bool,
 }
 
 /// [`FieldModel`] の密度場を生成し、true/proc の ξ、ζ と切り捨て割合を書く。
@@ -1342,11 +1345,25 @@ pub fn field_mocks(
     let c = sides_km.centers();
     let xi_of = |d: &[Unit], r: &[Unit]| PairCounts::compute(d, r, &cb, chord2).landy_szalay();
 
-    let mut xi_out = String::from("run,k,r_km,xi_true,xi_proc\n");
+    let split = model.split;
+    let mut xi_out = String::from(if split {
+        "run,k,r_km,xi_true,xi_proc,xi_half_true,xi_half_proc,xi_half_split\n"
+    } else {
+        "run,k,r_km,xi_true,xi_proc\n"
+    });
     for (k, v) in xi_of(&real, &r_true).iter().enumerate() {
-        writeln!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
+        writeln!(
+            xi_out,
+            "-1,{k},{:.3},{v:.6},{}",
+            c[k],
+            if split { ",,," } else { "" }
+        )?;
     }
-    let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+    let mut z_out = String::from(if split {
+        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected,zeta_half_true,zeta_half_proc,zeta_half_split\n"
+    } else {
+        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n"
+    });
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
     let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_legacy));
     eprintln!(
@@ -1419,26 +1436,78 @@ pub fn field_mocks(
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
         let r_proc = units(&draw(&sr_mock, p.n_random, rng_m));
+
+        // 半分に分けた測り方（#94）。もとの乱数列を使わないよう、run ごとの別の列で分ける。
+        let halves = if split {
+            let mut rng_split = SplitMix64::new(p.seed ^ 0x5A17_0000_0000_0000 ^ run as u64);
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            for q in &d {
+                if rng_split.next_f64() < 0.5 {
+                    a.push(*q);
+                } else {
+                    b.push(*q);
+                }
+            }
+            let r_self = units(&draw(
+                &SmoothRatio::new(&b, &refs, r_km),
+                p.n_random,
+                &mut rng_split,
+            ));
+            let r_cross = units(&draw(
+                &SmoothRatio::new(&a, &refs, r_km),
+                p.n_random,
+                &mut rng_split,
+            ));
+            let xis = [xi_of(&b, &r_true), xi_of(&b, &r_self), xi_of(&b, &r_cross)];
+            let ts = [
+                TripleCounts::compute(&b, &r_true, &bins),
+                TripleCounts::compute(&b, &r_self, &bins),
+                TripleCounts::compute(&b, &r_cross, &bins),
+            ];
+            Some((xis, ts))
+        } else {
+            None
+        };
+
         for (k, (a, b)) in xi_of(&d, &r_true)
             .iter()
             .zip(xi_of(&d, &r_proc))
             .enumerate()
         {
-            writeln!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
+            write!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
+            if let Some((xis, _)) = &halves {
+                write!(
+                    xi_out,
+                    ",{:.6},{:.6},{:.6}",
+                    xis[0][k], xis[1][k], xis[2][k]
+                )?;
+            }
+            writeln!(xi_out)?;
         }
         let t_true = TripleCounts::compute(&d, &r_true, &bins);
         let t_proc = TripleCounts::compute(&d, &r_proc, &bins);
         let (zt, zp) = (t_true.szapudi_szalay(), t_proc.szapudi_szalay());
+        let zh = halves
+            .as_ref()
+            .map(|(_, ts)| ts.each_ref().map(TripleCounts::szapudi_szalay));
         for b in bins.used() {
             if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
                 continue;
             }
             let (x, y, z) = bins.unflatten(b);
-            writeln!(
+            write!(
                 z_out,
                 "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},0",
                 c[x], c[y], c[z], zt[b], zp[b]
             )?;
+            if let (Some(zh), Some((_, ts))) = (&zh, &halves) {
+                // 半分の点では空のビンがありうる。そのときは NaN を書く
+                for (j, t) in ts.iter().enumerate() {
+                    let v = if t.rrr[b] == 0 { f64::NAN } else { zh[j][b] };
+                    write!(z_out, ",{v:.6}")?;
+                }
+            }
+            writeln!(z_out)?;
         }
         eprintln!(
             "{} 回目（1 + δ < 0 で切った点 {:.1}%、{:.1} 秒）",
@@ -2293,7 +2362,9 @@ pub fn paired_stats(x: &[f64], y: &[f64]) -> PairedStats {
 /// 選択関数がどれだけ吸い込むかを、模擬データの「正しい基準」と「店と同じ手順（proc）」の対から測る（#94）。
 ///
 /// `files` は模擬データの ζ の CSV（run ごと）。同じ名前の `_xi.csv` も読む。`baseline` は正しい基準の列の名前の後半
-/// （"true" なら zeta_true／xi_true、"match" なら zeta_match／xi_match）。
+/// （"true" なら zeta_true／xi_true、"match" なら zeta_match／xi_match）。"基準:比べる列" の形なら比べる列も選べる
+/// （例："half_true:half_split" は zeta_half_true と zeta_half_split）。既定の比べる列は proc。
+/// どちらかが NaN の行（半分の点で空になったビン）は除く。
 /// 書くもの：data/zeta/absorption_`label`.csv（ζ）と absorption_`label`_xi.csv（ξ）。
 /// 相対的な吸い込み（吸い込み ÷ 正しい基準の平均）は、正しい基準の平均が 2 SE を超えるビンだけ数える。
 pub fn absorption(
@@ -2324,11 +2395,17 @@ pub fn absorption(
                 .filter(|r| r["run"] >= 0.0),
         );
     }
-    let (zt, zp) = (format!("zeta_{baseline}"), "zeta_proc".to_string());
-    let (xt, xp) = (format!("xi_{baseline}"), "xi_proc".to_string());
-    if !zrows.first().is_some_and(|r| r.contains_key(&zt)) {
-        return Err(format!("列 {zt} がない").into());
+    let (base, other) = baseline.split_once(':').unwrap_or((baseline, "proc"));
+    let (zt, zp) = (format!("zeta_{base}"), format!("zeta_{other}"));
+    let (xt, xp) = (format!("xi_{base}"), format!("xi_{other}"));
+    for col in [&zt, &zp] {
+        if !zrows.first().is_some_and(|r| r.contains_key(col)) {
+            return Err(format!("列 {col} がない").into());
+        }
     }
+    let finite = |r: &Row, a: &str, b: &str| r[a].is_finite() && r[b].is_finite();
+    zrows.retain(|r| finite(r, &zt, &zp));
+    xrows.retain(|r| finite(r, &xt, &xp));
 
     let head = "runs,true_mean,true_sem,proc_mean,proc_sem,absorb_mean,absorb_sem,rel_absorb,slope,slope_se,intercept";
     let fmt = |s: &PairedStats| {

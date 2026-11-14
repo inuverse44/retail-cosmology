@@ -9,6 +9,9 @@
 //! --start k：run k から始める。同じ seed の別の run 範囲は同じ池と基準に条件づけて独立。
 //! 二つ目の成分も --start も省略したときは、PR #90 の連続した乱数列を使う。
 //! --tag NAME：分割計算では各ファイルに別の名前を付ける。既存出力は上書きしない。
+//! --split on：店を半分ずつ A・B に分け、B の ξ・ζ を三通りで測る列を足す（#94）。
+//!   half_true（正しい基準）、half_proc（B 自身から選択関数）、half_split（A から選択関数）。
+//!   分け方は別の乱数列で決めるので、もとの列（true・proc）は --split なしと同じ。
 //! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
@@ -21,6 +24,7 @@ fn main() {
     let mut p = Params::new(it.next().expect("日付（YYYY-MM-DD）を渡す"));
     let (mut amp, mut sigma, mut centers, mut runs) = (0.5f64, 15.0f64, 20_000usize, 3usize);
     let (mut amp2, mut sigma2, mut start) = (None, None, None);
+    let mut split = false;
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -48,6 +52,10 @@ fn main() {
                 );
             }
             "--tag" => p.tag = format!("_{v}"),
+            "--split" => {
+                assert!(v == "on" || v == "off", "--split は on か off");
+                split = v == "on";
+            }
             _ => panic!("知らない引数：{k}"),
         }
     }
@@ -64,6 +72,7 @@ fn main() {
         n_centers: centers,
         runs,
         start,
+        split,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),

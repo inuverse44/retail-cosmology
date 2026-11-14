@@ -11,7 +11,11 @@ use retail_cosmology::manager::three_point::summarize_clustered;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    assert_eq!(args.len(), 2, "模擬データの名前（.csv を除く）と、実際の店の ζ の CSV を渡す");
+    assert_eq!(
+        args.len(),
+        2,
+        "模擬データの名前（.csv を除く）と、実際の店の ζ の CSV を渡す"
+    );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     match summarize_clustered(&root, &args[0], &args[1]) {
         Ok(p) => eprintln!("{p} ほかを書いた"),
