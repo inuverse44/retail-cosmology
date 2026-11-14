@@ -434,6 +434,24 @@ pub fn selection_bias_toy(root: &Path, runs: usize) -> Result<String, Box<dyn st
         )?;
     }
     results::write_text(&root.join("data/toy/zeta_selection_bias_summary.csv"), &sum)?;
+    // 本文に書くビンの数は手で数えず、ここで数える（振り返り 2026-11-14 の T-03）
+    let shifts: Vec<(f64, f64)> = sum
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').collect();
+            Some((f.get(12)?.parse().ok()?, f.get(13)?.parse().ok()?))
+        })
+        .collect();
+    let neg = shifts.iter().filter(|(m, _)| *m < 0.0).count();
+    let beyond3: Vec<f64> = shifts.iter().filter(|(m, e)| m.abs() > 3.0 * e).map(|(m, _)| *m).collect();
+    eprintln!(
+        "ビン {} 個：ずれが負 {neg}、平均の誤差の 3 倍を超える {}（{:+.3}〜{:+.3}）",
+        shifts.len(),
+        beyond3.len(),
+        beyond3.iter().copied().fold(f64::INFINITY, f64::min),
+        beyond3.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+    );
     Ok(path)
 }
 
@@ -728,6 +746,9 @@ pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String
     let mut out = String::from(
         "k1,k2,k3,r1_km,r2_km,r3_km,runs,true_mean,true_sd,proc_mean,proc_sd,expected_mean,real,real_sigma_proc,n_le_real\n",
     );
+    // 本文に書くビンの数は手で数えず、ここで数える（振り返り 2026-11-14 の T-03）
+    let (mut n_bins, mut n_below_all, mut n_within_1s, mut n_proc_below_exp) = (0, 0, 0, 0);
+    let (mut sig_min, mut sig_max) = (f64::INFINITY, f64::NEG_INFINITY);
     for z in &real {
         let v: Vec<_> = rows.iter().filter(|r| key(r) == z.k).collect();
         if v.len() < 2 {
@@ -738,6 +759,13 @@ pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String
         let (pm, ps) = mean_sd(&col("zeta_proc"));
         let (em, _) = mean_sd(&col("expected"));
         let n_le = col("zeta_proc").iter().filter(|x| **x <= z.zeta).count();
+        let sig = (z.zeta - pm) / ps;
+        n_bins += 1;
+        n_below_all += usize::from(n_le == 0);
+        n_within_1s += usize::from(sig.abs() <= 1.0);
+        n_proc_below_exp += usize::from(pm < em);
+        sig_min = sig_min.min(sig);
+        sig_max = sig_max.max(sig);
         let (a, b, c) = z.r_km;
         writeln!(
             out,
@@ -751,6 +779,10 @@ pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String
         )?;
     }
     results::write_text(&root.join(format!("{stem}_summary.csv")), &out)?;
+    eprintln!(
+        "ビン {n_bins} 個：実際の値が模擬データのどれよりも小さい {n_below_all}、平均から 1σ 以内 {n_within_1s}、\
+         模擬データの平均が見込みより小さい {n_proc_below_exp}、平均から {sig_min:+.2}σ〜{sig_max:+.2}σ"
+    );
 
     let mut xo = String::from("k,r_km,real,mock_true_mean,mock_true_sd,mock_proc_mean,mock_proc_sd\n");
     let ks: std::collections::BTreeSet<usize> = xis.iter().map(|r| r["k"] as usize).collect();
