@@ -29,8 +29,10 @@ caffeinate -i bash scripts/field_mocks_two_scale.sh UNIQUE_mainG 0.3 10 1.2 20 1
 `--amp2` と `--sigma2` は両方渡す。各成分は独立な中心と符号を持ち、
 切る前の各点での分散は `amp² + amp2²`。
 `--start` は模擬データの番号であり、同じ `--seed` の run を重複させない。
-run ごとの乱数を番号から作るので、分割の仕方で結果は変わらない。
-この run ごとの乱数の方式は従来の単一の乱数列から変更している。
+二成分模型、または明示的に `--start` を渡した場合は、run ごとの乱数を番号から
+作るので、分割の仕方で結果は変わらない。単一幅で `--start` を省略した場合は、
+PR #90 の図の再現性を保つため、点の池から次のrunまで従来の連続した乱数列を使う。
+明示的な `--start 0` と省略は区別する。
 
 `zeta_field_analysis REAL.csv OUTPUT_STEM MOCK_STEM ...` は分割結果を結合する。
 run・ビンの重複、欠損、実測の ξ の不一致を拒否し、既存出力を上書きしない。
@@ -364,3 +366,48 @@ GとEの原本は各Rust出力末尾のInputsに記載した4本ずつのCSV。
 層の検査で見つかった既存の2件は、costの既定参照点数を自身の設定とし、
 var_ddのWeightをManager経由の参照にする最小修正で解消した。
 新しいEngine・ResourceAccessは作っていない。push・PRは行っていない。
+
+## PR #90 の乱数列の互換性
+
+統合ブランチ `feat/81-selection-and-mocks` の `FieldModel` から
+`field_mocks` 末尾までのコードは、修正前のこのブランチとバイト一致していた。
+関連する依存先の差分は新機能の追加で、既存の抽出・平滑化の処理は同じだった。
+
+`--amp 0.7 --sigma 10 --centers 20000 --seed 1`、`n_random=8000`、
+`n_ref=50000`、`footprint=50` を使い、まず修正前のコードで1個生成した。
+PR #90 の原本 `data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10.csv`
+のrun=0とはζ・ξとも一致しなかった。runごとの再初期化が原因だった。
+
+修正後は、二つ目の成分も `--start` も省略したときに、点の池の生成に使った
+乱数列をそのまま中心・符号・店・proc基準・次のrunへと継続する。
+`--start` は `Option<usize>` で省略を保持し、明示的な `--start 0` と区別する。
+二成分模型と明示的な開始番号は、今回のG/Eで使ったrun別の種を維持する。
+
+修正後に `--runs 2 --tag m81_rng90_after_20261114` で再生成し、
+原本からrun=0・1を取り出したCSVと `cmp` で比較した。
+ξには共通の実測run=-1も含めた。
+
+| 比較 | ζ | ξ |
+|---|---|---|
+| 修正前のrun=0 対 PR #90のrun=0 | 不一致（89バイト目、2行目） | 不一致（126バイト目、6行目） |
+| 修正後のrun=0・1 対 PR #90のrun=0・1 | 一致（1629バイト、33行） | 一致（342バイト、13行） |
+| 修正後の明示的な `--start 0` 対修正前のrun=0 | 一致 | 一致 |
+
+一致したrun=0・1のSHA-256：
+
+```text
+zeta c835b4880e4a877145e585132e4d0a5c452238bd5fdba0fdfc75276faebeed1c
+xi   a03c916a35ff7a57a9c6aaf422751aa4255a3584408d64859240d601d13aa724
+```
+
+再生成したファイルの接頭辞：
+
+```text
+data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_m81_rng90_before_20261114
+data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_m81_rng90_after_20261114
+data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_m81_rng90_explicit0_20261114
+```
+
+比較対象の抽出ファイルは `target/field-mocks-logs/rng90/`、
+実行ログは `target/field-mocks-logs/m81_rng90_{before,after,explicit0}_20261114.log`。
+検証対象は原本の先頭2run。修正後も58テスト、clippy、層の検査を通過した。

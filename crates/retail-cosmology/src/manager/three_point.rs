@@ -1089,8 +1089,8 @@ pub struct FieldModel {
     pub second: Option<(f64, f64)>,
     pub n_centers: usize,
     pub runs: usize,
-    /// 同じ seed の池と基準を使い、独立な run の範囲だけを分割できる。
-    pub start: usize,
+    /// 明示すると run ごとの種で分割する。None かつ second=None なら旧来の連続した乱数列。
+    pub start: Option<usize>,
 }
 
 /// [`FieldModel`] の密度場を生成し、true/proc の ξ、ζ と切り捨て割合を書く。
@@ -1184,20 +1184,32 @@ pub fn field_mocks(
         writeln!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
     }
     let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
-    let mut rng_m = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
-    let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_m));
+    let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
+    let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_legacy));
     eprintln!(
         "点の池 {} 点（{:.1} 秒）",
         pool.len(),
         t0.elapsed().as_secs_f64()
     );
     let mut diagnostics = String::from("run,clipped_fraction,elapsed_seconds\n");
-    for run in start..start.checked_add(runs).ok_or("run の範囲が大きすぎる")? {
+    let first_run = start.unwrap_or(0);
+    let legacy_stream = model.second.is_none() && start.is_none();
+    for run in first_run
+        ..first_run
+            .checked_add(runs)
+            .ok_or("run の範囲が大きすぎる")?
+    {
         let mut run_seed = SplitMix64::new(p.seed ^ 0xF1E1_D100_0000_0000 ^ run as u64);
-        let mut rng_m = SplitMix64::new(run_seed.next_u64());
+        let mut rng_run = SplitMix64::new(run_seed.next_u64());
+        // 単一幅の従来のコマンドは、池→中心と符号→店→proc基準→次runと同じ列を消費する。
+        let rng_m = if legacy_stream {
+            &mut rng_legacy
+        } else {
+            &mut rng_run
+        };
         let mut delta = vec![0.0; pool.len()];
         for (amplitude, width) in std::iter::once((amp, sigma_km)).chain(model.second) {
-            if amplitude == 0.0 {
+            if amplitude == 0.0 && !legacy_stream {
                 continue;
             }
             let cut = km_to_chord2(3.0 * width);
@@ -1243,7 +1255,7 @@ pub fn field_mocks(
             }
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
-        let r_proc = units(&draw(&sr_mock, p.n_random, &mut rng_m));
+        let r_proc = units(&draw(&sr_mock, p.n_random, rng_m));
         for (k, (a, b)) in xi_of(&d, &r_true)
             .iter()
             .zip(xi_of(&d, &r_proc))
