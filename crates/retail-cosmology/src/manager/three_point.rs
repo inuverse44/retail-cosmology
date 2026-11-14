@@ -14,7 +14,8 @@ use crate::access::{boundary, population, results, stores};
 use crate::contract::{Bins, Chain, PairCounts, PopulationGrid, TripleCounts};
 use crate::engine::estimator::{density_ratio_summary, mock_summary};
 use crate::engine::random_catalog::{
-    Weight, count_coarse_cells, sample, sample_conditional_children, sample_reweighted, sample_selected,
+    Weight, count_coarse_cells, sample, sample_conditional_children, sample_reweighted,
+    sample_selected,
 };
 use crate::engine::selection_function::{
     RegionalRatio, SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
@@ -710,10 +711,16 @@ fn patch_clustered_windowed(
     let (lat0, dlat, lon0, dlon) = patch;
     let mlat = margin_sd * s / 111.2;
     let mlon = margin_sd * s / (111.2 * lat0.to_radians().cos());
-    let ext: Patch = (lat0 - mlat, dlat + 2.0 * mlat, lon0 - mlon, dlon + 2.0 * mlon);
+    let ext: Patch = (
+        lat0 - mlat,
+        dlat + 2.0 * mlat,
+        lon0 - mlon,
+        dlon + 2.0 * mlon,
+    );
     let n_ext = (n_p as f64 * ext.1 * ext.3 / (dlat * dlon)).round() as usize;
     let all = patch_clustered(n_ext, m, s, ext, rng);
-    let inside = |q: &LatLon| q.lat >= lat0 && q.lat < lat0 + dlat && q.lon >= lon0 && q.lon < lon0 + dlon;
+    let inside =
+        |q: &LatLon| q.lat >= lat0 && q.lat < lat0 + dlat && q.lon >= lon0 && q.lon < lon0 + dlon;
     let mut pts = Vec::new();
     let mut parent = Vec::new();
     for (i, q) in all.iter().enumerate() {
@@ -738,7 +745,11 @@ fn same_parent_triples_labeled(d: &[Unit], parent: &[usize], bins: &TriangleBins
         for i in 0..g.len() {
             for j in i + 1..g.len() {
                 for k in j + 1..g.len() {
-                    if let Some(b) = bins.index(chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k])) {
+                    if let Some(b) = bins.index(
+                        chord2(&g[i], &g[j]),
+                        chord2(&g[i], &g[k]),
+                        chord2(&g[j], &g[k]),
+                    ) {
                         out[b] += 1;
                     }
                 }
@@ -783,7 +794,9 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
         }
         .szapudi_szalay()
     };
-    let expected = |same: &[u64], n_d: usize, b: usize| same[b] as f64 / (rrr[b] as f64 * c3(n_d as f64) / c3(n_r as f64));
+    let expected = |same: &[u64], n_d: usize, b: usize| {
+        same[b] as f64 / (rrr[b] as f64 * c3(n_d as f64) / c3(n_r as f64))
+    };
 
     // ビンごとに、一回ごとの (見込み, ζ̂ − 見込み) を、leaky と windowed で集める
     let mut leaky: Vec<Vec<(f64, f64)>> = vec![Vec::new(); bins.len()];
@@ -809,7 +822,11 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
         }
         eprintln!("{} 回目（{:.1} 秒）", run + 1, t0.elapsed().as_secs_f64());
     }
-    eprintln!("windowed の点の数の平均：{:.0}（leaky は {}）", n_win as f64 / runs as f64, n_p * m);
+    eprintln!(
+        "windowed の点の数の平均：{:.0}（leaky は {}）",
+        n_win as f64 / runs as f64,
+        n_p * m
+    );
 
     let mean_err = |v: &[f64]| {
         let n = v.len() as f64;
@@ -817,7 +834,8 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
         let sd = (v.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
         (mu, sd / n.sqrt())
     };
-    let mut out = String::from("model,k1,k2,k3,r1_km,r2_km,r3_km,runs,expected_mean,diff_mean,diff_err\n");
+    let mut out =
+        String::from("model,k1,k2,k3,r1_km,r2_km,r3_km,runs,expected_mean,diff_mean,diff_err\n");
     // ノートの表（ビンごとに、windowed の見込みと、二通りの ζ̂ − 見込み）
     let mut tex = format!(
         "% cargo run --release --bin zeta_edge_toy -- {runs} が書いた表\n\\begin{{tabular}}{{rrrrrr}}\n\\toprule\n\
@@ -863,7 +881,9 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
             )?;
         }
         // 本文に書くビンの数は手で数えず、ここで数える（振り返り 2026-11-14 の T-03）
-        eprintln!("{name}：ビン {total} 個、ζ̂ − 見込みが負 {neg}、平均の誤差の 2 倍を超える {beyond2}");
+        eprintln!(
+            "{name}：ビン {total} 個、ζ̂ − 見込みが負 {neg}、平均の誤差の 2 倍を超える {beyond2}"
+        );
     }
     let path = "data/toy/zeta_edge.csv".to_string();
     results::write_text(&root.join(&path), &out)?;
@@ -2221,9 +2241,211 @@ pub fn summarize_mock_density(
     Ok(out)
 }
 
+/// 対にした標本 (x_i, y_i) の要約：差 x − y の平均と標準誤差、y を x に回帰した傾き・その標準誤差・切片。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairedStats {
+    pub n: usize,
+    pub x_mean: f64,
+    pub x_sem: f64,
+    pub y_mean: f64,
+    pub y_sem: f64,
+    pub diff_mean: f64,
+    pub diff_sem: f64,
+    pub slope: f64,
+    pub slope_se: f64,
+    pub intercept: f64,
+}
+
+pub fn paired_stats(x: &[f64], y: &[f64]) -> PairedStats {
+    assert_eq!(x.len(), y.len());
+    let n = x.len();
+    let nf = n as f64;
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / nf;
+    let sem = |v: &[f64], m: f64| {
+        (v.iter().map(|a| (a - m).powi(2)).sum::<f64>() / (nf - 1.0) / nf).sqrt()
+    };
+    let (xm, ym) = (mean(x), mean(y));
+    let d: Vec<f64> = x.iter().zip(y).map(|(a, b)| a - b).collect();
+    let dm = mean(&d);
+    let sxx: f64 = x.iter().map(|a| (a - xm).powi(2)).sum();
+    let sxy: f64 = x.iter().zip(y).map(|(a, b)| (a - xm) * (b - ym)).sum();
+    let slope = sxy / sxx;
+    let intercept = ym - slope * xm;
+    let rss: f64 = x
+        .iter()
+        .zip(y)
+        .map(|(a, b)| (b - intercept - slope * a).powi(2))
+        .sum();
+    PairedStats {
+        n,
+        x_mean: xm,
+        x_sem: sem(x, xm),
+        y_mean: ym,
+        y_sem: sem(y, ym),
+        diff_mean: dm,
+        diff_sem: sem(&d, dm),
+        slope,
+        slope_se: (rss / (nf - 2.0) / sxx).sqrt(),
+        intercept,
+    }
+}
+
+/// 選択関数がどれだけ吸い込むかを、模擬データの「正しい基準」と「店と同じ手順（proc）」の対から測る（#94）。
+///
+/// `files` は模擬データの ζ の CSV（run ごと）。同じ名前の `_xi.csv` も読む。`baseline` は正しい基準の列の名前の後半
+/// （"true" なら zeta_true／xi_true、"match" なら zeta_match／xi_match）。
+/// 書くもの：data/zeta/absorption_`label`.csv（ζ）と absorption_`label`_xi.csv（ξ）。
+/// 相対的な吸い込み（吸い込み ÷ 正しい基準の平均）は、正しい基準の平均が 2 SE を超えるビンだけ数える。
+pub fn absorption(
+    root: &Path,
+    label: &str,
+    baseline: &str,
+    files: &[String],
+) -> Result<String, Box<dyn std::error::Error>> {
+    type Row = std::collections::HashMap<String, f64>;
+    let mut zrows: Vec<Row> = Vec::new();
+    let mut xrows: Vec<Row> = Vec::new();
+    for f in files {
+        let p = root.join(f);
+        zrows.extend(
+            results::read_numeric_csv(&p)?
+                .into_iter()
+                .filter(|r| r["run"] >= 0.0),
+        );
+        let xp = p.with_file_name(format!(
+            "{}_xi.csv",
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or("ファイル名が読めない")?
+        ));
+        xrows.extend(
+            results::read_numeric_csv(&xp)?
+                .into_iter()
+                .filter(|r| r["run"] >= 0.0),
+        );
+    }
+    let (zt, zp) = (format!("zeta_{baseline}"), "zeta_proc".to_string());
+    let (xt, xp) = (format!("xi_{baseline}"), "xi_proc".to_string());
+    if !zrows.first().is_some_and(|r| r.contains_key(&zt)) {
+        return Err(format!("列 {zt} がない").into());
+    }
+
+    let head = "runs,true_mean,true_sem,proc_mean,proc_sem,absorb_mean,absorb_sem,rel_absorb,slope,slope_se,intercept";
+    let fmt = |s: &PairedStats| {
+        let rel = if s.x_mean.abs() > 2.0 * s.x_sem {
+            s.diff_mean / s.x_mean
+        } else {
+            f64::NAN
+        };
+        format!(
+            "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{rel:.4},{:.4},{:.4},{:.6}",
+            s.n,
+            s.x_mean,
+            s.x_sem,
+            s.y_mean,
+            s.y_sem,
+            s.diff_mean,
+            s.diff_sem,
+            s.slope,
+            s.slope_se,
+            s.intercept
+        )
+    };
+
+    // ξ
+    let mut xo = format!("k,r_km,{head}\n");
+    let mut xi_rel = std::collections::BTreeMap::new();
+    let ks: std::collections::BTreeSet<usize> = xrows.iter().map(|r| r["k"] as usize).collect();
+    for k in ks {
+        let v: Vec<_> = xrows.iter().filter(|r| r["k"] as usize == k).collect();
+        let s = paired_stats(
+            &v.iter().map(|r| r[&xt]).collect::<Vec<_>>(),
+            &v.iter().map(|r| r[&xp]).collect::<Vec<_>>(),
+        );
+        xi_rel.insert(k, (v[0]["r_km"], s));
+        writeln!(xo, "{k},{:.3},{}", v[0]["r_km"], fmt(&s))?;
+    }
+    results::write_text(
+        &root.join(format!("data/zeta/absorption_{label}_xi.csv")),
+        &xo,
+    )?;
+
+    // ζ
+    let mut zo = format!("k1,k2,k3,r1_km,r2_km,r3_km,{head}\n");
+    let keys: std::collections::BTreeSet<(usize, usize, usize)> = zrows
+        .iter()
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize))
+        .collect();
+    let (mut n_bins, mut n_sig_absorb, mut n_pos_absorb, mut n_slope_lt1) = (0, 0, 0, 0);
+    let mut summary = String::new();
+    for (a, b, c) in keys {
+        let v: Vec<_> = zrows
+            .iter()
+            .filter(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize) == (a, b, c))
+            .collect();
+        let s = paired_stats(
+            &v.iter().map(|r| r[&zt]).collect::<Vec<_>>(),
+            &v.iter().map(|r| r[&zp]).collect::<Vec<_>>(),
+        );
+        n_bins += 1;
+        n_sig_absorb += usize::from(s.diff_mean.abs() > 2.0 * s.diff_sem);
+        n_pos_absorb += usize::from(s.diff_mean > 0.0);
+        n_slope_lt1 += usize::from(s.slope + 2.0 * s.slope_se < 1.0);
+        writeln!(
+            zo,
+            "{a},{b},{c},{:.3},{:.3},{:.3},{}",
+            v[0]["r1_km"],
+            v[0]["r2_km"],
+            v[0]["r3_km"],
+            fmt(&s)
+        )?;
+        // 正三角形のビンは、同じ辺の ξ の相対的な吸い込みと並べる（Hui & Gaztañaga 1999 の 3c12/S3 との比較）
+        if a == b
+            && b == c
+            && let Some((r, sx)) = xi_rel.get(&a)
+        {
+            let rz = s.diff_mean / s.x_mean;
+            let rx = sx.diff_mean / sx.x_mean;
+            writeln!(
+                summary,
+                "  正三角形 {r:.0} km：ζ 吸い込み {:+.4}±{:.4}（正しい基準 {:+.4}±{:.4}、相対 {rz:+.2}）、\
+                 ξ 吸い込み {:+.4}±{:.4}（相対 {rx:+.3}）、比 {:+.2}、傾き {:.2}±{:.2}、切片 {:+.4}",
+                s.diff_mean,
+                s.diff_sem,
+                s.x_mean,
+                s.x_sem,
+                sx.diff_mean,
+                sx.diff_sem,
+                rz / rx,
+                s.slope,
+                s.slope_se,
+                s.intercept
+            )?;
+        }
+    }
+    results::write_text(&root.join(format!("data/zeta/absorption_{label}.csv")), &zo)?;
+    let msg = format!(
+        "{label}（{} run 分の行、基準 {baseline}）：ビン {n_bins} 個のうち、吸い込みが 2 SE を超える {n_sig_absorb}、\
+         吸い込みが正（proc が小さい）{n_pos_absorb}、傾きが 1 より 2 SE 以上小さい {n_slope_lt1}\n{summary}",
+        zrows.len() / n_bins.max(1)
+    );
+    Ok(msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paired_stats_recovers_exact_line() {
+        let x = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let y: Vec<f64> = x.iter().map(|a| 0.5 * a - 0.1).collect();
+        let s = paired_stats(&x, &y);
+        assert!((s.slope - 0.5).abs() < 1e-12);
+        assert!((s.intercept + 0.1).abs() < 1e-12);
+        assert!(s.slope_se < 1e-12);
+        assert!((s.diff_mean - (2.0 - 0.9)).abs() < 1e-12);
+    }
 
     #[test]
     fn field_analysis_merges_disjoint_runs_and_rejects_duplicate_or_incomplete_inputs() {
