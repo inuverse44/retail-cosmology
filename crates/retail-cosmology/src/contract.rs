@@ -177,6 +177,15 @@ pub struct TripleCounts {
     pub rrr: Vec<u64>,
 }
 
+/// zeta が書いた CSV の一行：三角形のビン（辺のビンの番号と中点 [km]）と、そのビンの DDD と ζ。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ZetaRow {
+    pub k: (usize, usize, usize),
+    pub r_km: (f64, f64, f64),
+    pub ddd: u64,
+    pub zeta: f64,
+}
+
 /// 二種類の点（1 と 2）の相互相関のための、ビンごとの対の数。
 /// ランダムカタログは種類ごとに R1、R2 を持つ。`n_r1r2` は R1R2 の対の総数で、
 /// R1 と R2 が別のカタログなら n_r1 n_r2、同じカタログなら n_r(n_r - 1)/2（`r1r2` はそのカタログの中の対の数）。
