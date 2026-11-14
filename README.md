@@ -1,11 +1,35 @@
 # retail-cosmology
 
-オーストラリアの Coles と Woolworths、日本のトライアルと西友の店舗座標に、宇宙論で銀河の分布を測るときの二点相関関数（Landy–Szalay 推定量ほか）を当てる研究。
-小売に宇宙論をどこまで適用できるかを調べる。
+スーパーとドラッグストアの店舗の座標に、宇宙論で銀河の分布を測るときの二点相関関数（Landy–Szalay 推定量ほか）を当てる研究。
+オーストラリアの Coles と Woolworths、日本のトライアル・西友・コスモス、米国の Walmart の並び方を比べる。
+店どうしに相関がない場合の基準には、人口に比例して点を撒いたランダムカタログと、出店している地方を表す選択関数を使う。
 
-- 発表予定：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
-- 理論の下書き（書きかけ）：[Landy-Szalay推定量①](https://inuverse.dev/posts/2026-04-12-retail/)、[Landy-Szalay推定量②](https://inuverse.dev/posts/2026-04-13-retail/)
-- ノート：[`notes/retail-cosmology.pdf`](notes/retail-cosmology.pdf)
+## 読む
+
+- ノート（PDF、50 ページ）：[`notes/retail-cosmology.pdf`](notes/retail-cosmology.pdf)。式の導出、データ、結果、付録（toy model、DD の分散と Lean での検証、再現の手順）
+- 概要の記事：[inuverse.dev](https://inuverse.dev/posts/2026-11-08-retail-cosmology/)
+- 計算量のノート：[`notes/algorithm-cost.pdf`](notes/algorithm-cost.pdf)
+- 発表：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
+
+## 結果の要点
+
+ノートの結果は三つの問いに分けてある。
+
+1. **人口で説明できるか**：Coles と Woolworths はほぼ説明できる。トライアル、コスモス、Walmart は人の密集地に店が少なく、西友は多い。違いの大半は出店している地方の偏りによる。
+2. **地方を取り除いても固まるか**：トライアルは 3–25 km で、西友は 8 km より短い距離で固まる。コスモスの固まりの大半は九州の外から来る。Walmart は数十 km で弱く固まり、数 km では店どうしが離れる。
+3. **二社の関係**：トライアルと西友の相互相関は負だが、トライアルの店の置き方で説明でき、互いを避けていると考える必要はない。
+
+有意かどうかは、jackknife の χ² ではなく、帰無仮説の模擬データ 100 個と比べて判断している（店が数百では χ² の上側確率が信用できないため）。
+
+## 必要なもの
+
+- Rust（版は `rust-toolchain.toml`。`rustup` があれば自動で入る）
+- [uv](https://docs.astral.sh/uv/)（描画の Python。`uv run` で依存が入る）
+- LuaLaTeX（TeX Live。`luatexja` を使う。ノートと図の文字を組む）
+- Lean（任意。[elan](https://github.com/leanprover/elan) で `lean/lean-toolchain` の版が入る）
+
+店・人口のデータはリポジトリに入っていない。下の「動かす」の `fetch.sh` で `data/` に取る（出典と利用条件は「データ」）。
+トライアル・西友・コスモスの店舗は各社の公式サイトから取るので、サイトの形が変わると取れなくなることがある。
 
 ## 構成
 
@@ -36,7 +60,7 @@ Rust のコードは、変わりやすさごとに層を分けている（[ADR 0
 
 `scripts/` の描画とデータの取得は、Rust の層の外にある。描画のスクリプトは Rust が書いた結果を読むだけで、計算はしない。
 図の体裁（大きさ、色、フォント）は `scripts/figstyle.py` の一か所で決め、文字と数式は本文と同じ LuaLaTeX で組む（[ADR 004](docs/adr/004-figure-style.md)）。描画には LuaLaTeX（`luatexja` と `underscore.sty`）が要る。
-`lean/` も Rust の層の外にある。点を独立に撒く模型から、ノートの付録 B の式までを Lean で検証し、数値は Rust のテストで確かめる（置き場所は [ADR 003](docs/adr/003-lean-proofs-in-repo.md)、範囲は [ADR 005](docs/adr/005-lean-model-in-scope.md)）。
+`lean/` も Rust の層の外にある。点を独立に撒く模型から、ノートの DD の分散の付録の式までを Lean で検証し、数値は Rust のテストで確かめる（置き場所は [ADR 003](docs/adr/003-lean-proofs-in-repo.md)、範囲は [ADR 005](docs/adr/005-lean-model-in-scope.md)）。
 
 ## 動かす
 
@@ -50,7 +74,7 @@ scripts/naturalearth/fetch.sh                          # data/naturalearth/（�
 uv run scripts/plot_stores.py 2026-11-01               # docs/figures/stores_osm.{pdf,png}
 scripts/abs/fetch.sh                                   # data/abs/apgr25_1_0_0.tif（ABS の格子人口）
 cargo run --release --bin xi -- 2026-11-01             # data/xi/xi_2026-11-01.csv（jackknife の誤差つき）
-scripts/xi_robustness.sh 2026-11-01                    # 設定を変えて計算し直す（ノートの表 2）
+scripts/xi_robustness.sh 2026-11-01                    # 設定を変えて計算し直す（ノートの付録「結果の確かめ」の表）
 uv run scripts/plot_xi.py 2026-11-01                   # docs/figures/xi_stores.{pdf,png}
 # 日本（トライアル）
 scripts/osm/fetch.sh 2026-11-01 trial                  # data/osm/trial_2026-11-01.tsv
@@ -122,9 +146,9 @@ scripts/check_outputs.sh > before.txt   # 変える前
 scripts/check_outputs.sh > after.txt    # 変えた後
 diff before.txt after.txt
 
-# ノートの付録 B の式を、点を独立に撒く模型から Lean で検証する（ADR 005、lean/README.md）
+# ノートの DD の分散の付録の式を、点を独立に撒く模型から Lean で検証する（ADR 005、lean/README.md）
 cd lean && lake exe cache get   # Mathlib のビルド済みファイル（数 GB）を取る。初回だけ
-cd lean && lake build           # 証明を検査する。通れば付録 B の式が検証されている
+cd lean && lake build           # 証明を検査する。通れば付録の式が検証されている
 ```
 
 ## データ
@@ -133,6 +157,7 @@ cd lean && lake build           # 証明を検査する。通れば付録 B の�
 - 人口：オーストラリア統計局（ABS）の [2025 年の格子人口](https://www.abs.gov.au/statistics/people/population/regional-population/2024-25)（1 km 格子、EPSG:3577、CC BY 4.0）。ランダムカタログに使う。
 - トライアルの店舗：公式サイトの[店舗検索](https://www.trial-net.co.jp/shops)（業態・緯度・経度・都道府県）。著作権はトライアルグループにあるので、取ったデータはコミットしない。
 - 西友の店舗：公式サイトの[店舗検索](https://www.seiyu.co.jp/searchshop/)（店名・住所・緯度・経度）。一覧に載っていないトライアル西友は、サイトマップから店のページを取る。著作権は西友にあるので、取ったデータはコミットしない。
+- コスモスの店舗：公式サイトの店舗一覧（スクリプトを切られるので、ブラウザで保存したページを `data/cosmos_site/<取得日>/` に置く）。座標は住所から国土地理院の住所検索で引く（`scripts/cosmos_site/geocode.sh`）。取ったデータはコミットしない。
 - 日本の人口：e-Stat の令和2年国勢調査 1 km メッシュ（T001140、政府標準利用規約 第2.0版）。
 - 米国の店舗：OpenStreetMap。ほかの国と違い日付を固定できなかったので、取り出したときのデータを使い、その時刻を `data/osm/walmart_<日付>.timestamp` に残す（2026-11-12T23:56:10Z）。
 - 米国の人口：JRC の [GHS-POP R2023A](https://data.jrc.ec.europa.eu/dataset/2ff68a52-5b5b-4a22-8f40-c41da8332cfe)（2020 年、1 km 格子、ESRI:54009、CC BY 4.0）を、[Natural Earth](https://www.naturalearthdata.com/) の州境（1:10m Admin 1、パブリックドメイン）で米国本土 48 州と D.C. に切り出す。
@@ -141,3 +166,10 @@ cd lean && lake build           # 証明を検査する。通れば付録 B の�
 OSM から数えた店舗数は、Coles が 865 店（公式 870 店）、Woolworths が 1,116 店（公式 1,130 店）、トライアルが 232 店（公式 378 店）。
 公式サイトから取った店舗数は、トライアルが 375 店（公式 378 店）、西友が 243 店（公式 243 店）。
 米国本土の Walmart は OSM から 4,564 店。本土の外の 39 店を足した 4,603 店は、10-K の全米の 4,611 店の 99.8%。
+
+## ライセンス
+
+- コード（`crates/`、`scripts/`、`lean/`）：[MIT](LICENSE)
+- ノート・図・表・文書（`notes/`、`docs/`）：[CC BY 4.0](LICENSE-docs)
+
+取得したデータはそれぞれの利用条件に従う（上の「データ」）。各社の公式サイトから取った店舗の一覧は、このリポジトリには含めない。
