@@ -9,6 +9,7 @@
 - ノート（PDF、50 ページ）：[`notes/retail-cosmology.pdf`](notes/retail-cosmology.pdf)。式の導出、データ、結果、付録（toy model、DD の分散と Lean での検証、再現の手順）
 - 概要の記事：[inuverse.dev](https://inuverse.dev/posts/2026-11-08-retail-cosmology/)
 - 計算量のノート：[`notes/algorithm-cost.pdf`](notes/algorithm-cost.pdf)
+- 先の研究のノート（書きかけ。三点相関関数、九州の主なチェーンの比較）：[`notes/retail-cosmology-beyond.pdf`](notes/retail-cosmology-beyond.pdf)
 - 発表：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
 
 ## 結果の要点
@@ -37,7 +38,7 @@
 crates/retail-cosmology/  計算（Rust）。層の分け方は ADR 001
 scripts/                  描画（Python, matplotlib）とデータの取得（シェル）
 reference/                公式の店舗数と出典
-notes/                    ノート（TeX）
+notes/                    ノート（TeX と PDF だけ。中間ファイルは notes/build/ に出て、コミットしない。ADR 006）
 lean/                     ノートの式の導出の検証（Lean）。ADR 003、005
 docs/adr/                 設計判断の記録（ADR）
 docs/retrospectives/      振り返りと活動のログ
@@ -136,9 +137,8 @@ target/release/xi 2026-11-03 --country jp --stores $S --cross TRIAL,SEIYU --foot
 cargo run --release --bin cost -- 50 40000             # data/cost/cost_R50.csv
 cargo run --release --bin cost -- 100 40000            # data/cost/cost_R100.csv
 uv run scripts/plot_cost.py                            # docs/figures/cost_*.{pdf,png}
-cd notes && latexmk -lualatex algorithm-cost.tex
-cd notes && latexmk -lualatex retail-cosmology.tex
-scripts/check_note.sh   # 組んで、「付録 付録C」の重なり・はみ出し・未定義の参照を探す
+cd notes && latexmk retail-cosmology.tex   # notes/ の中で走らせる（.latexmkrc が LuaLaTeX と build/ を決める）。ほかのノートも同じ
+scripts/check_note.sh   # notes/ のノートをすべて組んで、「付録 付録C」の重なり・はみ出し・未定義の参照を探す
 git config core.hooksPath .githooks   # クローンごとに一度。ノートの tex を変えた push の前に check_note.sh が走り、誤りがあれば止まる
 
 # コードの構成を変える前と後で、すべての出力が変わらないことを確かめる

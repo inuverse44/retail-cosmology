@@ -8,12 +8,5 @@ __pycache__/
 # 取得したデータと計算結果はコミットしない（作り方は README に書く）
 /data
 
-# TeX の中間ファイル（PDF はコミットする）
-notes/*.aux
-notes/*.bbl
-notes/*.blg
-notes/*.fdb_latexmk
-notes/*.fls
-notes/*.log
-notes/*.out
-notes/*.toc
+# TeX の中間ファイルは notes/build/ に出す（notes/.latexmkrc、ADR 006）。PDF はコミットする
+notes/build/
