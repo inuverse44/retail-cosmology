@@ -226,20 +226,38 @@ pub fn run(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>
     Ok(path)
 }
 
-/// 北緯 33–34 度、東経 130–131.2 度（約 110 km 四方）に一様に撒いた点。
-fn toy_uniform(n: usize, rng: &mut SplitMix64) -> Vec<LatLon> {
+/// toy model の範囲：(南端の緯度, 緯度の幅, 西端の経度, 経度の幅) [度]。
+type Patch = (f64, f64, f64, f64);
+/// 北緯 33–34 度、東経 130–131.2 度（約 110 km 四方）
+const SMALL_PATCH: Patch = (33.0, 1.0, 130.0, 1.2);
+/// 北緯 33–36 度、東経 130–133.6 度（約 330 km 四方）。選択関数の幅 50 km より十分広い
+const LARGE_PATCH: Patch = (33.0, 3.0, 130.0, 3.6);
+
+/// 範囲 `patch` に一様に撒いた点（緯度と経度について一様）。
+fn patch_uniform(n: usize, patch: Patch, rng: &mut SplitMix64) -> Vec<LatLon> {
+    let (lat0, dlat, lon0, dlon) = patch;
     (0..n)
         .map(|_| LatLon {
-            lat: 33.0 + rng.next_f64(),
-            lon: 130.0 + 1.2 * rng.next_f64(),
+            lat: lat0 + dlat * rng.next_f64(),
+            lon: lon0 + dlon * rng.next_f64(),
         })
         .collect()
 }
 
-/// 親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く（Neyman–Scott の模型）。
-/// 子は親ごとに続けて並ぶ。
+/// 小さい範囲（約 110 km 四方）に一様に撒いた点。
+fn toy_uniform(n: usize, rng: &mut SplitMix64) -> Vec<LatLon> {
+    patch_uniform(n, SMALL_PATCH, rng)
+}
+
+/// 小さい範囲で、親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く（Neyman–Scott の模型）。
 fn toy_clustered(n_p: usize, m: usize, s: f64, rng: &mut SplitMix64) -> Vec<LatLon> {
-    let parents = toy_uniform(n_p, rng);
+    patch_clustered(n_p, m, s, SMALL_PATCH, rng)
+}
+
+/// 範囲 `patch` で、親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く。
+/// 子は親ごとに続けて並ぶ（番号 c·m から m 個が親 c の子）。
+fn patch_clustered(n_p: usize, m: usize, s: f64, patch: Patch, rng: &mut SplitMix64) -> Vec<LatLon> {
+    let parents = patch_uniform(n_p, patch, rng);
     let mut out = Vec::with_capacity(n_p * m);
     for p in &parents {
         for _ in 0..m {
@@ -283,24 +301,139 @@ pub fn toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error
     for run in 0..runs {
         let d = units(&toy_clustered(60, m, 2.0, &mut rng));
         let t = TripleCounts::compute(&d, &r, &bins);
-        let mut same = 0u64;
-        for g in d.chunks(m) {
-            for i in 0..m {
-                for j in i + 1..m {
-                    for k in j + 1..m {
-                        let c = (chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k]));
-                        if bins.index(c.0, c.1, c.2).is_some() {
-                            same += 1;
-                        }
-                    }
-                }
-            }
-        }
+        let same: u64 = same_parent_triples(&d, m, &bins).iter().sum();
         let base = t.rrr[0] as f64 * c3(d.len() as f64) / c3(r.len() as f64);
         writeln!(out, "neyman_scott,{run},{:.6},{:.6}", t.szapudi_szalay()[0], same as f64 / base)?;
     }
     let path = "data/toy/zeta_toy.csv".to_string();
     results::write_text(&root.join(&path), &out)?;
+    Ok(path)
+}
+
+/// 同じ親の子である三つ組のうち、三角形のビンに入るものをビンごとに数える（子は親ごとに `m` 個続けて並ぶ）。
+fn same_parent_triples(d: &[Unit], m: usize, bins: &TriangleBins) -> Vec<u64> {
+    let mut out = vec![0u64; bins.len()];
+    for g in d.chunks(m) {
+        for i in 0..g.len() {
+            for j in i + 1..g.len() {
+                for k in j + 1..g.len() {
+                    if let Some(b) = bins.index(chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k])) {
+                        out[b] += 1;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 選択関数 `sr` に比例する密度で、範囲 `patch` に `n` 点を撒く（一様な候補を S/S_max の確率で残す棄却法）。
+/// S_max は最初の候補 4n 点での最大値。
+fn patch_selected(sr: &SmoothRatio, n: usize, patch: Patch, rng: &mut SplitMix64) -> Vec<LatLon> {
+    let first = patch_uniform(4 * n, patch, rng);
+    let s: Vec<f64> = first.iter().map(|q| sr.eval(&Unit::from(q))).collect();
+    let smax = s.iter().copied().fold(0.0, f64::max);
+    let mut out = Vec::with_capacity(n);
+    for (q, v) in first.iter().zip(&s) {
+        if out.len() == n {
+            return out;
+        }
+        if rng.next_f64() < v / smax {
+            out.push(*q);
+        }
+    }
+    while out.len() < n {
+        let q = patch_uniform(1, patch, rng)[0];
+        if rng.next_f64() < sr.eval(&Unit::from(&q)) / smax {
+            out.push(q);
+        }
+    }
+    out
+}
+
+/// 店から作った選択関数が、二点で固まった店の ζ̂ をどれだけずらすかを toy model で測る（#81）。
+///
+/// 約 330 km 四方に、親 350 個のまわりに標準偏差 5 km で 5 個ずつ子を撒いた点（Neyman–Scott の模型、1,750 点）を作り、
+/// 同じ点に二通りのランダムカタログ（8,000 点）を当てる。
+/// - uniform：範囲に一様（この toy の人口は一様なので、正しい基準）。
+/// - selection：点そのものから作った幅 50 km の選択関数に比例（実際の店と同じ手順）。参照の点は一様な 20,000 点。
+///
+/// 三角形のビンは実際の店と同じ辺 2–32 km の 4 ビン。見込みの ζ は、同じ親の子である三角形の数を、
+/// 一様に撒いたときに見込まれる三角形の数（uniform の RRR を点の数で写したもの）で割った値。
+/// data/toy/zeta_selection_bias.csv に、一回・ビンごとの値を書く。
+pub fn selection_bias_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error>> {
+    let t0 = Instant::now();
+    let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    let sides_km = Bins::log(2.0, 32.0, 4);
+    let bins = TriangleBins::new(sides_km.map(km_to_chord2));
+    let c = sides_km.centers();
+    let (n_p, m, s_km, r_km, n_r, n_ref) = (350, 5, 5.0, 50.0, 8_000, 20_000);
+
+    let mut rng = SplitMix64::new(13);
+    let refs = units(&patch_uniform(n_ref, LARGE_PATCH, &mut rng));
+    let r_uni = units(&patch_uniform(n_r, LARGE_PATCH, &mut rng));
+    let mut out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,ddd,zeta_uniform,zeta_selection,expected\n");
+    // ビンごとに、一回ごとの (ζ̂ uniform, ζ̂ selection, 見込み) を集める
+    let mut per_bin: Vec<Vec<(f64, f64, f64)>> = vec![Vec::new(); bins.len()];
+    for run in 0..runs {
+        let d = units(&patch_clustered(n_p, m, s_km, LARGE_PATCH, &mut rng));
+        let t_u = TripleCounts::compute(&d, &r_uni, &bins);
+        let sr = SmoothRatio::new(&d, &refs, r_km);
+        let r_sel = units(&patch_selected(&sr, n_r, LARGE_PATCH, &mut rng));
+        let t_s = TripleCounts::compute(&d, &r_sel, &bins);
+        let (zu, zs) = (t_u.szapudi_szalay(), t_s.szapudi_szalay());
+        let same = same_parent_triples(&d, m, &bins);
+        let scale = c3(d.len() as f64) / c3(r_uni.len() as f64);
+        for b in bins.used() {
+            if t_u.rrr[b] == 0 || t_s.rrr[b] == 0 {
+                continue;
+            }
+            let (x, y, z) = bins.unflatten(b);
+            let expected = same[b] as f64 / (t_u.rrr[b] as f64 * scale);
+            per_bin[b].push((zu[b], zs[b], expected));
+            writeln!(
+                out,
+                "{run},{x},{y},{z},{:.3},{:.3},{:.3},{},{:.6},{:.6},{expected:.6}",
+                c[x], c[y], c[z], t_u.ddd[b], zu[b], zs[b]
+            )?;
+        }
+        eprintln!("{} 回目（{:.1} 秒）", run + 1, t0.elapsed().as_secs_f64());
+    }
+    let path = "data/toy/zeta_selection_bias.csv".to_string();
+    results::write_text(&root.join(&path), &out)?;
+
+    // ビンごとのまとめ：回数、平均と標準偏差（ζ̂ uniform、ζ̂ selection、見込み）、ずれ（selection − uniform）の平均と平均の誤差
+    let mean_sd = |v: &[f64]| {
+        let n = v.len() as f64;
+        let m = v.iter().sum::<f64>() / n;
+        let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        (m, sd)
+    };
+    let mut sum = String::from(
+        "k1,k2,k3,r1_km,r2_km,r3_km,runs,uniform_mean,uniform_sd,selection_mean,selection_sd,expected_mean,shift_mean,shift_err\n",
+    );
+    for b in bins.used() {
+        let v = &per_bin[b];
+        if v.len() < 2 {
+            continue;
+        }
+        let (x, y, z) = bins.unflatten(b);
+        let (um, us) = mean_sd(&v.iter().map(|t| t.0).collect::<Vec<_>>());
+        let (sm, ss) = mean_sd(&v.iter().map(|t| t.1).collect::<Vec<_>>());
+        let (em, _) = mean_sd(&v.iter().map(|t| t.2).collect::<Vec<_>>());
+        let (dm, ds) = mean_sd(&v.iter().map(|t| t.1 - t.0).collect::<Vec<_>>());
+        writeln!(
+            sum,
+            "{x},{y},{z},{:.3},{:.3},{:.3},{},{um:.6},{us:.6},{sm:.6},{ss:.6},{em:.6},{dm:.6},{:.6}",
+            c[x],
+            c[y],
+            c[z],
+            v.len(),
+            ds / (v.len() as f64).sqrt()
+        )?;
+    }
+    results::write_text(&root.join("data/toy/zeta_selection_bias_summary.csv"), &sum)?;
     Ok(path)
 }
 
