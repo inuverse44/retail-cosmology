@@ -7,7 +7,8 @@ use std::time::Instant;
 
 use crate::access::{population, stores};
 use crate::contract::Bins;
-use crate::engine::random_catalog::{Weight, sample};
+pub use crate::engine::random_catalog::Weight;
+use crate::engine::random_catalog::sample;
 use crate::engine::variance::{geometric_factors, var_dd_fixed, var_dd_poisson};
 use crate::util::geo::{Unit, chord2, km_to_chord2};
 use crate::util::rng::SplitMix64;

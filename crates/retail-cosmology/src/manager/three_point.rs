@@ -70,7 +70,10 @@ impl Params {
 }
 
 /// 国ごとの人口の格子と、出力の名前の前置き。
-fn grid_of(root: &Path, country: &str) -> Result<(PopulationGrid, &'static str), Box<dyn std::error::Error>> {
+fn grid_of(
+    root: &Path,
+    country: &str,
+) -> Result<(PopulationGrid, &'static str), Box<dyn std::error::Error>> {
     match country {
         "jp" => Ok((population::read_estat(&root.join("data/estat"))?, "jp_")),
         "us" => {
@@ -120,8 +123,15 @@ pub fn run(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>
                 sample_selected(&grid, n, Weight::Population, |q| tab.eval(q), 2 * n, rng).points
             }
             Some(sr) => {
-                sample_selected(&grid, n, Weight::Population, |q| sr.eval(&Unit::from(q)), 2 * n, rng)
-                    .points
+                sample_selected(
+                    &grid,
+                    n,
+                    Weight::Population,
+                    |q| sr.eval(&Unit::from(q)),
+                    2 * n,
+                    rng,
+                )
+                .points
             }
             None => sample(&grid, n, Weight::Population, rng),
         }
@@ -175,7 +185,10 @@ pub fn run(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>
         }
         Some(s) => {
             let mut rng_m = SplitMix64::new(s ^ 0x3E7A_4D0C_0000_0000);
-            draw(&sel_real, pts.len(), &mut rng_m).iter().map(Unit::from).collect()
+            draw(&sel_real, pts.len(), &mut rng_m)
+                .iter()
+                .map(Unit::from)
+                .collect()
         }
     };
     let mut rng = SplitMix64::new(p.seed);
@@ -191,9 +204,11 @@ pub fn run(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>
         "{}：店 {}{}、ランダム {} 点{}（{:.1} 秒）",
         p.chain,
         data.len(),
-        p.mock.map_or(String::new(), |s| format!("（模擬データ、種 {s}）")),
+        p.mock
+            .map_or(String::new(), |s| format!("（模擬データ、種 {s}）")),
         randoms.len(),
-        p.footprint.map_or(String::new(), |r| format!("、選択関数 R = {r} km")),
+        p.footprint
+            .map_or(String::new(), |r| format!("、選択関数 R = {r} km")),
         t0.elapsed().as_secs_f64()
     );
 
@@ -222,7 +237,10 @@ pub fn run(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>
         p.tag
     );
     results::write_text(&root.join(&path), &out)?;
-    eprintln!("{path} を書いた（全体 {:.1} 秒）", t0.elapsed().as_secs_f64());
+    eprintln!(
+        "{path} を書いた（全体 {:.1} 秒）",
+        t0.elapsed().as_secs_f64()
+    );
     Ok(path)
 }
 
@@ -256,7 +274,13 @@ fn toy_clustered(n_p: usize, m: usize, s: f64, rng: &mut SplitMix64) -> Vec<LatL
 
 /// 範囲 `patch` で、親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く。
 /// 子は親ごとに続けて並ぶ（番号 c·m から m 個が親 c の子）。
-fn patch_clustered(n_p: usize, m: usize, s: f64, patch: Patch, rng: &mut SplitMix64) -> Vec<LatLon> {
+fn patch_clustered(
+    n_p: usize,
+    m: usize,
+    s: f64,
+    patch: Patch,
+    rng: &mut SplitMix64,
+) -> Vec<LatLon> {
     let parents = patch_uniform(n_p, patch, rng);
     let mut out = Vec::with_capacity(n_p * m);
     for p in &parents {
@@ -282,7 +306,8 @@ fn patch_clustered(n_p: usize, m: usize, s: f64, patch: Patch, rng: &mut SplitMi
 pub fn toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error>> {
     let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
     let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
-    let one_bin = |lo: f64, hi: f64| TriangleBins::new(Bins::new(vec![km_to_chord2(lo), km_to_chord2(hi)]));
+    let one_bin =
+        |lo: f64, hi: f64| TriangleBins::new(Bins::new(vec![km_to_chord2(lo), km_to_chord2(hi)]));
     let mut out = String::from("model,run,zeta,expected\n");
 
     let mut rng = SplitMix64::new(11);
@@ -303,7 +328,12 @@ pub fn toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error
         let t = TripleCounts::compute(&d, &r, &bins);
         let same: u64 = same_parent_triples(&d, m, &bins).iter().sum();
         let base = t.rrr[0] as f64 * c3(d.len() as f64) / c3(r.len() as f64);
-        writeln!(out, "neyman_scott,{run},{:.6},{:.6}", t.szapudi_szalay()[0], same as f64 / base)?;
+        writeln!(
+            out,
+            "neyman_scott,{run},{:.6},{:.6}",
+            t.szapudi_szalay()[0],
+            same as f64 / base
+        )?;
     }
     let path = "data/toy/zeta_toy.csv".to_string();
     results::write_text(&root.join(&path), &out)?;
@@ -317,7 +347,11 @@ fn same_parent_triples(d: &[Unit], m: usize, bins: &TriangleBins) -> Vec<u64> {
         for i in 0..g.len() {
             for j in i + 1..g.len() {
                 for k in j + 1..g.len() {
-                    if let Some(b) = bins.index(chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k])) {
+                    if let Some(b) = bins.index(
+                        chord2(&g[i], &g[j]),
+                        chord2(&g[i], &g[k]),
+                        chord2(&g[j], &g[k]),
+                    ) {
                         out[b] += 1;
                     }
                 }
@@ -373,7 +407,8 @@ pub fn selection_bias_toy(root: &Path, runs: usize) -> Result<String, Box<dyn st
     let mut rng = SplitMix64::new(13);
     let refs = units(&patch_uniform(n_ref, LARGE_PATCH, &mut rng));
     let r_uni = units(&patch_uniform(n_r, LARGE_PATCH, &mut rng));
-    let mut out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,ddd,zeta_uniform,zeta_selection,expected\n");
+    let mut out =
+        String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,ddd,zeta_uniform,zeta_selection,expected\n");
     // ビンごとに、一回ごとの (ζ̂ uniform, ζ̂ selection, 見込み) を集める
     let mut per_bin: Vec<Vec<(f64, f64, f64)>> = vec![Vec::new(); bins.len()];
     for run in 0..runs {
@@ -444,7 +479,11 @@ pub fn selection_bias_toy(root: &Path, runs: usize) -> Result<String, Box<dyn st
         })
         .collect();
     let neg = shifts.iter().filter(|(m, _)| *m < 0.0).count();
-    let beyond3: Vec<f64> = shifts.iter().filter(|(m, e)| m.abs() > 3.0 * e).map(|(m, _)| *m).collect();
+    let beyond3: Vec<f64> = shifts
+        .iter()
+        .filter(|(m, e)| m.abs() > 3.0 * e)
+        .map(|(m, _)| *m)
+        .collect();
     eprintln!(
         "ビン {} 個：ずれが負 {neg}、平均の誤差の 3 倍を超える {}（{:+.3}〜{:+.3}）",
         shifts.len(),
@@ -493,7 +532,15 @@ pub fn clustered_mocks(
         .collect();
     let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
     let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
-        sample_selected(&grid, n, Weight::Population, |q| sr.eval(&Unit::from(q)), 2 * n, rng).points
+        sample_selected(
+            &grid,
+            n,
+            Weight::Population,
+            |q| sr.eval(&Unit::from(q)),
+            2 * n,
+            rng,
+        )
+        .points
     };
     let real = units(&pts);
     let sr_real = SmoothRatio::new(&real, &refs, r_km);
@@ -521,7 +568,11 @@ pub fn clustered_mocks(
     let cut = km_to_chord2(3.0 * sigma_km);
     let two_s2 = 2.0 * km_to_chord2(sigma_km);
     let g_pool = crate::util::spatial::UnitGrid::build(&pool, cut.sqrt());
-    eprintln!("点の池 {} 点（{:.1} 秒）", pool.len(), t0.elapsed().as_secs_f64());
+    eprintln!(
+        "点の池 {} 点（{:.1} 秒）",
+        pool.len(),
+        t0.elapsed().as_secs_f64()
+    );
     for run in 0..runs {
         // 親を池から一様に選び、子は親から 3σ 以内の池の点を、距離の正規分布の重みで m 個選ぶ（同じ点は選ばない）。
         // 子は親ごとに m 個続けて並ぶ。店の数を超えた分は最後の親の子から捨てる
@@ -556,7 +607,11 @@ pub fn clustered_mocks(
         d.truncate(pts.len());
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
         let r_proc = units(&draw(&sr_mock, p.n_random, &mut rng_m));
-        for (k, (a, b)) in xi_of(&d, &r_true).iter().zip(xi_of(&d, &r_proc)).enumerate() {
+        for (k, (a, b)) in xi_of(&d, &r_true)
+            .iter()
+            .zip(xi_of(&d, &r_proc))
+            .enumerate()
+        {
             writeln!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
         }
         let t_true = TripleCounts::compute(&d, &r_true, &bins);
@@ -598,22 +653,71 @@ pub fn clustered_mocks(
 ///
 /// 店の密度を「基準 × max(0, 1 + δ)」とする。δ は、点の池から選んだ `n_centers` 個の中心に、正負の符号を半々に
 /// つけた幅 `sigma_km` のガウス関数を足し、各点で sqrt(Σ K²) で割って分散をそろえ、`amp` を掛けたもの。
-/// 符号が対称なので δ の三次のモーメントは 0 で、三点相関関数の見込みは 0（1 + δ < 0 を 0 で切った分だけ、わずかに正）。
+/// 符号が対称なので切る前の δ の三次のモーメントは 0。切り捨てと固定点数の抽出後は true の平均も測って確かめる。
 /// 二点相関関数はおよそ `amp`² × （幅 √2 σ のガウス関数）。
 /// 店は、基準の重み（人口 × 実際の店の選択関数）で撒いた点の池から、重み max(0, 1 + δ) で店の数だけ選ぶ（同じ点は選ばない）。
 /// 測り方と書くものの形は [`clustered_mocks`] と同じ（expected の列は 0）。
 /// 書くもの：data/zeta/field_<前置き><日付>_<チェーン>_a<amp>_s<σ>.csv と _xi.csv
+#[derive(Clone, Debug)]
+pub struct FieldModel {
+    pub amp: f64,
+    pub sigma_km: f64,
+    /// 独立な符号を持つ二つ目の成分 (標準偏差, 幅 km)。
+    pub second: Option<(f64, f64)>,
+    pub n_centers: usize,
+    pub runs: usize,
+    /// 同じ seed の池と基準を使い、独立な run の範囲だけを分割できる。
+    pub start: usize,
+}
+
+/// [`FieldModel`] の密度場を生成し、true/proc の ξ、ζ と切り捨て割合を書く。
 pub fn field_mocks(
     root: &Path,
     p: &Params,
-    amp: f64,
-    sigma_km: f64,
-    n_centers: usize,
-    runs: usize,
+    model: &FieldModel,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let FieldModel {
+        amp,
+        sigma_km,
+        n_centers,
+        runs,
+        start,
+        ..
+    } = *model;
+    if !amp.is_finite()
+        || amp < 0.0
+        || !sigma_km.is_finite()
+        || sigma_km <= 0.0
+        || n_centers == 0
+        || runs == 0
+        || model
+            .second
+            .is_some_and(|(a, s)| !a.is_finite() || a < 0.0 || !s.is_finite() || s <= 0.0)
+    {
+        return Err("振幅は有限で非負、幅・centers・runs は正であること".into());
+    }
+    let second_tag = model
+        .second
+        .map_or(String::new(), |(a, s)| format!("_a2{a}_s2{s}"));
+    let stem = format!(
+        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{}",
+        if p.country == "jp" { "jp_" } else { "us_" },
+        p.date,
+        p.chain.to_lowercase(),
+        p.tag
+    );
+    for suffix in [".csv", "_xi.csv", "_diagnostics.csv"] {
+        if root.join(format!("{stem}{suffix}")).exists() {
+            return Err(format!("既存の出力を上書きしない：{stem}{suffix}").into());
+        }
+    }
+    eprintln!(
+        "field model {model:?}; seed={}, n_ref={}, n_random={}, output={stem}",
+        p.seed, p.n_ref, p.n_random
+    );
     let t0 = Instant::now();
     let r_km = p.footprint.ok_or("--footprint R が要る")?;
-    let (grid, prefix) = grid_of(root, &p.country)?;
+    let (grid, _) = grid_of(root, &p.country)?;
     let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
         .map_err(|e| format!("{} がない：{e}", p.stores))?
         .into_iter()
@@ -630,7 +734,15 @@ pub fn field_mocks(
         .collect();
     let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
     let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
-        sample_selected(&grid, n, Weight::Population, |q| sr.eval(&Unit::from(q)), 2 * n, rng).points
+        sample_selected(
+            &grid,
+            n,
+            Weight::Population,
+            |q| sr.eval(&Unit::from(q)),
+            2 * n,
+            rng,
+        )
+        .points
     };
     let real = units(&pts);
     let sr_real = SmoothRatio::new(&real, &refs, r_km);
@@ -651,23 +763,32 @@ pub fn field_mocks(
     let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
     let mut rng_m = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
     let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_m));
-    let cut = km_to_chord2(3.0 * sigma_km);
-    let two_s2 = 2.0 * km_to_chord2(sigma_km);
-    eprintln!("点の池 {} 点（{:.1} 秒）", pool.len(), t0.elapsed().as_secs_f64());
-    for run in 0..runs {
-        // 中心と符号を選び、池の各点で δ を求める
-        let centers: Vec<(Unit, f64)> = (0..n_centers)
-            .map(|_| {
-                let q = pool[(rng_m.next_f64() * pool.len() as f64) as usize];
-                (q, if rng_m.next_f64() < 0.5 { 1.0 } else { -1.0 })
-            })
-            .collect();
-        let cu: Vec<Unit> = centers.iter().map(|x| x.0).collect();
-        let g = crate::util::spatial::UnitGrid::build(&cu, cut.sqrt());
-        let mut clipped = 0usize;
-        let w: Vec<f64> = pool
-            .iter()
-            .map(|q| {
+    eprintln!(
+        "点の池 {} 点（{:.1} 秒）",
+        pool.len(),
+        t0.elapsed().as_secs_f64()
+    );
+    let mut diagnostics = String::from("run,clipped_fraction,elapsed_seconds\n");
+    for run in start..start.checked_add(runs).ok_or("run の範囲が大きすぎる")? {
+        let mut run_seed = SplitMix64::new(p.seed ^ 0xF1E1_D100_0000_0000 ^ run as u64);
+        let mut rng_m = SplitMix64::new(run_seed.next_u64());
+        let mut delta = vec![0.0; pool.len()];
+        for (amplitude, width) in std::iter::once((amp, sigma_km)).chain(model.second) {
+            if amplitude == 0.0 {
+                continue;
+            }
+            let cut = km_to_chord2(3.0 * width);
+            let two_s2 = 2.0 * km_to_chord2(width);
+            // 中心と符号を選び、池の各点で δ を求める
+            let centers: Vec<(Unit, f64)> = (0..n_centers)
+                .map(|_| {
+                    let q = pool[(rng_m.next_f64() * pool.len() as f64) as usize];
+                    (q, if rng_m.next_f64() < 0.5 { 1.0 } else { -1.0 })
+                })
+                .collect();
+            let cu: Vec<Unit> = centers.iter().map(|x| x.0).collect();
+            let g = crate::util::spatial::UnitGrid::build(&cu, cut.sqrt());
+            for (i, q) in pool.iter().enumerate() {
                 let (mut s, mut s2) = (0.0, 0.0);
                 g.for_each_near(q, cut.sqrt(), |j| {
                     let c2 = chord2(q, &cu[j]);
@@ -677,13 +798,16 @@ pub fn field_mocks(
                         s2 += k * k;
                     }
                 });
-                let delta = if s2 > 0.0 { amp * s / s2.sqrt() } else { 0.0 };
-                if 1.0 + delta < 0.0 {
-                    clipped += 1;
+                if s2 > 0.0 {
+                    delta[i] += amplitude * s / s2.sqrt();
                 }
-                (1.0 + delta).max(0.0)
-            })
-            .collect();
+            }
+        }
+        let clipped = delta.iter().filter(|d| 1.0 + **d < 0.0).count();
+        let w: Vec<f64> = delta.iter().map(|d| (1.0 + d).max(0.0)).collect();
+        if w.iter().filter(|w| **w > 0.0).count() < pts.len() {
+            return Err("正の重みを持つ池の点が店の数より少ない".into());
+        }
         // 重み w で、池から店の数だけ選ぶ（棄却法、同じ点は選ばない）
         let wmax = w.iter().copied().fold(0.0, f64::max);
         let mut taken = vec![false; pool.len()];
@@ -697,7 +821,11 @@ pub fn field_mocks(
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
         let r_proc = units(&draw(&sr_mock, p.n_random, &mut rng_m));
-        for (k, (a, b)) in xi_of(&d, &r_true).iter().zip(xi_of(&d, &r_proc)).enumerate() {
+        for (k, (a, b)) in xi_of(&d, &r_true)
+            .iter()
+            .zip(xi_of(&d, &r_proc))
+            .enumerate()
+        {
             writeln!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
         }
         let t_true = TripleCounts::compute(&d, &r_true, &bins);
@@ -708,7 +836,11 @@ pub fn field_mocks(
                 continue;
             }
             let (x, y, z) = bins.unflatten(b);
-            writeln!(z_out, "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},0", c[x], c[y], c[z], zt[b], zp[b])?;
+            writeln!(
+                z_out,
+                "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},0",
+                c[x], c[y], c[z], zt[b], zp[b]
+            )?;
         }
         eprintln!(
             "{} 回目（1 + δ < 0 で切った点 {:.1}%、{:.1} 秒）",
@@ -716,13 +848,14 @@ pub fn field_mocks(
             100.0 * clipped as f64 / pool.len() as f64,
             t0.elapsed().as_secs_f64()
         );
+        writeln!(
+            diagnostics,
+            "{run},{:.6},{:.3}",
+            clipped as f64 / pool.len() as f64,
+            t0.elapsed().as_secs_f64()
+        )?;
     }
-    let stem = format!(
-        "data/zeta/field_{prefix}{}_{}_a{amp}_s{sigma_km}{}",
-        p.date,
-        p.chain.to_lowercase(),
-        p.tag
-    );
+    results::write_text(&root.join(format!("{stem}_diagnostics.csv")), &diagnostics)?;
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
     let path = format!("{stem}.csv");
     results::write_text(&root.join(&path), &z_out)?;
@@ -732,19 +865,28 @@ pub fn field_mocks(
 /// zeta_clustered が書いた模擬データ（`stem`.csv と `stem`_xi.csv）を、ビンごとにまとめて `stem`_summary.csv と
 /// `stem`_xi_summary.csv に書く。実際の店の ζ̂（zeta が書いた `real`、同じランダムカタログと設定のもの）も並べ、
 /// 実際と同じ手順（proc）の模擬データの分布の中でどこにあるかを数える。
-pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn summarize_clustered(
+    root: &Path,
+    stem: &str,
+    real: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let rows = results::read_numeric_csv(&root.join(format!("{stem}.csv")))?;
     let xis = results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))?;
     let real = results::read_zeta(&root.join(real))?;
     let mean_sd = |v: &[f64]| {
         let n = v.len() as f64;
         let m = v.iter().sum::<f64>() / n;
-        (m, (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt())
+        (
+            m,
+            (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt(),
+        )
     };
-    let key = |r: &std::collections::HashMap<String, f64>| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize);
+    let key = |r: &std::collections::HashMap<String, f64>| {
+        (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize)
+    };
 
     let mut out = String::from(
-        "k1,k2,k3,r1_km,r2_km,r3_km,runs,true_mean,true_sd,proc_mean,proc_sd,expected_mean,real,real_sigma_proc,n_le_real\n",
+        "k1,k2,k3,r1_km,r2_km,r3_km,runs,true_mean,true_sd,proc_mean,proc_sd,expected_mean,real,real_sigma_proc,n_le_real,true_sem,proc_sem\n",
     );
     // 本文に書くビンの数は手で数えず、ここで数える（振り返り 2026-11-14 の T-03）
     let (mut n_bins, mut n_below_all, mut n_within_1s, mut n_proc_below_exp) = (0, 0, 0, 0);
@@ -769,13 +911,15 @@ pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String
         let (a, b, c) = z.r_km;
         writeln!(
             out,
-            "{},{},{},{a:.3},{b:.3},{c:.3},{},{tm:.6},{ts:.6},{pm:.6},{ps:.6},{em:.6},{:.6},{:.2},{n_le}",
+            "{},{},{},{a:.3},{b:.3},{c:.3},{},{tm:.6},{ts:.6},{pm:.6},{ps:.6},{em:.6},{:.6},{:.2},{n_le},{:.6},{:.6}",
             z.k.0,
             z.k.1,
             z.k.2,
             v.len(),
             z.zeta,
-            (z.zeta - pm) / ps
+            (z.zeta - pm) / ps,
+            ts / (v.len() as f64).sqrt(),
+            ps / (v.len() as f64).sqrt()
         )?;
     }
     results::write_text(&root.join(format!("{stem}_summary.csv")), &out)?;
@@ -784,23 +928,389 @@ pub fn summarize_clustered(root: &Path, stem: &str, real: &str) -> Result<String
          模擬データの平均が見込みより小さい {n_proc_below_exp}、平均から {sig_min:+.2}σ〜{sig_max:+.2}σ"
     );
 
-    let mut xo = String::from("k,r_km,real,mock_true_mean,mock_true_sd,mock_proc_mean,mock_proc_sd\n");
+    let mut xo =
+        String::from("k,r_km,real,mock_true_mean,mock_true_sd,mock_proc_mean,mock_proc_sd\n");
     let ks: std::collections::BTreeSet<usize> = xis.iter().map(|r| r["k"] as usize).collect();
     for k in ks {
-        let real_xi = xis.iter().find(|r| r["run"] < 0.0 && r["k"] as usize == k).map_or(f64::NAN, |r| r["xi_true"]);
-        let m: Vec<_> = xis.iter().filter(|r| r["run"] >= 0.0 && r["k"] as usize == k).collect();
+        let real_xi = xis
+            .iter()
+            .find(|r| r["run"] < 0.0 && r["k"] as usize == k)
+            .map_or(f64::NAN, |r| r["xi_true"]);
+        let m: Vec<_> = xis
+            .iter()
+            .filter(|r| r["run"] >= 0.0 && r["k"] as usize == k)
+            .collect();
         let r_km = m.first().map_or(f64::NAN, |r| r["r_km"]);
         let (tm, ts) = mean_sd(&m.iter().map(|r| r["xi_true"]).collect::<Vec<_>>());
         let (pm, ps) = mean_sd(&m.iter().map(|r| r["xi_proc"]).collect::<Vec<_>>());
-        writeln!(xo, "{k},{r_km:.3},{real_xi:.6},{tm:.6},{ts:.6},{pm:.6},{ps:.6}")?;
+        writeln!(
+            xo,
+            "{k},{r_km:.3},{real_xi:.6},{tm:.6},{ts:.6},{pm:.6},{ps:.6}"
+        )?;
     }
     results::write_text(&root.join(format!("{stem}_xi_summary.csv")), &xo)?;
     Ok(format!("{stem}_summary.csv"))
 }
 
+/// 分割した field の独立な run を結合し、proc 同士で全体検定と一律シフトの感度を調べる。
+/// 入力 run の重複・欠損ビン・ξ の実測値の不一致はエラーにする。
+pub fn analyze_field(
+    root: &Path,
+    real_path: &str,
+    output: &str,
+    stems: &[String],
+) -> Result<String, Box<dyn std::error::Error>> {
+    use crate::engine::estimator::{chi2, chi2_sf, ensemble, extreme_rank_test, gls_mean};
+    use std::collections::{BTreeMap, BTreeSet};
+    for suffix in [
+        ".csv",
+        "_xi.csv",
+        "_summary.csv",
+        "_xi_summary.csv",
+        "_cov.csv",
+        "_tests.csv",
+        "_sensitivity.csv",
+        "_true_summary.csv",
+        "_diagnostics.csv",
+        "_report.md",
+    ] {
+        if root.join(format!("{output}{suffix}")).exists() {
+            return Err(format!("既存の出力を上書きしない：{output}{suffix}").into());
+        }
+    }
+    let real = results::read_zeta(&root.join(real_path))?;
+    if real.is_empty() {
+        return Err("実測のビンがない".into());
+    }
+    type TriangleKey = (usize, usize, usize);
+    type ZetaValues = (f64, f64, f64);
+    let mut mocks: BTreeMap<usize, BTreeMap<TriangleKey, ZetaValues>> = BTreeMap::new();
+    let mut xi: BTreeMap<(i64, usize), (f64, f64, f64)> = BTreeMap::new();
+    let mut source_runs = BTreeSet::new();
+    let mut clipping = BTreeMap::new();
+    for stem in stems {
+        let rows = results::read_numeric_csv(&root.join(format!("{stem}.csv")))?;
+        let mut local_runs = BTreeSet::new();
+        for r in rows {
+            let run_value = r["run"];
+            if !run_value.is_finite() || run_value < 0.0 || run_value.fract() != 0.0 {
+                return Err("run は非負整数".into());
+            }
+            let run = run_value as usize;
+            let k = (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize);
+            if mocks
+                .entry(run)
+                .or_default()
+                .insert(k, (r["zeta_true"], r["zeta_proc"], r["expected"]))
+                .is_some()
+            {
+                return Err(format!("重複した run/bin：{stem} {run} {k:?}").into());
+            }
+            local_runs.insert(run);
+        }
+        if !source_runs.is_disjoint(&local_runs) {
+            return Err("入力の run 範囲が重複".into());
+        }
+        source_runs.extend(local_runs);
+        let diagnostic_path = root.join(format!("{stem}_diagnostics.csv"));
+        if diagnostic_path.exists() {
+            for r in results::read_numeric_csv(&diagnostic_path)? {
+                let run = r["run"] as usize;
+                let fraction = r["clipped_fraction"];
+                if !fraction.is_finite()
+                    || !(0.0..=1.0).contains(&fraction)
+                    || clipping.insert(run, fraction).is_some()
+                {
+                    return Err("切り捨て割合の欠損・重複・範囲外".into());
+                }
+            }
+        }
+        for r in results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))? {
+            let key = (r["run"] as i64, r["k"] as usize);
+            let value = (r["r_km"], r["xi_true"], r["xi_proc"]);
+            if let Some(previous) = xi.insert(key, value)
+                && (key.0 >= 0 || previous.0 != value.0 || (previous.1 - value.1).abs() > 1e-6)
+            {
+                return Err("ξ の run 重複、または実測の基準が異なる".into());
+            }
+        }
+    }
+    let n = mocks.len();
+    let p = real.len();
+    let expected_keys: BTreeSet<_> = real.iter().map(|r| r.k).collect();
+    if expected_keys.len() != p
+        || mocks
+            .values()
+            .any(|v| v.keys().copied().collect::<BTreeSet<_>>() != expected_keys)
+    {
+        return Err("実測と模擬のビンが一致しない".into());
+    }
+    let xi_keys: BTreeSet<_> = xi
+        .keys()
+        .filter(|(run, _)| *run == -1)
+        .map(|(_, k)| *k)
+        .collect();
+    if xi_keys.is_empty()
+        || source_runs.iter().any(|run| {
+            xi.keys()
+                .filter(|(r, _)| *r == *run as i64)
+                .map(|(_, k)| *k)
+                .collect::<BTreeSet<_>>()
+                != xi_keys
+        })
+        || xi
+            .keys()
+            .any(|(run, _)| *run >= 0 && !source_runs.contains(&(*run as usize)))
+    {
+        return Err("ξ に run またはビンの欠損・不一致がある".into());
+    }
+    let vectors: Vec<Vec<f64>> = mocks
+        .values()
+        .map(|v| real.iter().map(|r| v[&r.k].1).collect())
+        .collect();
+    if !clipping.is_empty() && clipping.keys().copied().collect::<BTreeSet<_>>() != source_runs {
+        return Err("切り捨て割合の run が模擬データと一致しない".into());
+    }
+    let stats = ensemble(&vectors).ok_or("模擬に非有限値がある")?;
+    let true_vectors: Vec<Vec<f64>> = mocks
+        .values()
+        .map(|v| real.iter().map(|r| v[&r.k].0).collect())
+        .collect();
+    let true_stats = ensemble(&true_vectors).ok_or("true の模擬に非有限値がある")?;
+    let delta: Vec<f64> = real
+        .iter()
+        .zip(&stats.value)
+        .map(|(r, m)| r.zeta - m)
+        .collect();
+    let mut out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+    for (run, v) in &mocks {
+        for r in &real {
+            let (a, b, c) = v[&r.k];
+            writeln!(
+                out,
+                "{run},{},{},{},{:.3},{:.3},{:.3},{a:.6},{b:.6},{c:.6}",
+                r.k.0, r.k.1, r.k.2, r.r_km.0, r.r_km.1, r.r_km.2
+            )?;
+        }
+    }
+    let mut xo = String::from("run,k,r_km,xi_true,xi_proc\n");
+    for ((run, k), (r, a, b)) in &xi {
+        writeln!(xo, "{run},{k},{r:.3},{a:.6},{b:.6}")?;
+    }
+    results::write_text(&root.join(format!("{output}.csv")), &out)?;
+    results::write_text(&root.join(format!("{output}_xi.csv")), &xo)?;
+    summarize_clustered(root, output, real_path)?;
+    let mut audit_report = String::new();
+    if !clipping.is_empty() {
+        let cmin = clipping.values().copied().fold(f64::INFINITY, f64::min);
+        let cmax = clipping.values().copied().fold(f64::NEG_INFINITY, f64::max);
+        let cm = clipping.values().sum::<f64>() / n as f64;
+        let mut co = String::from("run,clipped_fraction\n");
+        for (run, fraction) in &clipping {
+            writeln!(co, "{run},{fraction:.6}")?;
+        }
+        results::write_text(&root.join(format!("{output}_diagnostics.csv")), &co)?;
+        writeln!(
+            audit_report,
+            "Clipped pool fraction across catalogues: {:.4}% to {:.4}%; mean {:.4}%. Individual values: {output}_diagnostics.csv.\n",
+            100.0 * cmin,
+            100.0 * cmax,
+            100.0 * cm
+        )?;
+    }
+    audit_report.push_str("| sides km | true mean | true SD | true mean SE | true mean / SE | proc mean | proc mean SE |\n|---|---:|---:|---:|---:|---:|---:|\n");
+    let mut true_out = String::from(
+        "k1,k2,k3,runs,true_mean,true_sd,true_sem,true_mean_over_sem,proc_mean,proc_sem\n",
+    );
+    for (i, r) in real.iter().enumerate() {
+        let tm = true_stats.value[i];
+        let ts = true_stats.sigma[i];
+        let te = ts / (n as f64).sqrt();
+        let pm = stats.value[i];
+        let pe = stats.sigma[i] / (n as f64).sqrt();
+        writeln!(
+            true_out,
+            "{},{},{},{n},{tm:.9},{ts:.9},{te:.9},{:.6},{pm:.9},{pe:.9}",
+            r.k.0,
+            r.k.1,
+            r.k.2,
+            tm / te
+        )?;
+        writeln!(
+            audit_report,
+            "| {:.0},{:.0},{:.0} | {tm:.6} | {ts:.6} | {te:.6} | {:+.3} | {pm:.6} | {pe:.6} |",
+            r.r_km.0,
+            r.r_km.1,
+            r.r_km.2,
+            tm / te
+        )?;
+    }
+    results::write_text(&root.join(format!("{output}_true_summary.csv")), &true_out)?;
+    let mut xi_report = String::from(
+        "| r km | real xi | true mean | proc mean | proc SD | (real-mean)/SD |\n|---:|---:|---:|---:|---:|---:|\n",
+    );
+    let mut xi_within = 0;
+    for k in &xi_keys {
+        let r = xi[&(-1, *k)].0;
+        let actual = xi[&(-1, *k)].1;
+        let vals: Vec<_> = source_runs
+            .iter()
+            .map(|run| xi[&(*run as i64, *k)].2)
+            .collect();
+        let s = mock_summary(actual, &vals);
+        let tm = source_runs
+            .iter()
+            .map(|run| xi[&(*run as i64, *k)].1)
+            .sum::<f64>()
+            / n as f64;
+        let z = (actual - s.mean) / s.sd;
+        xi_within += usize::from(z.abs() <= 1.0);
+        writeln!(
+            xi_report,
+            "| {r:.0} | {actual:.6} | {tm:.6} | {:.6} | {:.6} | {z:+.3} |",
+            s.mean, s.sd
+        )?;
+    }
+    writeln!(
+        xi_report,
+        "\nXi within one catalogue SD: {xi_within}/{} (counted by Rust). This is not agreement within the error on the ensemble mean.\n",
+        xi_keys.len()
+    )?;
+    if n <= p + 2 {
+        let path = format!("{output}_report.md");
+        results::write_text(
+            &root.join(&path),
+            &format!(
+                "# Small field pilot\n\nN={n}, bins={p}. Hartlap requires N > p+2; global covariance tests skipped.\n\n{xi_report}\n{audit_report}"
+            ),
+        )?;
+        return Ok(path);
+    }
+    let hartlap = (n - p - 2) as f64 / (n - 1) as f64;
+    let raw = chi2(&delta, &stats.cov).ok_or("共分散が正定値でない")?;
+    let corrected = hartlap * raw;
+    let predictive = corrected / (1.0 + 1.0 / n as f64);
+    let real_values: Vec<_> = real.iter().map(|r| r.zeta).collect();
+    let (pl, pu, erl) = extreme_rank_test(&real_values, &vectors).ok_or("順位検定の入力が不正")?;
+    let (offset, offset_sd) = gls_mean(&delta, &stats.cov, hartlap).ok_or("GLS が解けない")?;
+    let mut cov_out = String::from("i,j,cov_proc\n");
+    for (i, row) in stats.cov.iter().enumerate() {
+        for (j, c) in row.iter().enumerate() {
+            writeln!(cov_out, "{i},{j},{c:.12}")?;
+        }
+    }
+    results::write_text(&root.join(format!("{output}_cov.csv")), &cov_out)?;
+    let tests = format!(
+        "runs,bins,hartlap,chi2_raw,chi2_hartlap,p_chi2_approx,chi2_predictive,p_predictive_approx,rank_p_lower,rank_p_upper,rank_p_erl,constant_offset,offset_sd_single,offset_sd_mean,offset_sd_predictive\n{n},{p},{hartlap:.9},{raw:.9},{corrected:.9},{:.9},{predictive:.9},{:.9},{pl:.9},{pu:.9},{erl:.9},{offset:.9},{offset_sd:.9},{:.9},{:.9}\n",
+        chi2_sf(corrected, p),
+        chi2_sf(predictive, p),
+        offset_sd / (n as f64).sqrt(),
+        offset_sd * (1.0 + 1.0 / n as f64).sqrt()
+    );
+    results::write_text(&root.join(format!("{output}_tests.csv")), &tests)?;
+    let mut sensitivity = String::from(
+        "shift,sigma_single,sigma_one_mean_N,sigma_two_means_N,target_sigma,n_one_mean,n_each_two_means\n",
+    );
+    for shift in [0.01f64, 0.02, 0.03, 0.05] {
+        for target in [1.0f64, 3.0, 5.0] {
+            let required = (target * offset_sd / shift).powi(2);
+            writeln!(
+                sensitivity,
+                "{shift:.3},{:.6},{:.6},{:.6},{target:.0},{:.0},{:.0}",
+                shift / offset_sd,
+                shift * (n as f64).sqrt() / offset_sd,
+                shift * (n as f64 / 2.0).sqrt() / offset_sd,
+                required.ceil(),
+                (2.0 * required).ceil()
+            )?;
+        }
+    }
+    results::write_text(
+        &root.join(format!("{output}_sensitivity.csv")),
+        &sensitivity,
+    )?;
+    let mut report = format!(
+        "# Field mock comparison (#81)\n\nN={n}, bins={p}. All comparisons use proc. Standard deviations below describe one catalogue, not the error on the mock mean.\n\n"
+    );
+    report.push_str(&xi_report);
+    report.push_str(&audit_report);
+    let true_nonzero = true_stats
+        .value
+        .iter()
+        .zip(&true_stats.sigma)
+        .filter(|(m, s)| m.abs() > 3.0 * **s / (n as f64).sqrt())
+        .count();
+    let true_min = true_stats
+        .value
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let true_max = true_stats
+        .value
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let bias: Vec<_> = stats
+        .value
+        .iter()
+        .zip(&true_stats.value)
+        .map(|(p, t)| p - t)
+        .collect();
+    writeln!(
+        report,
+        "True mean range: {true_min:.6} to {true_max:.6}; bins with |true mean| > 3 SE: {true_nonzero}/{p} (uncorrected marginal diagnostics). Proc-minus-true mean range: {:.6} to {:.6}. Nominal symmetry of the pre-clipping field does not guarantee zero measured true zeta.\n",
+        bias.iter().copied().fold(f64::INFINITY, f64::min),
+        bias.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+    )?;
+    writeln!(
+        report,
+        "Hartlap factor: {hartlap:.6}; chi-square: {corrected:.6}; approximate chi-square p: {:.6}. Including uncertainty on the mock mean: {predictive:.6}, approximate p={:.6}.\n\nExtreme-rank two-sided global p interval: ({pl:.6}, {pu:.6}]; ERL refinement p={erl:.6}.\n\nUniform offset GLS: {offset:.6} +/- {:.6} (one observed catalogue versus estimated mock mean). Single-catalogue offset SD: {offset_sd:.6}; mock-mean SE: {:.6}.\n",
+        chi2_sf(corrected, p),
+        chi2_sf(predictive, p),
+        offset_sd * (1.0 + 1.0 / n as f64).sqrt(),
+        offset_sd / (n as f64).sqrt()
+    )?;
+    report.push_str("| sides km | real | true mean | proc mean | proc SD | deviation/SD | mocks <= real | rank among N+1 |\n|---|---:|---:|---:|---:|---:|---:|---:|\n");
+    let mut within = 0;
+    for (i, r) in real.iter().enumerate() {
+        let tm = mocks.values().map(|v| v[&r.k].0).sum::<f64>() / n as f64;
+        let le = vectors.iter().filter(|v| v[i] <= r.zeta).count();
+        let z = delta[i] / stats.sigma[i];
+        within += usize::from(z.abs() <= 1.0);
+        writeln!(
+            report,
+            "| {:.0},{:.0},{:.0} | {:.6} | {tm:.6} | {:.6} | {:.6} | {z:+.3} | {le}/{n} | {}/{} |",
+            r.r_km.0,
+            r.r_km.1,
+            r.r_km.2,
+            r.zeta,
+            stats.value[i],
+            stats.sigma[i],
+            le + 1,
+            n + 1
+        )?;
+    }
+    writeln!(
+        report,
+        "\nWithin 1 SD: {within}/{p} (counted by Rust). Rank uses <=, including ties.\n\nSensitivity assumes a uniform additive shift and unchanged covariance; it does not generate a physical negative-zeta point process. n_one_mean treats the reference mean as known; n_each_two_means uses two independent ensembles of equal size. These sample sizes count independent catalogues, not extra mocks improving a single observed catalogue. More mocks only reduce calibration uncertainty.\n\nThe chi-square p values assume approximately Gaussian vectors and are approximate with estimated covariance. Hartlap is unbiased only for Gaussian independent realizations. Rank calibration is conditional on the fitted selection and chosen xi parameters (plug-in null, not an unconditional composite-null test). A shared finite pool and reference catalogue are conditioned on. Clipping and fixed-count sampling can make true zeta nonzero; consult true means, not just the nominal expected=0 column.\n\nSources: https://arxiv.org/abs/astro-ph/0608064 ; https://arxiv.org/abs/1307.0239\n\nInputs:\n"
+    )?;
+    writeln!(report, "- real: {real_path}")?;
+    for stem in stems {
+        writeln!(report, "- {stem}")?;
+    }
+    let report_path = format!("{output}_report.md");
+    results::write_text(&root.join(&report_path), &report)?;
+    eprintln!("{tests}");
+    Ok(report_path)
+}
+
 /// 実際の店の ζ（`real`）を、帰無仮説の模擬データの ζ（`mocks`）とビンごとに比べた表を、文字列で返す。
 /// 列：辺のビンの中点 [km]、DDD、実際の ζ、模擬データの平均と標準偏差、平均から何 σ、実際以上・以下の個数。
-pub fn compare_mocks(root: &Path, real: &str, mocks: &[String]) -> Result<String, Box<dyn std::error::Error>> {
+pub fn compare_mocks(
+    root: &Path,
+    real: &str,
+    mocks: &[String],
+) -> Result<String, Box<dyn std::error::Error>> {
     let r = results::read_zeta(&root.join(real))?;
     let ms: Vec<Vec<_>> = mocks
         .iter()
@@ -833,4 +1343,81 @@ pub fn compare_mocks(root: &Path, real: &str, mocks: &[String]) -> Result<String
         )?;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn field_analysis_merges_disjoint_runs_and_rejects_duplicate_or_incomplete_inputs() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("field-analysis-{}-{id}", std::process::id()));
+        results::write_text(&root.join("real.csv"),
+            "k1,k2,k3,r1_km,r2_km,r3_km,ddd,ddr,drr,rrr,zeta\n0,0,0,3,3,3,1,1,1,1,-0.02\n1,1,1,6,6,6,1,1,1,1,0.01\n").unwrap();
+        for (name, range) in [("a", 0..10), ("b", 10..20)] {
+            let mut z =
+                String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+            let mut xi = String::from("run,k,r_km,xi_true,xi_proc\n-1,0,3,0.2,\n-1,1,6,0.1,\n");
+            let mut diagnostics = String::from("run,clipped_fraction\n");
+            for run in range {
+                writeln!(diagnostics, "{run},0.1").unwrap();
+                let vals = [
+                    (run as f64 - 10.0) * 0.01,
+                    ((run * 7 % 11) as f64 - 5.0) * 0.02,
+                ];
+                for (k, value) in vals.iter().enumerate() {
+                    let r = 3 * (k + 1);
+                    writeln!(
+                        z,
+                        "{run},{k},{k},{k},{r},{r},{r},{},{value},0",
+                        value + 0.03
+                    )
+                    .unwrap();
+                    writeln!(xi, "{run},{k},{r},0.2,0.1").unwrap();
+                }
+            }
+            results::write_text(&root.join(format!("{name}.csv")), &z).unwrap();
+            results::write_text(&root.join(format!("{name}_xi.csv")), &xi).unwrap();
+            results::write_text(&root.join(format!("{name}_diagnostics.csv")), &diagnostics)
+                .unwrap();
+        }
+        let sources = ["a".to_string(), "b".to_string()];
+        analyze_field(&root, "real.csv", "combined", &sources).unwrap();
+        let tests = results::read_numeric_csv(&root.join("combined_tests.csv")).unwrap();
+        assert_eq!((tests[0]["runs"], tests[0]["bins"]), (20.0, 2.0));
+        assert!((tests[0]["hartlap"] - 16.0 / 19.0).abs() < 1e-9);
+        assert!(tests[0]["chi2_hartlap"].is_finite());
+        let true_summary =
+            results::read_numeric_csv(&root.join("combined_true_summary.csv")).unwrap();
+        assert!(
+            true_summary
+                .iter()
+                .all(|r| r["true_sem"].is_finite() && r["true_sem"] > 0.0)
+        );
+        let clipping = results::read_numeric_csv(&root.join("combined_diagnostics.csv")).unwrap();
+        assert_eq!(clipping.len(), 20);
+        assert!(clipping.iter().all(|r| r["clipped_fraction"] == 0.1));
+        assert!(
+            analyze_field(
+                &root,
+                "real.csv",
+                "duplicate",
+                &["a".to_string(), "a".to_string()]
+            )
+            .is_err()
+        );
+        // 消えた ξ の run は、三点のベクトルが完全でも結合を拒む。
+        results::write_text(
+            &root.join("b_xi.csv"),
+            "run,k,r_km,xi_true,xi_proc\n-1,0,3,0.2,\n-1,1,6,0.1,\n",
+        )
+        .unwrap();
+        assert!(analyze_field(&root, "real.csv", "missing", &sources).is_err());
+        assert!(!root.join("missing.csv").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
