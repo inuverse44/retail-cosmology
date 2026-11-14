@@ -1,0 +1,45 @@
+//! Client：二点の固まりを実際の店にそろえ、ζ がわかっている模擬データ（Neyman–Scott の模型）で、
+//! 店から作った選択関数の偏りを実際の地形の上で測る（#81）。
+//!
+//! cargo run --release --bin zeta_clustered -- 2026-11-12 --country jp --stores パス --chain COSMOS
+//!     --footprint 50 --children 5 --sigma 8 --runs 3 [--n-random 8000] [--n-ref 50000] [--seed 1] [--sides 2:32:4]
+//!
+//! --children m：親ひとつあたりの子の数。--sigma σ：子を撒く標準偏差 [km]。--runs：模擬データの数。
+//! 書くもの：data/zeta/clustered_<jp_|us_><日付>_<チェーン>_m<m>_s<σ>[_名前].csv と _xi.csv
+
+use std::path::PathBuf;
+
+use retail_cosmology::manager::three_point::{Params, clustered_mocks};
+
+fn main() {
+    let mut it = std::env::args().skip(1);
+    let mut p = Params::new(it.next().expect("日付（YYYY-MM-DD）を渡す"));
+    let (mut m, mut sigma, mut runs) = (5usize, 8.0f64, 3usize);
+    while let Some(k) = it.next() {
+        let v = it.next().expect("引数の値がない");
+        match k.as_str() {
+            "--country" => p.country = v,
+            "--stores" => p.stores = v,
+            "--chain" => p.chain = v,
+            "--n-random" => p.n_random = v.parse().unwrap(),
+            "--n-ref" => p.n_ref = v.parse().unwrap(),
+            "--seed" => p.seed = v.parse().unwrap(),
+            "--footprint" => p.footprint = Some(v.parse().unwrap()),
+            "--children" => m = v.parse().unwrap(),
+            "--sigma" => sigma = v.parse().unwrap(),
+            "--runs" => runs = v.parse().unwrap(),
+            "--sides" => {
+                let s: Vec<&str> = v.split(':').collect();
+                assert_eq!(s.len(), 3, "--sides lo:hi:n");
+                p.sides_km = (s[0].parse().unwrap(), s[1].parse().unwrap(), s[2].parse().unwrap());
+            }
+            "--tag" => p.tag = format!("_{v}"),
+            _ => panic!("知らない引数：{k}"),
+        }
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    match clustered_mocks(&root, &p, m, sigma, runs) {
+        Ok(path) => eprintln!("{path} を書いた"),
+        Err(e) => panic!("{e}"),
+    }
+}
