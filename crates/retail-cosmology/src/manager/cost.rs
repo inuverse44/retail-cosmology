@@ -9,7 +9,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::access::{population, results, stores};
-use crate::engine::pair_count::{Bins, count_auto};
+use crate::contract::Bins;
+use crate::engine::pair_count::count_auto;
 use crate::engine::random_catalog::{Weight, sample};
 use crate::engine::selection_function::{SmoothRatio, Tabulated};
 use crate::manager::correlation::N_REF;

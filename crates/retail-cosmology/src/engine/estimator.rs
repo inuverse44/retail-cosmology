@@ -319,7 +319,8 @@ pub fn chi2_sf_even(x: f64, dof: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::pair_count::{Bins, JkCounts, Regions};
+    use crate::contract::Bins;
+    use crate::engine::pair_count::{JkCounts, Regions};
     use crate::util::geo::{Xy, euclid};
     use crate::util::rng::SplitMix64;
 

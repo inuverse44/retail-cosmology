@@ -2,8 +2,7 @@
 
 use std::fmt::Write as _;
 
-use crate::contract::PairCounts;
-use crate::engine::pair_count::Bins;
+use crate::contract::{Bins, PairCounts};
 use crate::util::geo::{Xy, euclid};
 use crate::util::rng::SplitMix64;
 

@@ -87,6 +87,74 @@ pub struct Store {
     pub name: String,
 }
 
+/// 距離のビン。`edges` は狭義単調増加で、ビン k は `[edges[k], edges[k+1])`。
+/// 二点と三点の数え上げ、分散の見積もりなど、いくつもの Engine が使うのでここに置く（ADR 001、ADR 007）。
+#[derive(Clone, Debug)]
+pub struct Bins {
+    edges: Vec<f64>,
+}
+
+impl Bins {
+    pub fn new(edges: Vec<f64>) -> Self {
+        assert!(edges.len() >= 2, "ビンの端は 2 つ以上");
+        assert!(
+            edges.windows(2).all(|w| w[0] < w[1]),
+            "ビンの端は狭義単調増加"
+        );
+        Self { edges }
+    }
+
+    /// `[lo, hi)` を `n` 等分する。
+    pub fn linear(lo: f64, hi: f64, n: usize) -> Self {
+        Self::new(
+            (0..=n)
+                .map(|k| lo + (hi - lo) * k as f64 / n as f64)
+                .collect(),
+        )
+    }
+
+    /// `[lo, hi)` を対数で `n` 等分する。
+    pub fn log(lo: f64, hi: f64, n: usize) -> Self {
+        let (a, b) = (lo.ln(), hi.ln());
+        Self::new(
+            (0..=n)
+                .map(|k| (a + (b - a) * k as f64 / n as f64).exp())
+                .collect(),
+        )
+    }
+
+    /// 端を単調増加の関数 `f` で写したビン。距離の代わりに、その単調な関数で数えるときに使う。
+    pub fn map(&self, f: impl Fn(f64) -> f64) -> Self {
+        Self::new(self.edges.iter().map(|e| f(*e)).collect())
+    }
+
+    pub fn len(&self) -> usize {
+        self.edges.len() - 1
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn edges(&self) -> &[f64] {
+        &self.edges
+    }
+
+    /// ビンの中点。
+    pub fn centers(&self) -> Vec<f64> {
+        self.edges.windows(2).map(|w| 0.5 * (w[0] + w[1])).collect()
+    }
+
+    /// 距離 `r` が入るビンの番号。範囲外なら `None`。
+    pub fn index(&self, r: f64) -> Option<usize> {
+        if !(r >= self.edges[0] && r < self.edges[self.edges.len() - 1]) {
+            return None;
+        }
+        // edges[k] <= r となる最大の k
+        Some(self.edges.partition_point(|&e| e <= r) - 1)
+    }
+}
+
 /// ビンごとの DD, DR, RR と、データ数 `n_d`・ランダム数 `n_r`。
 #[derive(Clone, Debug)]
 pub struct PairCounts {
@@ -181,4 +249,20 @@ impl PopulationGrid {
 pub struct StateBoundary {
     pub state: String,
     pub rings: Vec<Vec<LatLon>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bins_index_is_half_open() {
+        let b = Bins::linear(0.0, 1.0, 4);
+        assert_eq!(b.index(0.0), Some(0));
+        assert_eq!(b.index(0.25), Some(1));
+        assert_eq!(b.index(0.999), Some(3));
+        assert_eq!(b.index(1.0), None);
+        assert_eq!(b.index(-0.1), None);
+        assert_eq!(b.index(f64::NAN), None);
+    }
 }
