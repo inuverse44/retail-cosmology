@@ -1,0 +1,18 @@
+The notes (notes/), the figures and tables (docs/figures/, docs/tables/) and the
+other prose in docs/ are licensed under the Creative Commons Attribution 4.0
+International License (CC BY 4.0).
+
+Copyright (c) 2026 Inuverse
+
+You are free to share and adapt the material for any purpose, even
+commercially, as long as you give appropriate credit, provide a link to the
+license, and indicate if changes were made.
+
+Full license text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+The figures contain or are derived from third-party data under their own
+terms: OpenStreetMap (ODbL), ABS population grid (CC BY 4.0), e-Stat census
+mesh (Government of Japan Standard Terms of Use 2.0), GHS-POP (CC BY 4.0) and
+Natural Earth (public domain). The store locations of TRIAL, SEIYU and COSMOS
+were taken from the companies' websites; the store lists themselves are not
+included in this repository. See the "データ" section of README.md.
