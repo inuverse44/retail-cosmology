@@ -2,7 +2,8 @@
 //! 重みは宇宙論の選択関数にあたる。
 
 use crate::contract::PopulationGrid;
-use crate::util::geo::LatLon;
+use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
+use crate::util::spatial::UnitGrid;
 use crate::util::rng::SplitMix64;
 
 /// ランダムカタログの格子の重み。
@@ -116,6 +117,79 @@ pub fn sample_reweighted(
     (0..n).map(|_| sp.draw(grid, rng)).collect()
 }
 
+/// 親を池から選び、その 3σ 以内からガウス重みで子を一つだけ選ぶ。
+/// 各出力点に独立な親を選ぶ。近傍に `min_neighbors` 個未満しかない親は、
+/// clustered_mocks と同じく使わない。これは重複なし m 個抽出の「最初の子」の分布。
+/// 全候補は自身を含むので、非空の池と min_neighbors=1 なら必ず抽出できる。
+pub fn sample_conditional_children(
+    pool: &[Unit],
+    spatial: &UnitGrid,
+    sigma_km: f64,
+    min_neighbors: usize,
+    n: usize,
+    rng: &mut SplitMix64,
+) -> Result<Vec<Unit>, String> {
+    if pool.is_empty()
+        || min_neighbors == 0
+        || min_neighbors > pool.len()
+        || !sigma_km.is_finite()
+        || sigma_km <= 0.0
+    {
+        return Err("条件付き抽出の池・近傍数・σが不正".into());
+    }
+    let cut = km_to_chord2(3.0 * sigma_km);
+    let two_s2 = 2.0 * km_to_chord2(sigma_km);
+    let mut out = Vec::with_capacity(n);
+    let mut attempts = 0usize;
+    while out.len() < n {
+        attempts += 1;
+        if attempts > 100_000 * n.max(1) {
+            return Err("条件付き抽出で採用できる親が少なすぎる".into());
+        }
+        let parent = pool[(rng.next_f64() * pool.len() as f64) as usize];
+        let mut near = Vec::new();
+        spatial.for_each_near(&parent, cut.sqrt(), |i| {
+            let c2 = chord2(&parent, &pool[i]);
+            if c2 < cut {
+                near.push((i, (-c2 / two_s2).exp()));
+            }
+        });
+        if near.len() < min_neighbors {
+            continue;
+        }
+        let total: f64 = near.iter().map(|x| x.1).sum();
+        let mut u = rng.next_f64() * total;
+        let mut pick = near.len() - 1;
+        for (j, x) in near.iter().enumerate() {
+            if u < x.1 {
+                pick = j;
+                break;
+            }
+            u -= x.1;
+        }
+        out.push(pool[near[pick].0]);
+    }
+    Ok(out)
+}
+
+/// 単位球面上の点を、人口格子と同じ約 10 km の粗い格子に数える。
+pub fn count_coarse_cells(
+    points: &[Unit],
+    geometry: &crate::util::grid::GridGeometry,
+) -> std::collections::BTreeMap<u64, u64> {
+    let mut counts = std::collections::BTreeMap::new();
+    for u in points {
+        let q = LatLon {
+            lat: u.0[2].clamp(-1.0, 1.0).asin().to_degrees(),
+            lon: u.0[1].atan2(u.0[0]).to_degrees(),
+        };
+        if let Some((key, _)) = geometry.coarse_cell(&q) {
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    counts
+}
+
 /// 選択関数をかけて撒いた結果。
 pub struct Selected {
     pub points: Vec<LatLon>,
@@ -180,6 +254,69 @@ mod tests {
     use super::*;
     use crate::util::albers::Albers;
     use crate::util::grid::{GridGeometry, Projection};
+
+    #[test]
+    fn conditional_children_follow_the_parent_normalized_kernel() {
+        // 非一様な有限の池。親を平均した厳密な一点の確率と比較する。
+        let pool: Vec<Unit> = [0.0, 0.01, 0.04, 0.09]
+            .iter()
+            .map(|lon| {
+                Unit::from(&LatLon {
+                    lat: 33.0,
+                    lon: 130.0 + lon,
+                })
+            })
+            .collect();
+        let sigma = 4.0;
+        let cut = km_to_chord2(3.0 * sigma);
+        let spatial = UnitGrid::build(&pool, cut.sqrt());
+        let mut exact = vec![0.0; pool.len()];
+        for parent in &pool {
+            let weights: Vec<_> = pool
+                .iter()
+                .map(|q| {
+                    let c2 = chord2(parent, q);
+                    if c2 < cut {
+                        (-c2 / (2.0 * km_to_chord2(sigma))).exp()
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            let total: f64 = weights.iter().sum();
+            for (p, w) in exact.iter_mut().zip(weights) {
+                *p += w / total / pool.len() as f64;
+            }
+        }
+        let mut rng = SplitMix64::new(91);
+        let draws =
+            sample_conditional_children(&pool, &spatial, sigma, 1, 80_000, &mut rng).unwrap();
+        let mut counts = vec![0usize; pool.len()];
+        for q in draws {
+            counts[pool.iter().position(|p| *p == q).unwrap()] += 1;
+        }
+        for (count, p) in counts.iter().zip(exact) {
+            assert!((*count as f64 / 80_000.0 - p).abs() < 0.006);
+        }
+    }
+
+    #[test]
+    fn conditional_children_reject_parents_with_too_few_neighbors() {
+        let pool: Vec<Unit> = [130.0, 130.001, 140.0]
+            .iter()
+            .map(|lon| {
+                Unit::from(&LatLon {
+                    lat: 33.0,
+                    lon: *lon,
+                })
+            })
+            .collect();
+        let spatial = UnitGrid::build(&pool, km_to_chord2(3.0).sqrt());
+        let mut rng = SplitMix64::new(8);
+        let out = sample_conditional_children(&pool, &spatial, 1.0, 2, 500, &mut rng).unwrap();
+        assert!(out.iter().all(|q| *q == pool[0] || *q == pool[1]));
+        assert!(sample_conditional_children(&pool, &spatial, 1.0, 4, 1, &mut rng).is_err());
+    }
 
     fn tiny() -> PopulationGrid {
         // 2 × 2 の格子：左上は海、右上は無人、左下に 1 人、右下に 3 人
