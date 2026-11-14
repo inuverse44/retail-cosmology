@@ -1,9 +1,9 @@
 import Mathlib.Probability.Distributions.Poisson.Basic
 
 /-!
-# DD の分散（ノート `notes/retail-cosmology.tex` の付録 B）
+# DD の分散（ノート `notes/retail-cosmology.tex` の付録「DD の分散」）
 
-ノートの付録 B の導出のうち、式の形を検証する（ADR 003）。
+ノートの付録「DD の分散」の導出のうち、式の形を検証する（ADR 003）。
 関係ごとの期待値 `Gp`、`Gt`、`Gq` は実数の変数として受け取る。
 点が独立に撒かれていれば期待値がこれらの値になる、という模型の部分は扱わない。
 
