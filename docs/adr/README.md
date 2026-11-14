@@ -11,6 +11,7 @@
 | [003](003-lean-proofs-in-repo.md) | ノートの式の導出を Lean で検証し、証明はこのリポジトリの lean/ に置く | Superseded by ADR 005 |
 | [004](004-figure-style.md) | ノートの図の体裁を一か所で決め、本文と同じ処理系で組む | Accepted |
 | [005](005-lean-model-in-scope.md) | 点を独立に撒く模型から、分散の式までを Lean で検証する | Accepted |
+| [006](006-notes-sources-and-build-dir.md) | notes/ にはノートのソースと PDF だけを置き、中間ファイルは notes/build/ に出す | Accepted |
 
 ## 書き方
 

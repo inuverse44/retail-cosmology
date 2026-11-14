@@ -1,0 +1,82 @@
+% 「スーパーの店舗分布の二点相関関数」（notes/retail-cosmology.tex）の先の研究のノート。
+% 扱うこと：九州の主な小売チェーンを並べて比べる（Issue #76）、店舗の三点相関関数（Issue #81）。
+% 組み方：cd notes && latexmk retail-cosmology-beyond.tex（中間ファイルは notes/build/、ADR 006）
+\documentclass[a4paper,11pt]{ltjsarticle}
+
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  allcolors=blue!50!black,
+  bookmarksnumbered=true,
+  pdftitle={店舗分布の三点相関関数},
+}
+
+\graphicspath{{../docs/figures/}}
+\renewcommand{\abstractname}{要旨}
+
+\newcommand{\repourl}{https://github.com/inuverse44/retail-cosmology}
+\definecolor{codecolor}{RGB}{0,95,135}
+\newcommand{\code}[1]{\textcolor{codecolor}{\texttt{#1}}}
+
+% 題は仮。九州のチェーンの比較も入るので、中身がそろったら決め直す。
+\title{\textbf{店舗分布の三点相関関数}}
+\author{Inuverse}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+準備中。
+\end{abstract}
+
+\clearpage
+\tableofcontents
+\clearpage
+
+\section{序論}
+\label{sec:intro}
+% 前のノート（二点相関）の結果から始める：トライアルの 3–25 km の固まり、西友の数キロの固まり、
+% Walmart の 5 km より近くの欠け、コスモスの固まりが九州の外から来ること。
+% 二点相関は組の距離しか見ないので、固まりの形（丸い塊か、一列か、大型店のまわりの衛星か）は区別できない。
+% 問い：(1) 三点相関で固まりの形がわかるか。(2) 九州の主なチェーンを並べると、並び方はどう違うか。
+% 最後に構成の段落。
+
+\section{枠組み}
+\label{sec:framework}
+
+\subsection{三点相関関数}
+\label{sec:3pcf}
+% 定義、三角形の取り方（r1, r2, θ）、reduced 三点相関 Q。
+% 直感の図：丸い塊・一列・衛星の三つの並び方で、三角形の形の分布がどう変わるか。
+
+\subsection{推定量}
+\label{sec:3pcf-estimator}
+% Szapudi--Szalay の推定量（DDD − 3DDR + 3DRR − RRR）/RRR。Landy--Szalay の三点版。
+% θ について平均した低次の量（ルジャンドル展開）でノイズを抑える。
+
+\subsection{多くの組を比べるときの判断}
+\label{sec:global-envelope}
+% n 社なら二社の組が n(n−1)/2。偶然「有意」に見える組を抑える。全体の包絡線検定。
+
+\section{データ}
+\label{sec:data}
+% 九州の主な小売チェーン。店の数の目安（誤差 ∝ n^−0.6）と、どこまで言えるか。
+
+\section{結果}
+\label{sec:results}
+
+\section{結論と議論}
+\label{sec:conclusion}
+
+% 最初の \cite を書いたらコメントを外す（文献は notes/references.bib を前のノートと共有する）。
+% \bibliographystyle{unsrtnat}
+% \bibliography{references}
+
+\end{document}
