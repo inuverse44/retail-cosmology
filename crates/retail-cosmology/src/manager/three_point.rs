@@ -455,6 +455,180 @@ pub fn selection_bias_toy(root: &Path, runs: usize) -> Result<String, Box<dyn st
     Ok(path)
 }
 
+/// 親を `patch` のまわりに幅 `margin_sd` × `s` km 広げた範囲に撒き（親の密度は `patch` の中で `n_p` 個になる割合）、
+/// 子は `patch` の中に落ちたものだけを残す。窓で切り取った、境界のない Neyman–Scott の模型にあたる。
+/// 返すのは点と、それぞれの点の親の番号。
+fn patch_clustered_windowed(
+    n_p: usize,
+    m: usize,
+    s: f64,
+    margin_sd: f64,
+    patch: Patch,
+    rng: &mut SplitMix64,
+) -> (Vec<LatLon>, Vec<usize>) {
+    let (lat0, dlat, lon0, dlon) = patch;
+    let mlat = margin_sd * s / 111.2;
+    let mlon = margin_sd * s / (111.2 * lat0.to_radians().cos());
+    let ext: Patch = (lat0 - mlat, dlat + 2.0 * mlat, lon0 - mlon, dlon + 2.0 * mlon);
+    let n_ext = (n_p as f64 * ext.1 * ext.3 / (dlat * dlon)).round() as usize;
+    let all = patch_clustered(n_ext, m, s, ext, rng);
+    let inside = |q: &LatLon| q.lat >= lat0 && q.lat < lat0 + dlat && q.lon >= lon0 && q.lon < lon0 + dlon;
+    let mut pts = Vec::new();
+    let mut parent = Vec::new();
+    for (i, q) in all.iter().enumerate() {
+        if inside(q) {
+            pts.push(*q);
+            parent.push(i / m);
+        }
+    }
+    (pts, parent)
+}
+
+/// 親の番号 `parent` が同じ三点の三角形を、ビンごとに数える（`parent` は親ごとに続けて並んでいるとする）。
+fn same_parent_triples_labeled(d: &[Unit], parent: &[usize], bins: &TriangleBins) -> Vec<u64> {
+    let mut out = vec![0u64; bins.len()];
+    let mut start = 0;
+    while start < d.len() {
+        let mut end = start + 1;
+        while end < d.len() && parent[end] == parent[start] {
+            end += 1;
+        }
+        let g = &d[start..end];
+        for i in 0..g.len() {
+            for j in i + 1..g.len() {
+                for k in j + 1..g.len() {
+                    if let Some(b) = bins.index(chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k])) {
+                        out[b] += 1;
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    out
+}
+
+/// 一様な基準でも ζ̂ が見込みより低く出る原因を、toy model の境界で確かめる（#81）。
+///
+/// `selection_bias_toy` と同じ親・子・範囲・ビン・ランダムカタログで、模擬データを二通りに作る。
+/// - leaky：親を範囲の中だけに撒き、子は範囲の外にも落ちる（`selection_bias_toy` と同じ）。
+///   範囲の縁では子の密度が下がるが、ランダムカタログは範囲の中で一様なので、縁が「店の少ない場所」に見える。
+/// - windowed：親を範囲の外 4σ まで撒き、範囲の中に落ちた子だけを残す。縁でも密度は下がらない。
+///
+/// 一回ごとに ζ̂ − 見込み（同じ点で求めるので、対にして差をとる）を求め、ビンごとに平均と平均の誤差を書く。
+/// 書くもの：data/toy/zeta_edge.csv
+pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error>> {
+    use crate::engine::triple_count::{count_aaa, count_aab};
+    let t0 = Instant::now();
+    let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    let sides_km = Bins::log(2.0, 32.0, 4);
+    let bins = TriangleBins::new(sides_km.map(km_to_chord2));
+    let c = sides_km.centers();
+    let (n_p, m, s_km, n_r) = (350, 5, 5.0, 8_000);
+
+    let mut rng = SplitMix64::new(13);
+    let r = units(&patch_uniform(n_r, LARGE_PATCH, &mut rng));
+    // RRR は一回ごとに変わらないので一度だけ数える
+    let rrr = count_aaa(&r, &bins);
+    let measure = |d: &[Unit]| -> Vec<f64> {
+        TripleCounts {
+            n_d: d.len(),
+            n_r: r.len(),
+            ddd: count_aaa(d, &bins),
+            ddr: count_aab(d, &r, &bins),
+            drr: count_aab(&r, d, &bins),
+            rrr: rrr.clone(),
+        }
+        .szapudi_szalay()
+    };
+    let expected = |same: &[u64], n_d: usize, b: usize| same[b] as f64 / (rrr[b] as f64 * c3(n_d as f64) / c3(n_r as f64));
+
+    // ビンごとに、一回ごとの (見込み, ζ̂ − 見込み) を、leaky と windowed で集める
+    let mut leaky: Vec<Vec<(f64, f64)>> = vec![Vec::new(); bins.len()];
+    let mut windowed: Vec<Vec<(f64, f64)>> = vec![Vec::new(); bins.len()];
+    let mut n_win = 0usize;
+    for run in 0..runs {
+        let d = units(&patch_clustered(n_p, m, s_km, LARGE_PATCH, &mut rng));
+        let z = measure(&d);
+        let same = same_parent_triples(&d, m, &bins);
+        let (dw, parent) = patch_clustered_windowed(n_p, m, s_km, 4.0, LARGE_PATCH, &mut rng);
+        let dw = units(&dw);
+        n_win += dw.len();
+        let zw = measure(&dw);
+        let same_w = same_parent_triples_labeled(&dw, &parent, &bins);
+        for b in bins.used() {
+            if rrr[b] == 0 {
+                continue;
+            }
+            let e = expected(&same, d.len(), b);
+            leaky[b].push((e, z[b] - e));
+            let ew = expected(&same_w, dw.len(), b);
+            windowed[b].push((ew, zw[b] - ew));
+        }
+        eprintln!("{} 回目（{:.1} 秒）", run + 1, t0.elapsed().as_secs_f64());
+    }
+    eprintln!("windowed の点の数の平均：{:.0}（leaky は {}）", n_win as f64 / runs as f64, n_p * m);
+
+    let mean_err = |v: &[f64]| {
+        let n = v.len() as f64;
+        let mu = v.iter().sum::<f64>() / n;
+        let sd = (v.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        (mu, sd / n.sqrt())
+    };
+    let mut out = String::from("model,k1,k2,k3,r1_km,r2_km,r3_km,runs,expected_mean,diff_mean,diff_err\n");
+    // ノートの表（ビンごとに、windowed の見込みと、二通りの ζ̂ − 見込み）
+    let mut tex = format!(
+        "% cargo run --release --bin zeta_edge_toy -- {runs} が書いた表\n\\begin{{tabular}}{{rrrrrr}}\n\\toprule\n\
+         \\multicolumn{{3}}{{c}}{{三辺 [km]}} & 見込み & \\multicolumn{{2}}{{c}}{{$\\hat\\zeta - $ 見込み}} \\\\\n\
+         & & & & 縁で薄い & 縁で薄くない \\\\\n\\midrule\n"
+    );
+    for b in bins.used() {
+        if leaky[b].len() < 2 || windowed[b].len() < 2 {
+            continue;
+        }
+        let (x, y, z) = bins.unflatten(b);
+        let (em, _) = mean_err(&windowed[b].iter().map(|t| t.0).collect::<Vec<_>>());
+        let (lm, le) = mean_err(&leaky[b].iter().map(|t| t.1).collect::<Vec<_>>());
+        let (wm, we) = mean_err(&windowed[b].iter().map(|t| t.1).collect::<Vec<_>>());
+        writeln!(
+            tex,
+            "{:.0} & {:.0} & {:.0} & ${em:.3}$ & ${lm:+.3} \\pm {le:.3}$ & ${wm:+.3} \\pm {we:.3}$ \\\\",
+            c[x], c[y], c[z]
+        )?;
+    }
+    tex.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_edge.tex"), &tex)?;
+    for (name, per_bin) in [("leaky", &leaky), ("windowed", &windowed)] {
+        let (mut neg, mut beyond2, mut total) = (0, 0, 0);
+        for b in bins.used() {
+            let v = &per_bin[b];
+            if v.len() < 2 {
+                continue;
+            }
+            let (x, y, z) = bins.unflatten(b);
+            let (em, _) = mean_err(&v.iter().map(|t| t.0).collect::<Vec<_>>());
+            let (dm, de) = mean_err(&v.iter().map(|t| t.1).collect::<Vec<_>>());
+            total += 1;
+            neg += (dm < 0.0) as usize;
+            beyond2 += (dm.abs() > 2.0 * de) as usize;
+            writeln!(
+                out,
+                "{name},{x},{y},{z},{:.3},{:.3},{:.3},{},{em:.6},{dm:.6},{de:.6}",
+                c[x],
+                c[y],
+                c[z],
+                v.len()
+            )?;
+        }
+        // 本文に書くビンの数は手で数えず、ここで数える（振り返り 2026-11-14 の T-03）
+        eprintln!("{name}：ビン {total} 個、ζ̂ − 見込みが負 {neg}、平均の誤差の 2 倍を超える {beyond2}");
+    }
+    let path = "data/toy/zeta_edge.csv".to_string();
+    results::write_text(&root.join(&path), &out)?;
+    Ok(path)
+}
+
 /// 二点の固まりを実際の店にそろえ、ζ がわかっている模擬データ（Neyman–Scott の模型）を作り、
 /// 選択関数の偏りを実際の地形の上で測る（#81）。
 ///
