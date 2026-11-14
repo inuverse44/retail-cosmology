@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::contract::{BinValue, Chi2Record};
+use crate::contract::{BinValue, Chi2Record, ZetaRow};
 
 /// 文字列をファイルに書く。親のフォルダがなければ作る。
 pub fn write_text(path: &Path, text: &str) -> std::io::Result<()> {
@@ -30,6 +30,32 @@ pub fn read_bins(path: &Path) -> std::io::Result<Vec<BinValue>> {
     let mut lines = text.lines();
     let mock = lines.next().is_some_and(|h| h.starts_with("seed,"));
     Ok(lines.filter_map(|l| parse_bin_line(l, mock)).collect())
+}
+
+/// zeta が書いた CSV（k1,k2,k3,r1_km,r2_km,r3_km,ddd,ddr,drr,rrr,zeta）を読む。ζ が NaN の行（使わないビン）は飛ばす。
+pub fn read_zeta(path: &Path) -> std::io::Result<Vec<ZetaRow>> {
+    Ok(std::fs::read_to_string(path)?
+        .lines()
+        .skip(1)
+        .filter_map(parse_zeta_line)
+        .collect())
+}
+
+fn parse_zeta_line(line: &str) -> Option<ZetaRow> {
+    let f: Vec<&str> = line.split(',').collect();
+    if f.len() != 11 {
+        return None;
+    }
+    let zeta: f64 = f[10].parse().ok()?;
+    if zeta.is_nan() {
+        return None;
+    }
+    Some(ZetaRow {
+        k: (f[0].parse().ok()?, f[1].parse().ok()?, f[2].parse().ok()?),
+        r_km: (f[3].parse().ok()?, f[4].parse().ok()?, f[5].parse().ok()?),
+        ddd: f[6].parse().ok()?,
+        zeta,
+    })
 }
 
 fn parse_bin_line(line: &str, mock: bool) -> Option<BinValue> {
