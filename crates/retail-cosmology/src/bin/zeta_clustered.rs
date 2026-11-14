@@ -7,6 +7,8 @@
 //! --children m：親ひとつあたりの子の数。--sigma σ：子を撒く標準偏差 [km]。--runs：模擬データの数。
 //! 書くもの：data/zeta/clustered_<jp_|us_><日付>_<チェーン>_m<m>_s<σ>[_名前].csv と _xi.csv
 
+//! --match on：親ごとに子を一つ選ぶ独立の基準を追加。新規の --tag が必要。
+
 use std::path::PathBuf;
 
 use retail_cosmology::manager::three_point::{Params, clustered_mocks};
@@ -24,6 +26,7 @@ fn main() {
             "--n-random" => p.n_random = v.parse().unwrap(),
             "--n-ref" => p.n_ref = v.parse().unwrap(),
             "--seed" => p.seed = v.parse().unwrap(),
+            "--match" => p.match_density = v == "on",
             "--footprint" => p.footprint = Some(v.parse().unwrap()),
             "--children" => m = v.parse().unwrap(),
             "--sigma" => sigma = v.parse().unwrap(),
@@ -31,7 +34,11 @@ fn main() {
             "--sides" => {
                 let s: Vec<&str> = v.split(':').collect();
                 assert_eq!(s.len(), 3, "--sides lo:hi:n");
-                p.sides_km = (s[0].parse().unwrap(), s[1].parse().unwrap(), s[2].parse().unwrap());
+                p.sides_km = (
+                    s[0].parse().unwrap(),
+                    s[1].parse().unwrap(),
+                    s[2].parse().unwrap(),
+                );
             }
             "--tag" => p.tag = format!("_{v}"),
             _ => panic!("知らない引数：{k}"),

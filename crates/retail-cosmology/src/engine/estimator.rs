@@ -340,8 +340,84 @@ pub fn chi2_sf_even(x: f64, dof: usize) -> f64 {
     (-h).exp() * s
 }
 
+/// 大きな基準標本（pool）と独立に撒いた match 二群の、同じ格子上の密度比の診断。
+/// 比の重みは pool の個数。二群の相互積は、match の標本雑音の自己積を含まない。
+pub struct DensityRatioSummary {
+    pub cells: usize,
+    pub mass_fraction: f64,
+    pub mean: f64,
+    pub variance: f64,
+    pub cross_mse: f64,
+    pub q10: f64,
+    pub q50: f64,
+    pub q90: f64,
+}
+
+pub fn density_ratio_summary(
+    pool: &[u64],
+    a: &[u64],
+    b: &[u64],
+    min_pool: u64,
+) -> DensityRatioSummary {
+    assert_eq!(pool.len(), a.len());
+    assert_eq!(pool.len(), b.len());
+    let np = pool.iter().sum::<u64>() as f64;
+    let na = a.iter().sum::<u64>() as f64;
+    let nb = b.iter().sum::<u64>() as f64;
+    assert!(np > 0.0 && na > 0.0 && nb > 0.0);
+    let mut ratios = Vec::new();
+    let (mut weight, mut num, mut num2, mut cross) = (0.0, 0.0, 0.0, 0.0);
+    for ((&p, &ca), &cb) in pool.iter().zip(a).zip(b) {
+        if p == 0 || p < min_pool {
+            continue;
+        }
+        let w = p as f64 / np;
+        let (ga, gb) = (ca as f64 / (na * w), cb as f64 / (nb * w));
+        let g = (ca + cb) as f64 / ((na + nb) * w);
+        weight += w;
+        num += w * g;
+        num2 += w * g * g;
+        cross += w * (ga - 1.0) * (gb - 1.0);
+        ratios.push((g, w));
+    }
+    assert!(weight > 0.0);
+    ratios.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let quantile = |q: f64| {
+        let mut cumulative = 0.0;
+        for (g, w) in &ratios {
+            cumulative += w;
+            if cumulative >= q * weight {
+                return *g;
+            }
+        }
+        ratios.last().unwrap().0
+    };
+    DensityRatioSummary {
+        cells: ratios.len(),
+        mass_fraction: weight,
+        mean: num / weight,
+        variance: (num2 / weight - (num / weight).powi(2)).max(0.0),
+        cross_mse: cross / weight,
+        q10: quantile(0.1),
+        q50: quantile(0.5),
+        q90: quantile(0.9),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_density_ratio_recovers_a_known_modulation_and_removes_self_noise() {
+        let d = super::density_ratio_summary(&[100, 100], &[150, 50], &[150, 50], 20);
+        assert_eq!(d.cells, 2);
+        assert!((d.mean - 1.0).abs() < 1e-12);
+        assert!((d.variance - 0.25).abs() < 1e-12);
+        assert!((d.cross_mse - 0.25).abs() < 1e-12);
+        let noise = super::density_ratio_summary(&[100, 100], &[120, 80], &[80, 120], 20);
+        assert!(noise.variance.abs() < 1e-12);
+        assert!((noise.cross_mse + 0.04).abs() < 1e-12);
+    }
+
     use super::*;
     use crate::contract::Bins;
     use crate::engine::pair_count::{JkCounts, Regions};
@@ -374,12 +450,20 @@ mod tests {
     /// 辺が `lo`–`hi` km の三角形を一つのビンにまとめる。
     fn one_triangle_bin(lo: f64, hi: f64) -> crate::engine::triple_count::TriangleBins {
         use crate::util::geo::km_to_chord2;
-        crate::engine::triple_count::TriangleBins::new(Bins::new(vec![km_to_chord2(lo), km_to_chord2(hi)]))
+        crate::engine::triple_count::TriangleBins::new(Bins::new(vec![
+            km_to_chord2(lo),
+            km_to_chord2(hi),
+        ]))
     }
 
     /// 親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く（Neyman–Scott の模型）。
     /// 子は親ごとに続けて並ぶ（番号 c·m から m 個が親 c の子）。
-    fn clustered(n_p: usize, m: usize, s: f64, rng: &mut SplitMix64) -> Vec<crate::util::geo::LatLon> {
+    fn clustered(
+        n_p: usize,
+        m: usize,
+        s: f64,
+        rng: &mut SplitMix64,
+    ) -> Vec<crate::util::geo::LatLon> {
         let parents = uniform_patch(n_p, rng);
         let mut out = Vec::with_capacity(n_p * m);
         for p in &parents {
@@ -429,7 +513,11 @@ mod tests {
                 for i in 0..m {
                     for j in i + 1..m {
                         for k in j + 1..m {
-                            let (cij, cik, cjk) = (chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k]));
+                            let (cij, cik, cjk) = (
+                                chord2(&g[i], &g[j]),
+                                chord2(&g[i], &g[k]),
+                                chord2(&g[j], &g[k]),
+                            );
                             if bins.index(cij, cik, cjk).is_some() {
                                 same += 1;
                             }
@@ -444,9 +532,14 @@ mod tests {
         let (mz, mp) = (mean(&zs), mean(&preds));
         let sd = (zs.iter().map(|z| (z - mz).powi(2)).sum::<f64>() / (runs as f64 - 1.0)).sqrt();
         let tol = 3.0 * sd / (runs as f64).sqrt();
-        eprintln!("clustered toy: ζ の平均 {mz:.3}、見込み {mp:.3}、1 回のばらつき {sd:.3}、許す幅 {tol:.3}");
+        eprintln!(
+            "clustered toy: ζ の平均 {mz:.3}、見込み {mp:.3}、1 回のばらつき {sd:.3}、許す幅 {tol:.3}"
+        );
         assert!(mp > 1.0, "見込みの ζ が小さすぎて確かめにならない：{mp}");
-        assert!((mz - mp).abs() < tol, "ζ の平均 {mz}、見込み {mp}、許す幅 {tol}（1 回のばらつき {sd}）");
+        assert!(
+            (mz - mp).abs() < tol,
+            "ζ の平均 {mz}、見込み {mp}、許す幅 {tol}（1 回のばらつき {sd}）"
+        );
     }
 
     fn uniform(n: usize, rng: &mut SplitMix64) -> Vec<Xy> {

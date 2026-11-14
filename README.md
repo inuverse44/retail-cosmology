@@ -10,6 +10,7 @@
 - 概要の記事：[inuverse.dev](https://inuverse.dev/posts/2026-11-08-retail-cosmology/)
 - 計算量のノート：[`notes/algorithm-cost.pdf`](notes/algorithm-cost.pdf)
 - 先の研究のノート（書きかけ。三点相関関数、九州の主なチェーンの比較）：[`notes/retail-cosmology-beyond.pdf`](notes/retail-cosmology-beyond.pdf)
+- 丸い塊の模擬データの一点密度の診断：[実験記録と再現手順](docs/experiments/mock-density-81.md)
 - 発表：[TRIAL＆RetailAI Advent Calendar 2026](https://qiita.com/advent-calendar/2026/trial-retail-ai) の 12 月 23 日
 
 ## 結果の要点
