@@ -18,7 +18,7 @@ use crate::engine::selection_function::{
     SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
 };
 use crate::engine::triple_count::TriangleBins;
-use crate::util::geo::{LatLon, Unit, km_to_chord2};
+use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
 use crate::util::rng::SplitMix64;
 
 /// 測り方の設定。
@@ -223,6 +223,84 @@ pub fn run(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>
     );
     results::write_text(&root.join(&path), &out)?;
     eprintln!("{path} を書いた（全体 {:.1} 秒）", t0.elapsed().as_secs_f64());
+    Ok(path)
+}
+
+/// 北緯 33–34 度、東経 130–131.2 度（約 110 km 四方）に一様に撒いた点。
+fn toy_uniform(n: usize, rng: &mut SplitMix64) -> Vec<LatLon> {
+    (0..n)
+        .map(|_| LatLon {
+            lat: 33.0 + rng.next_f64(),
+            lon: 130.0 + 1.2 * rng.next_f64(),
+        })
+        .collect()
+}
+
+/// 親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く（Neyman–Scott の模型）。
+/// 子は親ごとに続けて並ぶ。
+fn toy_clustered(n_p: usize, m: usize, s: f64, rng: &mut SplitMix64) -> Vec<LatLon> {
+    let parents = toy_uniform(n_p, rng);
+    let mut out = Vec::with_capacity(n_p * m);
+    for p in &parents {
+        for _ in 0..m {
+            let (u1, u2) = (rng.next_f64().max(1e-12), rng.next_f64());
+            let r = s * (-2.0 * u1.ln()).sqrt();
+            let a = std::f64::consts::TAU * u2;
+            out.push(LatLon {
+                lat: p.lat + r * a.sin() / 111.2,
+                lon: p.lon + r * a.cos() / (111.2 * p.lat.to_radians().cos()),
+            });
+        }
+    }
+    out
+}
+
+/// toy model で推定量を確かめ、data/toy/zeta_toy.csv に一回ごとの ζ を書く。
+/// - uniform：一様な 600 点、辺 2–20 km の一つのビン。見込みは 0。
+/// - neyman_scott：親 60 個のまわりに標準偏差 2 km で 10 個ずつ子を撒いた点、辺 1–6 km の一つのビン。
+///   見込みは「三点が同じ親の子である三角形の数 ÷ 一様に撒いたときに見込まれる三角形の数」（一回ごとに求める）。
+///
+/// ランダムカタログは同じ範囲に一様な 2000 点。engine::estimator のテストと同じ設定で、種も同じ（11 と 12）。
+pub fn toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error>> {
+    let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    let one_bin = |lo: f64, hi: f64| TriangleBins::new(Bins::new(vec![km_to_chord2(lo), km_to_chord2(hi)]));
+    let mut out = String::from("model,run,zeta,expected\n");
+
+    let mut rng = SplitMix64::new(11);
+    let bins = one_bin(2.0, 20.0);
+    for run in 0..runs {
+        let d = units(&toy_uniform(600, &mut rng));
+        let r = units(&toy_uniform(2000, &mut rng));
+        let z = TripleCounts::compute(&d, &r, &bins).szapudi_szalay()[0];
+        writeln!(out, "uniform,{run},{z:.6},0")?;
+    }
+
+    let mut rng = SplitMix64::new(12);
+    let bins = one_bin(1.0, 6.0);
+    let r = units(&toy_uniform(2000, &mut rng));
+    let m = 10;
+    for run in 0..runs {
+        let d = units(&toy_clustered(60, m, 2.0, &mut rng));
+        let t = TripleCounts::compute(&d, &r, &bins);
+        let mut same = 0u64;
+        for g in d.chunks(m) {
+            for i in 0..m {
+                for j in i + 1..m {
+                    for k in j + 1..m {
+                        let c = (chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k]));
+                        if bins.index(c.0, c.1, c.2).is_some() {
+                            same += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let base = t.rrr[0] as f64 * c3(d.len() as f64) / c3(r.len() as f64);
+        writeln!(out, "neyman_scott,{run},{:.6},{:.6}", t.szapudi_szalay()[0], same as f64 / base)?;
+    }
+    let path = "data/toy/zeta_toy.csv".to_string();
+    results::write_text(&root.join(&path), &out)?;
     Ok(path)
 }
 
