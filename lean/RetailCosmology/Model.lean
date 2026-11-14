@@ -5,7 +5,7 @@ import Mathlib.MeasureTheory.Integral.Pi
 import Mathlib.MeasureTheory.Integral.Prod
 
 /-!
-# 点を独立に撒く模型（ノート `notes/retail-cosmology.tex` の付録 B、ADR 005）
+# 点を独立に撒く模型（ノート `notes/retail-cosmology.tex` の付録「DD の分散」、ADR 005）
 
 `n` 個の点が、同じ確率分布 `μ` から独立に撒かれる。確率空間は直積 `Fin n → E` に
 直積測度 `Measure.pi (fun _ => μ)` を入れたもので、点 `i` の位置は座標 `ω i` である。

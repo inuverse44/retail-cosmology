@@ -1,6 +1,6 @@
 # lean/
 
-ノート（`notes/retail-cosmology.tex`）の付録 B で導いた $DD$ の分散の式を、Lean 4 と Mathlib で検証する。
+ノート（`notes/retail-cosmology.tex`）の付録「DD の分散」で導いた $DD$ の分散の式を、Lean 4 と Mathlib で検証する。
 置き場所は [ADR 003](../docs/adr/003-lean-proofs-in-repo.md)、検証の範囲（点を独立に撒く模型から）は [ADR 005](../docs/adr/005-lean-model-in-scope.md) に書いた。
 
 ## 動かす
@@ -39,5 +39,5 @@ Lean のバージョンは `lean-toolchain`、Mathlib のバージョンは `lak
 ## 検証していないこと
 
 - $G_p$ と $G_t$ の数値と、模型（点を独立に撒く）が店の分布に合うかどうか。これは Rust（`engine::variance`、`manager::variance`）で扱う。
-- 付録 B の本文の近似（ビンの距離が短いとき $f(\bm{x}) \simeq A\,p(\bm{x})$）は、式のラベルのない定性的な説明で、検証していない。
-- 付録 B の外（推定量 $\hat\xi_{\mathrm{LS}}$ の分散など）は、まだ対象にしていない（ADR 005 で決めないことにしたもの）。
+- 付録「DD の分散」の本文の近似（ビンの距離が短いとき $f(\bm{x}) \simeq A\,p(\bm{x})$）は、式のラベルのない定性的な説明で、検証していない。
+- 付録「DD の分散」の外（推定量 $\hat\xi_{\mathrm{LS}}$ の分散など）は、まだ対象にしていない（ADR 005 で決めないことにしたもの）。

@@ -1,4 +1,4 @@
-"""オーストラリアの店について、ξ の jackknife の誤差と、DD の分散の式（ノートの付録 B）を比べる図を描く。
+"""オーストラリアの店について、ξ の jackknife の誤差と、DD の分散の式（ノートの付録「DD の分散」）を比べる図を描く。
 
 cargo run --release --bin xi -- 2026-11-01
 cargo run --release --bin var_dd -- 2026-11-01
