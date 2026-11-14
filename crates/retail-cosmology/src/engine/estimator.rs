@@ -1,7 +1,7 @@
 //! Engine：推定量と誤差。対の数から二点相関関数の推定量を求め、jackknife で誤差をつけ、
 //! 共分散を使って χ² と、ビンをまとめた値（単純な平均に jackknife の誤差、ADR 002）を求める。
 
-use crate::contract::{CrossPairCounts, PairCounts};
+use crate::contract::{CrossPairCounts, PairCounts, TripleCounts};
 
 impl PairCounts {
     /// 全対数で割った (dd, dr, rr)。全対数は n_d(n_d-1)/2, n_d n_r, n_r(n_r-1)/2。
@@ -69,6 +69,30 @@ impl CrossPairCounts {
                 let d2r1 = self.d2r1[b] as f64 / (n2 * m1);
                 let r1r2 = self.r1r2[b] as f64 / self.n_r1r2;
                 (d1d2 - d1r2 - d2r1 + r1r2) / r1r2
+            })
+            .collect()
+    }
+}
+
+impl TripleCounts {
+    /// 三点相関関数の Szapudi–Szalay の推定量：(ddd − 3 ddr + 3 drr − rrr) / rrr（ADR 007）。
+    /// それぞれ全三つ組の数 C(n_d,3)、C(n_d,2) n_r、n_d C(n_r,2)、C(n_r,3) で割った値。
+    /// 三角形のビンは頂点を区別しない（辺のビンを小さい順に並べた組）ので、係数 3 がそのまま使える。
+    /// rrr が 0 のビン（使わない番号を含む）は NaN。
+    pub fn szapudi_szalay(&self) -> Vec<f64> {
+        let (nd, nr) = (self.n_d as f64, self.n_r as f64);
+        let c2 = |n: f64| n * (n - 1.0) / 2.0;
+        let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+        (0..self.ddd.len())
+            .map(|b| {
+                if self.rrr[b] == 0 {
+                    return f64::NAN;
+                }
+                let ddd = self.ddd[b] as f64 / c3(nd);
+                let ddr = self.ddr[b] as f64 / (c2(nd) * nr);
+                let drr = self.drr[b] as f64 / (nd * c2(nr));
+                let rrr = self.rrr[b] as f64 / c3(nr);
+                (ddd - 3.0 * ddr + 3.0 * drr - rrr) / rrr
             })
             .collect()
     }
@@ -321,7 +345,7 @@ mod tests {
     use super::*;
     use crate::contract::Bins;
     use crate::engine::pair_count::{JkCounts, Regions};
-    use crate::util::geo::{Xy, euclid};
+    use crate::util::geo::{Xy, chord2, euclid};
     use crate::util::rng::SplitMix64;
 
     fn uniform_square(n: usize, rng: &mut SplitMix64) -> Vec<Xy> {
@@ -331,6 +355,98 @@ mod tests {
                 y: rng.next_f64(),
             })
             .collect()
+    }
+
+    /// 北緯 33–34 度、東経 130–131.2 度（約 110 km 四方）に一様に撒いた点。
+    fn uniform_patch(n: usize, rng: &mut SplitMix64) -> Vec<crate::util::geo::LatLon> {
+        (0..n)
+            .map(|_| crate::util::geo::LatLon {
+                lat: 33.0 + rng.next_f64(),
+                lon: 130.0 + 1.2 * rng.next_f64(),
+            })
+            .collect()
+    }
+
+    fn units(p: &[crate::util::geo::LatLon]) -> Vec<crate::util::geo::Unit> {
+        p.iter().map(crate::util::geo::Unit::from).collect()
+    }
+
+    /// 辺が `lo`–`hi` km の三角形を一つのビンにまとめる。
+    fn one_triangle_bin(lo: f64, hi: f64) -> crate::engine::triple_count::TriangleBins {
+        use crate::util::geo::km_to_chord2;
+        crate::engine::triple_count::TriangleBins::new(Bins::new(vec![km_to_chord2(lo), km_to_chord2(hi)]))
+    }
+
+    /// 親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く（Neyman–Scott の模型）。
+    /// 子は親ごとに続けて並ぶ（番号 c·m から m 個が親 c の子）。
+    fn clustered(n_p: usize, m: usize, s: f64, rng: &mut SplitMix64) -> Vec<crate::util::geo::LatLon> {
+        let parents = uniform_patch(n_p, rng);
+        let mut out = Vec::with_capacity(n_p * m);
+        for p in &parents {
+            for _ in 0..m {
+                let (u1, u2) = (rng.next_f64().max(1e-12), rng.next_f64());
+                let r = s * (-2.0 * u1.ln()).sqrt();
+                let a = std::f64::consts::TAU * u2;
+                out.push(crate::util::geo::LatLon {
+                    lat: p.lat + r * a.sin() / 111.2,
+                    lon: p.lon + r * a.cos() / (111.2 * p.lat.to_radians().cos()),
+                });
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn szapudi_szalay_vanishes_for_uncorrelated_points() {
+        let mut rng = SplitMix64::new(11);
+        let d = units(&uniform_patch(600, &mut rng));
+        let r = units(&uniform_patch(2000, &mut rng));
+        let z = TripleCounts::compute(&d, &r, &one_triangle_bin(2.0, 20.0)).szapudi_szalay()[0];
+        assert!(z.abs() < 0.1, "相関のない点で ζ = {z}");
+    }
+
+    /// 親 60 個のまわりに標準偏差 2 km で 10 個ずつ子を撒いた点（Neyman–Scott の模型）では、
+    /// 三点相関は「三点が同じ親の子である三角形」から来る。ビン（辺 1–6 km）での ζ の見込みは
+    /// その三角形の数 ÷ 一様に撒いたときに見込まれる三角形の数（RRR を点の数で写したもの）。
+    ///
+    /// 一回だけの比較はしない。推定量は「二点が同じ親の子で、一点は別の親の子」の三角形を平均として差し引くが、
+    /// その実際の数は親どうしがたまたま近いかで大きく揺れ、一回の ζ は見込みから大きく外れうる
+    /// （2026-11-14、種 12 の一回で ζ = 0.61、見込みは約 3.2）。親の置き方を変えて 40 回繰り返し、平均を比べる。
+    #[test]
+    fn szapudi_szalay_recovers_zeta_of_clustered_points_on_average() {
+        let mut rng = SplitMix64::new(12);
+        let bins = one_triangle_bin(1.0, 6.0);
+        let r = units(&uniform_patch(2000, &mut rng));
+        let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+        let (runs, m) = (40, 10);
+        let (mut zs, mut preds) = (Vec::new(), Vec::new());
+        for _ in 0..runs {
+            let d = units(&clustered(60, m, 2.0, &mut rng));
+            let t = TripleCounts::compute(&d, &r, &bins);
+            zs.push(t.szapudi_szalay()[0]);
+            let mut same = 0u64;
+            for g in d.chunks(m) {
+                for i in 0..m {
+                    for j in i + 1..m {
+                        for k in j + 1..m {
+                            let (cij, cik, cjk) = (chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k]));
+                            if bins.index(cij, cik, cjk).is_some() {
+                                same += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            let base = t.rrr[0] as f64 * c3(d.len() as f64) / c3(r.len() as f64);
+            preds.push(same as f64 / base);
+        }
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let (mz, mp) = (mean(&zs), mean(&preds));
+        let sd = (zs.iter().map(|z| (z - mz).powi(2)).sum::<f64>() / (runs as f64 - 1.0)).sqrt();
+        let tol = 3.0 * sd / (runs as f64).sqrt();
+        eprintln!("clustered toy: ζ の平均 {mz:.3}、見込み {mp:.3}、1 回のばらつき {sd:.3}、許す幅 {tol:.3}");
+        assert!(mp > 1.0, "見込みの ζ が小さすぎて確かめにならない：{mp}");
+        assert!((mz - mp).abs() < tol, "ζ の平均 {mz}、見込み {mp}、許す幅 {tol}（1 回のばらつき {sd}）");
     }
 
     fn uniform(n: usize, rng: &mut SplitMix64) -> Vec<Xy> {

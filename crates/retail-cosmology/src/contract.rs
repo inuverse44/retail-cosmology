@@ -165,6 +165,18 @@ pub struct PairCounts {
     pub rr: Vec<u64>,
 }
 
+/// 三角形のビンごとの DDD, DDR, DRR, RRR と、データ数 `n_d`・ランダム数 `n_r`（ADR 007）。
+/// DDR はデータの二点とランダムの一点、DRR はデータの一点とランダムの二点の三つ組の数。
+#[derive(Clone, Debug)]
+pub struct TripleCounts {
+    pub n_d: usize,
+    pub n_r: usize,
+    pub ddd: Vec<u64>,
+    pub ddr: Vec<u64>,
+    pub drr: Vec<u64>,
+    pub rrr: Vec<u64>,
+}
+
 /// 二種類の点（1 と 2）の相互相関のための、ビンごとの対の数。
 /// ランダムカタログは種類ごとに R1、R2 を持つ。`n_r1r2` は R1R2 の対の総数で、
 /// R1 と R2 が別のカタログなら n_r1 n_r2、同じカタログなら n_r(n_r - 1)/2（`r1r2` はそのカタログの中の対の数）。
