@@ -257,6 +257,77 @@ pub fn mock_summary(observed: f64, mocks: &[f64]) -> MockSummary {
     }
 }
 
+/// 独立な模擬ベクトルの標本平均と不偏共分散。欠けたビンや非有限値は許さない。
+pub fn ensemble(mocks: &[Vec<f64>]) -> Option<Estimate> {
+    let n = mocks.len();
+    let p = mocks.first()?.len();
+    if n < 2
+        || p == 0
+        || mocks
+            .iter()
+            .any(|v| v.len() != p || v.iter().any(|x| !x.is_finite()))
+    {
+        return None;
+    }
+    let value: Vec<f64> = (0..p)
+        .map(|j| mocks.iter().map(|v| v[j]).sum::<f64>() / n as f64)
+        .collect();
+    let cov: Vec<Vec<f64>> = (0..p)
+        .map(|i| {
+            (0..p)
+                .map(|j| {
+                    mocks
+                        .iter()
+                        .map(|v| (v[i] - value[i]) * (v[j] - value[j]))
+                        .sum::<f64>()
+                        / (n - 1) as f64
+                })
+                .collect()
+        })
+        .collect();
+    let sigma = (0..p).map(|i| cov[i][i].sqrt()).collect();
+    Some(Estimate { value, sigma, cov })
+}
+
+/// Myllymäki et al. (2017) の両側 extreme-rank 検定。
+/// 実測も含めて点ごとの平均順位を求め、曲線の最小順位で並べる。
+/// 同順位を含めない/含める p 区間と、全点順位を辞書順に比較した ERL の保守的 p。
+/// 実測も分母 N+1 に含む。
+pub fn extreme_rank_test(real: &[f64], mocks: &[Vec<f64>]) -> Option<(f64, f64, f64)> {
+    if mocks.is_empty()
+        || real.is_empty()
+        || real.iter().any(|x| !x.is_finite())
+        || mocks
+            .iter()
+            .any(|v| v.len() != real.len() || v.iter().any(|x| !x.is_finite()))
+    {
+        return None;
+    }
+    let curves: Vec<&[f64]> = std::iter::once(real)
+        .chain(mocks.iter().map(Vec::as_slice))
+        .collect();
+    let m = curves.len();
+    let mut pointwise = vec![Vec::with_capacity(real.len()); m];
+    for j in 0..real.len() {
+        for (i, v) in curves.iter().enumerate() {
+            let less = curves.iter().filter(|w| w[j] < v[j]).count();
+            let equal = curves.iter().filter(|w| w[j] == v[j]).count();
+            let rank = 1.0 + less as f64 + (equal - 1) as f64 / 2.0;
+            pointwise[i].push(rank.min((m + 1) as f64 - rank));
+        }
+    }
+    for ranks in &mut pointwise {
+        ranks.sort_by(f64::total_cmp);
+    }
+    let ranks: Vec<_> = pointwise.iter().map(|v| v[0]).collect();
+    let erl = pointwise.iter().filter(|v| **v <= pointwise[0]).count() as f64 / m as f64;
+    Some((
+        ranks.iter().filter(|r| **r < ranks[0]).count() as f64 / m as f64,
+        ranks.iter().filter(|r| **r <= ranks[0]).count() as f64 / m as f64,
+        erl,
+    ))
+}
+
 /// χ² 分布の上側確率 P(χ² > x)（自由度 dof は任意）。正則化された上側不完全ガンマ関数 Q(dof/2, x/2)。
 /// 級数（x < a + 1）と連分数（それ以外）で求める（Numerical Recipes の gammq と同じ方法）。
 pub fn chi2_sf(x: f64, dof: usize) -> f64 {
@@ -340,13 +411,131 @@ pub fn chi2_sf_even(x: f64, dof: usize) -> f64 {
     (-h).exp() * s
 }
 
+/// 大きな基準標本（pool）と独立に撒いた match 二群の、同じ格子上の密度比の診断。
+/// 比の重みは pool の個数。二群の相互積は、match の標本雑音の自己積を含まない。
+pub struct DensityRatioSummary {
+    pub cells: usize,
+    pub mass_fraction: f64,
+    pub mean: f64,
+    pub variance: f64,
+    pub cross_mse: f64,
+    pub q10: f64,
+    pub q50: f64,
+    pub q90: f64,
+}
+
+pub fn density_ratio_summary(
+    pool: &[u64],
+    a: &[u64],
+    b: &[u64],
+    min_pool: u64,
+) -> DensityRatioSummary {
+    assert_eq!(pool.len(), a.len());
+    assert_eq!(pool.len(), b.len());
+    let np = pool.iter().sum::<u64>() as f64;
+    let na = a.iter().sum::<u64>() as f64;
+    let nb = b.iter().sum::<u64>() as f64;
+    assert!(np > 0.0 && na > 0.0 && nb > 0.0);
+    let mut ratios = Vec::new();
+    let (mut weight, mut num, mut num2, mut cross) = (0.0, 0.0, 0.0, 0.0);
+    for ((&p, &ca), &cb) in pool.iter().zip(a).zip(b) {
+        if p == 0 || p < min_pool {
+            continue;
+        }
+        let w = p as f64 / np;
+        let (ga, gb) = (ca as f64 / (na * w), cb as f64 / (nb * w));
+        let g = (ca + cb) as f64 / ((na + nb) * w);
+        weight += w;
+        num += w * g;
+        num2 += w * g * g;
+        cross += w * (ga - 1.0) * (gb - 1.0);
+        ratios.push((g, w));
+    }
+    assert!(weight > 0.0);
+    ratios.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let quantile = |q: f64| {
+        let mut cumulative = 0.0;
+        for (g, w) in &ratios {
+            cumulative += w;
+            if cumulative >= q * weight {
+                return *g;
+            }
+        }
+        ratios.last().unwrap().0
+    };
+    DensityRatioSummary {
+        cells: ratios.len(),
+        mass_fraction: weight,
+        mean: num / weight,
+        variance: (num2 / weight - (num / weight).powi(2)).max(0.0),
+        cross_mse: cross / weight,
+        q10: quantile(0.1),
+        q50: quantile(0.5),
+        q90: quantile(0.9),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_density_ratio_recovers_a_known_modulation_and_removes_self_noise() {
+        let d = super::density_ratio_summary(&[100, 100], &[150, 50], &[150, 50], 20);
+        assert_eq!(d.cells, 2);
+        assert!((d.mean - 1.0).abs() < 1e-12);
+        assert!((d.variance - 0.25).abs() < 1e-12);
+        assert!((d.cross_mse - 0.25).abs() < 1e-12);
+        let noise = super::density_ratio_summary(&[100, 100], &[120, 80], &[80, 120], 20);
+        assert!(noise.variance.abs() < 1e-12);
+        assert!((noise.cross_mse + 0.04).abs() < 1e-12);
+    }
+
     use super::*;
     use crate::contract::Bins;
     use crate::engine::pair_count::{JkCounts, Regions};
     use crate::util::geo::{Xy, chord2, euclid};
     use crate::util::rng::SplitMix64;
+
+    #[test]
+    fn ensemble_covariance_and_constant_shift_sensitivity() {
+        let mocks = vec![vec![1.0, 2.0], vec![2.0, 0.0], vec![3.0, 4.0]];
+        let e = ensemble(&mocks).unwrap();
+        assert_eq!(e.value, vec![2.0, 2.0]);
+        assert_eq!(e.cov, vec![vec![1.0, 1.0], vec![1.0, 4.0]]);
+        let (offset, sigma) = gls_mean(&[-0.03, -0.03], &e.cov, 0.5).unwrap();
+        assert!((offset + 0.03).abs() < 1e-12);
+        assert!((sigma - 2.0f64.sqrt()).abs() < 1e-12);
+        assert!(ensemble(&[vec![1.0], vec![f64::NAN]]).is_none());
+        assert!(ensemble(&[vec![1.0], vec![2.0, 3.0]]).is_none());
+    }
+
+    #[test]
+    fn extreme_ranks_include_observation_and_handle_ties() {
+        let mocks = vec![vec![1.0], vec![2.0], vec![3.0], vec![4.0]];
+        // 実測が最小、4 が最大なので、両側で二つが同じ極端順位。
+        assert_eq!(extreme_rank_test(&[0.0], &mocks), Some((0.0, 0.4, 0.4)));
+        assert_eq!(
+            extreme_rank_test(&[2.0], &vec![vec![2.0]; 4]),
+            Some((0.0, 1.0, 1.0))
+        );
+        let multivariate = vec![
+            vec![1.0, -1.0],
+            vec![2.0, -2.0],
+            vec![3.0, -3.0],
+            vec![4.0, -4.0],
+        ];
+        assert_eq!(
+            extreme_rank_test(&[0.0, 0.0], &multivariate),
+            Some((0.0, 0.4, 0.4))
+        );
+        assert!(extreme_rank_test(&[f64::NAN], &mocks).is_none());
+        assert_eq!(
+            extreme_rank_test(
+                &[0.0, 0.0],
+                &[vec![1.0, 1.0], vec![2.0, 3.0], vec![3.0, 2.0]]
+            ),
+            Some((0.0, 0.75, 0.25))
+        );
+    }
 
     fn uniform_square(n: usize, rng: &mut SplitMix64) -> Vec<Xy> {
         (0..n)
@@ -374,12 +563,20 @@ mod tests {
     /// 辺が `lo`–`hi` km の三角形を一つのビンにまとめる。
     fn one_triangle_bin(lo: f64, hi: f64) -> crate::engine::triple_count::TriangleBins {
         use crate::util::geo::km_to_chord2;
-        crate::engine::triple_count::TriangleBins::new(Bins::new(vec![km_to_chord2(lo), km_to_chord2(hi)]))
+        crate::engine::triple_count::TriangleBins::new(Bins::new(vec![
+            km_to_chord2(lo),
+            km_to_chord2(hi),
+        ]))
     }
 
     /// 親 `n_p` 個（一様）のまわりに、標準偏差 `s` km の正規分布で `m` 個ずつ子を撒く（Neyman–Scott の模型）。
     /// 子は親ごとに続けて並ぶ（番号 c·m から m 個が親 c の子）。
-    fn clustered(n_p: usize, m: usize, s: f64, rng: &mut SplitMix64) -> Vec<crate::util::geo::LatLon> {
+    fn clustered(
+        n_p: usize,
+        m: usize,
+        s: f64,
+        rng: &mut SplitMix64,
+    ) -> Vec<crate::util::geo::LatLon> {
         let parents = uniform_patch(n_p, rng);
         let mut out = Vec::with_capacity(n_p * m);
         for p in &parents {
@@ -429,7 +626,11 @@ mod tests {
                 for i in 0..m {
                     for j in i + 1..m {
                         for k in j + 1..m {
-                            let (cij, cik, cjk) = (chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k]));
+                            let (cij, cik, cjk) = (
+                                chord2(&g[i], &g[j]),
+                                chord2(&g[i], &g[k]),
+                                chord2(&g[j], &g[k]),
+                            );
                             if bins.index(cij, cik, cjk).is_some() {
                                 same += 1;
                             }
@@ -444,9 +645,14 @@ mod tests {
         let (mz, mp) = (mean(&zs), mean(&preds));
         let sd = (zs.iter().map(|z| (z - mz).powi(2)).sum::<f64>() / (runs as f64 - 1.0)).sqrt();
         let tol = 3.0 * sd / (runs as f64).sqrt();
-        eprintln!("clustered toy: ζ の平均 {mz:.3}、見込み {mp:.3}、1 回のばらつき {sd:.3}、許す幅 {tol:.3}");
+        eprintln!(
+            "clustered toy: ζ の平均 {mz:.3}、見込み {mp:.3}、1 回のばらつき {sd:.3}、許す幅 {tol:.3}"
+        );
         assert!(mp > 1.0, "見込みの ζ が小さすぎて確かめにならない：{mp}");
-        assert!((mz - mp).abs() < tol, "ζ の平均 {mz}、見込み {mp}、許す幅 {tol}（1 回のばらつき {sd}）");
+        assert!(
+            (mz - mp).abs() < tol,
+            "ζ の平均 {mz}、見込み {mp}、許す幅 {tol}（1 回のばらつき {sd}）"
+        );
     }
 
     fn uniform(n: usize, rng: &mut SplitMix64) -> Vec<Xy> {

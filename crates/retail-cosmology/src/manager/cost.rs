@@ -13,11 +13,13 @@ use crate::contract::Bins;
 use crate::engine::pair_count::count_auto;
 use crate::engine::random_catalog::{Weight, sample};
 use crate::engine::selection_function::{SmoothRatio, Tabulated};
-use crate::manager::correlation::N_REF;
 use crate::util::geo::LatLon;
 use crate::util::geo::{Unit, chord2, km_to_chord2};
 use crate::util::grid::GridGeometry;
 use crate::util::rng::SplitMix64;
+
+/// 診断の参照点数（従来と同じ 50,000）。他の使用例の設定には依存しない。
+const N_REF: usize = 50_000;
 
 /// 測った数を key,value の CSV（data/cost/cost_R<R>.csv）に書き、要約の文字列を返す。
 /// `store_files` はチェーンごとの店のファイル（リポジトリの根からの相対パス）。

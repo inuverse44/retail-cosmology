@@ -8,8 +8,7 @@
 
 use std::path::PathBuf;
 
-use retail_cosmology::engine::random_catalog::Weight;
-use retail_cosmology::manager::variance::{Run, run};
+use retail_cosmology::manager::variance::{Run, Weight, run};
 
 fn main() {
     let mut it = std::env::args().skip(1);

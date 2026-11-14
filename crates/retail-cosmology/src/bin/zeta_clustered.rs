@@ -7,9 +7,12 @@
 //! --children m：親ひとつあたりの子の数。--sigma σ：子を撒く標準偏差 [km]。--runs：模擬データの数。
 //! 書くもの：data/zeta/clustered_<jp_|us_><日付>_<チェーン>_m<m>_s<σ>[_名前].csv と _xi.csv
 
+//! --regional on|prefecture：地方別または都道府県別の店舗数 / 人口を使う（clustered は従来の proc に追加して比較）。
+//! --match on：親ごとに子を一つ選ぶ独立の基準を追加。新規の --tag が必要。
+
 use std::path::PathBuf;
 
-use retail_cosmology::manager::three_point::{Params, clustered_mocks};
+use retail_cosmology::manager::three_point::{Params, RegionalScale, clustered_mocks};
 
 fn main() {
     let mut it = std::env::args().skip(1);
@@ -24,6 +27,15 @@ fn main() {
             "--n-random" => p.n_random = v.parse().unwrap(),
             "--n-ref" => p.n_ref = v.parse().unwrap(),
             "--seed" => p.seed = v.parse().unwrap(),
+            "--regional" => {
+                p.regional = match v.as_str() {
+                    "on" => Some(RegionalScale::Region),
+                    "prefecture" => Some(RegionalScale::Prefecture),
+                    "off" => None,
+                    _ => panic!("--regional on|prefecture|off"),
+                }
+            }
+            "--match" => p.match_density = v == "on",
             "--footprint" => p.footprint = Some(v.parse().unwrap()),
             "--children" => m = v.parse().unwrap(),
             "--sigma" => sigma = v.parse().unwrap(),
@@ -31,7 +43,11 @@ fn main() {
             "--sides" => {
                 let s: Vec<&str> = v.split(':').collect();
                 assert_eq!(s.len(), 3, "--sides lo:hi:n");
-                p.sides_km = (s[0].parse().unwrap(), s[1].parse().unwrap(), s[2].parse().unwrap());
+                p.sides_km = (
+                    s[0].parse().unwrap(),
+                    s[1].parse().unwrap(),
+                    s[2].parse().unwrap(),
+                );
             }
             "--tag" => p.tag = format!("_{v}"),
             _ => panic!("知らない引数：{k}"),

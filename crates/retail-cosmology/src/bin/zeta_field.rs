@@ -5,17 +5,22 @@
 //!     --footprint 50 --amp 0.5 --sigma 15 --centers 20000 --runs 3 [--n-random 8000] [--seed 1] [--sides 2:32:4]
 //!
 //! --amp A：δ の標準偏差。--sigma σ：δ を作るガウス関数の幅 [km]。--centers：ガウス関数の中心の数。
+//! --amp2 A2 --sigma2 σ2：独立な符号を持つ二つ目の成分（両方渡す）。切る前の分散は A²+A2²。
+//! --start k：run k から始める。同じ seed の別の run 範囲は同じ池と基準に条件づけて独立。
+//! 二つ目の成分も --start も省略したときは、PR #90 の連続した乱数列を使う。
+//! --tag NAME：分割計算では各ファイルに別の名前を付ける。既存出力は上書きしない。
 //! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
 use std::path::PathBuf;
 
-use retail_cosmology::manager::three_point::{Params, field_mocks};
+use retail_cosmology::manager::three_point::{FieldModel, Params, field_mocks};
 
 fn main() {
     let mut it = std::env::args().skip(1);
     let mut p = Params::new(it.next().expect("日付（YYYY-MM-DD）を渡す"));
     let (mut amp, mut sigma, mut centers, mut runs) = (0.5f64, 15.0f64, 20_000usize, 3usize);
+    let (mut amp2, mut sigma2, mut start) = (None, None, None);
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -28,19 +33,39 @@ fn main() {
             "--footprint" => p.footprint = Some(v.parse().unwrap()),
             "--amp" => amp = v.parse().unwrap(),
             "--sigma" => sigma = v.parse().unwrap(),
+            "--amp2" => amp2 = Some(v.parse().unwrap()),
+            "--sigma2" => sigma2 = Some(v.parse().unwrap()),
+            "--start" => start = Some(v.parse().unwrap()),
             "--centers" => centers = v.parse().unwrap(),
             "--runs" => runs = v.parse().unwrap(),
             "--sides" => {
                 let s: Vec<&str> = v.split(':').collect();
                 assert_eq!(s.len(), 3, "--sides lo:hi:n");
-                p.sides_km = (s[0].parse().unwrap(), s[1].parse().unwrap(), s[2].parse().unwrap());
+                p.sides_km = (
+                    s[0].parse().unwrap(),
+                    s[1].parse().unwrap(),
+                    s[2].parse().unwrap(),
+                );
             }
             "--tag" => p.tag = format!("_{v}"),
             _ => panic!("知らない引数：{k}"),
         }
     }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    match field_mocks(&root, &p, amp, sigma, centers, runs) {
+    assert_eq!(
+        amp2.is_some(),
+        sigma2.is_some(),
+        "--amp2 と --sigma2 は両方渡す"
+    );
+    let model = FieldModel {
+        amp,
+        sigma_km: sigma,
+        second: amp2.zip(sigma2),
+        n_centers: centers,
+        runs,
+        start,
+    };
+    match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),
         Err(e) => panic!("{e}"),
     }

@@ -312,3 +312,46 @@ pub fn read_mesh_prefectures(
     }
     Ok(out)
 }
+
+/// 全県のメッシュ対応。一つのメッシュが複数県に載る場合は最小の県番号を採る。
+/// 読み込みの順序に依存せず、人口の二重計上を防ぐ。
+pub fn read_mesh_prefecture_map(dir: &Path) -> std::io::Result<HashMap<u64, u32>> {
+    let mut out = HashMap::new();
+    for n in 1..=47 {
+        let bytes = std::fs::read(dir.join(format!("{n:02}.csv")))?;
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines().skip(1) {
+            if let Some(code) = line
+                .split(',')
+                .nth(2)
+                .and_then(|v| v.trim().parse::<u64>().ok())
+            {
+                out.entry(code).or_insert(n);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod regional_tests {
+    use super::*;
+
+    #[test]
+    fn shared_border_mesh_is_assigned_once_to_the_lowest_prefecture() {
+        let dir =
+            std::env::temp_dir().join(format!("retail-mesh-pref-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in 1..=47 {
+            let rows = match n {
+                1 => "header\n1000,city,53394611\n1001,city,53394611\n",
+                2 => "header\n2000,city,53394611\n2000,city,53394612\n",
+                _ => "header\n",
+            };
+            std::fs::write(dir.join(format!("{n:02}.csv")), rows).unwrap();
+        }
+        let map = read_mesh_prefecture_map(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(map, HashMap::from([(53394611, 1), (53394612, 2)]));
+    }
+}
