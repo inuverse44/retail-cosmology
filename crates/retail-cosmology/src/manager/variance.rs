@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::access::{population, stores};
-use crate::engine::pair_count::Bins;
+use crate::contract::Bins;
 use crate::engine::random_catalog::{Weight, sample};
 use crate::engine::variance::{geometric_factors, var_dd_fixed, var_dd_poisson};
 use crate::util::geo::{Unit, chord2, km_to_chord2};

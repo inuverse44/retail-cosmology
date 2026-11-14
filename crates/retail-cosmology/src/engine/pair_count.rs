@@ -1,74 +1,7 @@
 //! Engine：対の数え上げ。距離のビンごとに DD, DR, RR を数える。
 //! jackknife のために、領域の組ごとにも数える（領域 k を除いた数は、数え直さずに求まる）。
 
-use crate::contract::{CrossPairCounts, PairCounts};
-
-/// 距離のビン。`edges` は狭義単調増加で、ビン k は `[edges[k], edges[k+1])`。
-#[derive(Clone, Debug)]
-pub struct Bins {
-    edges: Vec<f64>,
-}
-
-impl Bins {
-    pub fn new(edges: Vec<f64>) -> Self {
-        assert!(edges.len() >= 2, "ビンの端は 2 つ以上");
-        assert!(
-            edges.windows(2).all(|w| w[0] < w[1]),
-            "ビンの端は狭義単調増加"
-        );
-        Self { edges }
-    }
-
-    /// `[lo, hi)` を `n` 等分する。
-    pub fn linear(lo: f64, hi: f64, n: usize) -> Self {
-        Self::new(
-            (0..=n)
-                .map(|k| lo + (hi - lo) * k as f64 / n as f64)
-                .collect(),
-        )
-    }
-
-    /// `[lo, hi)` を対数で `n` 等分する。
-    pub fn log(lo: f64, hi: f64, n: usize) -> Self {
-        let (a, b) = (lo.ln(), hi.ln());
-        Self::new(
-            (0..=n)
-                .map(|k| (a + (b - a) * k as f64 / n as f64).exp())
-                .collect(),
-        )
-    }
-
-    /// 端を単調増加の関数 `f` で写したビン。距離の代わりに、その単調な関数で数えるときに使う。
-    pub fn map(&self, f: impl Fn(f64) -> f64) -> Self {
-        Self::new(self.edges.iter().map(|e| f(*e)).collect())
-    }
-
-    pub fn len(&self) -> usize {
-        self.edges.len() - 1
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn edges(&self) -> &[f64] {
-        &self.edges
-    }
-
-    /// ビンの中点。
-    pub fn centers(&self) -> Vec<f64> {
-        self.edges.windows(2).map(|w| 0.5 * (w[0] + w[1])).collect()
-    }
-
-    /// 距離 `r` が入るビンの番号。範囲外なら `None`。
-    pub fn index(&self, r: f64) -> Option<usize> {
-        if !(r >= self.edges[0] && r < self.edges[self.edges.len() - 1]) {
-            return None;
-        }
-        // edges[k] <= r となる最大の k
-        Some(self.edges.partition_point(|&e| e <= r) - 1)
-    }
-}
+use crate::contract::{Bins, CrossPairCounts, PairCounts};
 
 /// 同じカタログの中の対（i < j）を数える。DD と RR に使う。
 pub fn count_auto<P>(points: &[P], bins: &Bins, dist: impl Fn(&P, &P) -> f64) -> Vec<u64> {
@@ -467,17 +400,6 @@ mod tests {
                 y: rng.next_f64(),
             })
             .collect()
-    }
-
-    #[test]
-    fn bins_index_is_half_open() {
-        let b = Bins::linear(0.0, 1.0, 4);
-        assert_eq!(b.index(0.0), Some(0));
-        assert_eq!(b.index(0.25), Some(1));
-        assert_eq!(b.index(0.999), Some(3));
-        assert_eq!(b.index(1.0), None);
-        assert_eq!(b.index(-0.1), None);
-        assert_eq!(b.index(f64::NAN), None);
     }
 
     #[test]

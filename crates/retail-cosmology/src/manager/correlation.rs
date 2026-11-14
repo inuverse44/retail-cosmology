@@ -7,9 +7,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::access::{boundary, population, results, stores};
-use crate::contract::PopulationGrid;
+use crate::contract::{Bins, PopulationGrid};
 use crate::engine::estimator::{Estimate, chi2, chi2_sf, chi2_sf_even, jackknife, plain_mean};
-use crate::engine::pair_count::{Bins, JkCounts, JkCross, Regions, count_auto_by_region};
+use crate::engine::pair_count::{JkCounts, JkCross, Regions, count_auto_by_region};
 use crate::engine::random_catalog::{Weight, sample, sample_selected};
 use crate::engine::selection_function::{
     SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
