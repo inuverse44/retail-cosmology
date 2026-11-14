@@ -576,6 +576,141 @@ pub fn clustered_mocks(
     Ok(path)
 }
 
+/// ζ = 0 の模擬データ（ガウス場で密度を揺らす模型）を、日本の実際の地形の上で作って測る（#81）。
+///
+/// 店の密度を「基準 × max(0, 1 + δ)」とする。δ は、点の池から選んだ `n_centers` 個の中心に、正負の符号を半々に
+/// つけた幅 `sigma_km` のガウス関数を足し、各点で sqrt(Σ K²) で割って分散をそろえ、`amp` を掛けたもの。
+/// 符号が対称なので δ の三次のモーメントは 0 で、三点相関関数の見込みは 0（1 + δ < 0 を 0 で切った分だけ、わずかに正）。
+/// 二点相関関数はおよそ `amp`² × （幅 √2 σ のガウス関数）。
+/// 店は、基準の重み（人口 × 実際の店の選択関数）で撒いた点の池から、重み max(0, 1 + δ) で店の数だけ選ぶ（同じ点は選ばない）。
+/// 測り方と書くものの形は [`clustered_mocks`] と同じ（expected の列は 0）。
+/// 書くもの：data/zeta/field_<前置き><日付>_<チェーン>_a<amp>_s<σ>.csv と _xi.csv
+pub fn field_mocks(
+    root: &Path,
+    p: &Params,
+    amp: f64,
+    sigma_km: f64,
+    n_centers: usize,
+    runs: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let t0 = Instant::now();
+    let r_km = p.footprint.ok_or("--footprint R が要る")?;
+    let (grid, prefix) = grid_of(root, &p.country)?;
+    let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
+        .map_err(|e| format!("{} がない：{e}", p.stores))?
+        .into_iter()
+        .filter(|(c, _)| *c == p.chain)
+        .map(|(_, q)| q)
+        .collect();
+    if pts.is_empty() {
+        return Err(format!("{} に {} の店がない", p.stores, p.chain).into());
+    }
+    let mut rng_ref = SplitMix64::new(p.seed ^ 0x3E7A_0000_0000_0000);
+    let refs: Vec<Unit> = sample(&grid, p.n_ref, Weight::Population, &mut rng_ref)
+        .iter()
+        .map(Unit::from)
+        .collect();
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
+        sample_selected(&grid, n, Weight::Population, |q| sr.eval(&Unit::from(q)), 2 * n, rng).points
+    };
+    let real = units(&pts);
+    let sr_real = SmoothRatio::new(&real, &refs, r_km);
+    let mut rng = SplitMix64::new(p.seed);
+    let r_true = units(&draw(&sr_real, p.n_random, &mut rng));
+
+    let (lo, hi, n) = p.sides_km;
+    let sides_km = Bins::log(lo, hi, n);
+    let cb = sides_km.map(km_to_chord2);
+    let bins = TriangleBins::new(cb.clone());
+    let c = sides_km.centers();
+    let xi_of = |d: &[Unit], r: &[Unit]| PairCounts::compute(d, r, &cb, chord2).landy_szalay();
+
+    let mut xi_out = String::from("run,k,r_km,xi_true,xi_proc\n");
+    for (k, v) in xi_of(&real, &r_true).iter().enumerate() {
+        writeln!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
+    }
+    let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+    let mut rng_m = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
+    let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_m));
+    let cut = km_to_chord2(3.0 * sigma_km);
+    let two_s2 = 2.0 * km_to_chord2(sigma_km);
+    eprintln!("点の池 {} 点（{:.1} 秒）", pool.len(), t0.elapsed().as_secs_f64());
+    for run in 0..runs {
+        // 中心と符号を選び、池の各点で δ を求める
+        let centers: Vec<(Unit, f64)> = (0..n_centers)
+            .map(|_| {
+                let q = pool[(rng_m.next_f64() * pool.len() as f64) as usize];
+                (q, if rng_m.next_f64() < 0.5 { 1.0 } else { -1.0 })
+            })
+            .collect();
+        let cu: Vec<Unit> = centers.iter().map(|x| x.0).collect();
+        let g = crate::util::spatial::UnitGrid::build(&cu, cut.sqrt());
+        let mut clipped = 0usize;
+        let w: Vec<f64> = pool
+            .iter()
+            .map(|q| {
+                let (mut s, mut s2) = (0.0, 0.0);
+                g.for_each_near(q, cut.sqrt(), |j| {
+                    let c2 = chord2(q, &cu[j]);
+                    if c2 < cut {
+                        let k = (-c2 / two_s2).exp();
+                        s += centers[j].1 * k;
+                        s2 += k * k;
+                    }
+                });
+                let delta = if s2 > 0.0 { amp * s / s2.sqrt() } else { 0.0 };
+                if 1.0 + delta < 0.0 {
+                    clipped += 1;
+                }
+                (1.0 + delta).max(0.0)
+            })
+            .collect();
+        // 重み w で、池から店の数だけ選ぶ（棄却法、同じ点は選ばない）
+        let wmax = w.iter().copied().fold(0.0, f64::max);
+        let mut taken = vec![false; pool.len()];
+        let mut d = Vec::with_capacity(pts.len());
+        while d.len() < pts.len() {
+            let i = (rng_m.next_f64() * pool.len() as f64) as usize;
+            if !taken[i] && rng_m.next_f64() < w[i] / wmax {
+                taken[i] = true;
+                d.push(pool[i]);
+            }
+        }
+        let sr_mock = SmoothRatio::new(&d, &refs, r_km);
+        let r_proc = units(&draw(&sr_mock, p.n_random, &mut rng_m));
+        for (k, (a, b)) in xi_of(&d, &r_true).iter().zip(xi_of(&d, &r_proc)).enumerate() {
+            writeln!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
+        }
+        let t_true = TripleCounts::compute(&d, &r_true, &bins);
+        let t_proc = TripleCounts::compute(&d, &r_proc, &bins);
+        let (zt, zp) = (t_true.szapudi_szalay(), t_proc.szapudi_szalay());
+        for b in bins.used() {
+            if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
+                continue;
+            }
+            let (x, y, z) = bins.unflatten(b);
+            writeln!(z_out, "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},0", c[x], c[y], c[z], zt[b], zp[b])?;
+        }
+        eprintln!(
+            "{} 回目（1 + δ < 0 で切った点 {:.1}%、{:.1} 秒）",
+            run + 1,
+            100.0 * clipped as f64 / pool.len() as f64,
+            t0.elapsed().as_secs_f64()
+        );
+    }
+    let stem = format!(
+        "data/zeta/field_{prefix}{}_{}_a{amp}_s{sigma_km}{}",
+        p.date,
+        p.chain.to_lowercase(),
+        p.tag
+    );
+    results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
+    let path = format!("{stem}.csv");
+    results::write_text(&root.join(&path), &z_out)?;
+    Ok(path)
+}
+
 /// zeta_clustered が書いた模擬データ（`stem`.csv と `stem`_xi.csv）を、ビンごとにまとめて `stem`_summary.csv と
 /// `stem`_xi_summary.csv に書く。実際の店の ζ̂（zeta が書いた `real`、同じランダムカタログと設定のもの）も並べ、
 /// 実際と同じ手順（proc）の模擬データの分布の中でどこにあるかを数える。
