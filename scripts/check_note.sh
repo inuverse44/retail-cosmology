@@ -22,4 +22,11 @@ for tex in "${texs[@]}"; do
   if grep -n 'undefined\|multiply defined' "$log"; then echo "↑未定義か二重定義"; this=1; fi
   if [ "$this" = 0 ]; then echo "問題なし（${tex}）"; else echo "↑ ${tex}"; bad=1; fi
 done
+# docs/figures の図は、どれかのノートに載せる（振り返り 2026-11-14 の T-02。結果を PR にだけ書き、ノートに載せなかった）
+for fig in docs/figures/*.pdf; do
+  name="$(basename "$fig")"
+  if ! grep -q "{${name}}" notes/*.tex; then
+    echo "${fig} がどのノートにも載っていない（\\includegraphics{${name}}）"; bad=1
+  fi
+done
 exit "$bad"
