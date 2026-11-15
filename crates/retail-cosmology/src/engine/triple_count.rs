@@ -115,6 +115,34 @@ pub fn count_aaa(a: &[Unit], bins: &TriangleBins) -> Vec<u64> {
     counts
 }
 
+/// 同じカタログの中の三つ組（i < j < k）について、ビンごとに三角形の数と `f(i, j, k)` の和を積む。
+/// 数え方は [`count_aaa`] と同じ（返す数も一致する）。
+pub fn accumulate_aaa<const M: usize>(
+    a: &[Unit],
+    bins: &TriangleBins,
+    f: impl Fn(usize, usize, usize) -> [f64; M],
+) -> (Vec<u64>, Vec<[f64; M]>) {
+    let mut counts = vec![0u64; bins.len()];
+    let mut sums = vec![[0.0; M]; bins.len()];
+    let max = bins.max();
+    let g = UnitGrid::build(a, max.sqrt());
+    for i in 0..a.len() {
+        let nb = near_after(&g, a, i, max);
+        for (x, &j) in nb.iter().enumerate() {
+            let cij = chord2(&a[i], &a[j]);
+            for &k in &nb[x + 1..] {
+                if let Some(b) = bins.index(cij, chord2(&a[i], &a[k]), chord2(&a[j], &a[k])) {
+                    counts[b] += 1;
+                    for (s, v) in sums[b].iter_mut().zip(f(i, j, k)) {
+                        *s += v;
+                    }
+                }
+            }
+        }
+    }
+    (counts, sums)
+}
+
 /// A の二点（i < j）と B の一点の三つ組を数える。DDR は `count_aab(D, R)`、DRR は `count_aab(R, D)`。
 pub fn count_aab(a: &[Unit], b: &[Unit], bins: &TriangleBins) -> Vec<u64> {
     let mut counts = vec![0u64; bins.len()];
@@ -219,6 +247,33 @@ mod tests {
             "三つ組が少なすぎて確かめにならない"
         );
         assert_eq!(fast, brute_aaa(&a, &b));
+    }
+
+    #[test]
+    fn accumulate_matches_count_and_brute_sum() {
+        let a = patch(300, 4);
+        let b = bins();
+        let v: Vec<f64> = (0..a.len()).map(|i| (i % 7) as f64 * 0.1).collect();
+        let (n, s) = accumulate_aaa(&a, &b, |i, j, k| [1.0, v[i] + v[j] + v[k]]);
+        assert_eq!(n, count_aaa(&a, &b));
+        let mut want = vec![0.0; b.len()];
+        for i in 0..a.len() {
+            for j in i + 1..a.len() {
+                for k in j + 1..a.len() {
+                    if let Some(t) = b.index(
+                        chord2(&a[i], &a[j]),
+                        chord2(&a[i], &a[k]),
+                        chord2(&a[j], &a[k]),
+                    ) {
+                        want[t] += v[i] + v[j] + v[k];
+                    }
+                }
+            }
+        }
+        for t in 0..b.len() {
+            assert_eq!(s[t][0], n[t] as f64);
+            assert!((s[t][1] - want[t]).abs() < 1e-9 * (1.0 + want[t].abs()));
+        }
     }
 
     #[test]
