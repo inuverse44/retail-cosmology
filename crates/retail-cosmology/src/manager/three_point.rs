@@ -69,6 +69,9 @@ pub struct Params {
     pub counts: bool,
     /// selection_mismatch（tri_thin と一緒に）：三角形の重みを R³ に直し、近似しない係数も求める（#94）
     pub tri_exact: bool,
+    /// clustered_mocks・field_mocks：模擬データの W は `footprint` の幅のまま、店と同じ手順の S の幅だけを
+    /// 変えて測る幅の並び [km]（空なら測らない）。出力は <stem>_swidth.csv と _swidth_xi.csv（#94）
+    pub s_widths: Vec<f64>,
 }
 
 impl Params {
@@ -93,6 +96,7 @@ impl Params {
             tri_thin: None,
             counts: false,
             tri_exact: false,
+            s_widths: Vec::new(),
         }
     }
 }
@@ -927,6 +931,56 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
 /// 二点の固まりを実際の店にそろえ、ζ がわかっている模擬データ（Neyman–Scott の模型）を作り、
 /// 選択関数の偏りを実際の地形の上で測る（#81）。
 ///
+/// 同じ模擬データ `d` を、幅だけを変えた店と同じ手順の選択関数で測る（#94、`--s-widths`）。
+///
+/// 幅 R ごとに、`d` から幅 R の S を作り、人口 × S に比例するランダムカタログを撒いて、ξ̂_S と ζ̂_S を測る。
+/// 乱数は run と幅ごとの別の列から取るので、もとの列（true・proc など）は `--s-widths` なしと同じ。
+/// `z_out` に run,s_km,k1,k2,k3,r1_km,r2_km,r3_km,zeta、`x_out` に run,s_km,k,r_km,xi の行を足す。
+#[allow(clippy::too_many_arguments)]
+fn measure_s_widths(
+    d: &[Unit],
+    refs: &[Unit],
+    p: &Params,
+    run: usize,
+    draw: &dyn Fn(&SmoothRatio, usize, &mut SplitMix64) -> Vec<LatLon>,
+    bins: &TriangleBins,
+    cb: &Bins,
+    c: &[f64],
+    z_out: &mut String,
+    x_out: &mut String,
+) -> Result<(), std::fmt::Error> {
+    for (i, &s_km) in p.s_widths.iter().enumerate() {
+        let mut rng =
+            SplitMix64::new(p.seed ^ 0x5157_1D7B_0000_0000 ^ ((run as u64) << 16) ^ i as u64);
+        let sr = SmoothRatio::new(d, refs, s_km);
+        let r: Vec<Unit> = draw(&sr, p.n_random, &mut rng)
+            .iter()
+            .map(Unit::from)
+            .collect();
+        for (k, v) in PairCounts::compute(d, &r, cb, chord2)
+            .landy_szalay()
+            .iter()
+            .enumerate()
+        {
+            writeln!(x_out, "{run},{s_km},{k},{:.3},{v:.6}", c[k])?;
+        }
+        let t = TripleCounts::compute(d, &r, bins);
+        let z = t.szapudi_szalay();
+        for b in bins.used() {
+            if t.rrr[b] == 0 {
+                continue;
+            }
+            let (x, y, w) = bins.unflatten(b);
+            writeln!(
+                z_out,
+                "{run},{s_km},{x},{y},{w},{:.3},{:.3},{:.3},{:.6}",
+                c[x], c[y], c[w], z[b]
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// 親は実際の店から作った選択関数と人口に比例して撒き、その親のまわりに標準偏差 `sigma_km` で `m` 個ずつ子を撒く。
 /// 子の数の合計は実際の店の数に合わせる（親の数は店の数 ÷ `m`、端数は切り上げて余りを捨てる）。
 /// 同じ模擬データを true・proc で測り、指定した基準も追加する。
@@ -1041,6 +1095,8 @@ pub fn clustered_mocks(
         }
     }
     z_out.push('\n');
+    let mut sw_z = String::from("run,s_km,k1,k2,k3,r1_km,r2_km,r3_km,zeta\n");
+    let mut sw_x = String::from("run,s_km,k,r_km,xi\n");
     let n_p = pts.len().div_ceil(m);
     let mut rng_m = SplitMix64::new(p.seed ^ 0xC1A5_7E00_0000_0000);
     // 点の池：基準の重み（人口 × 実際の店の選択関数）で撒いた点。親も子もこの池から選ぶので、
@@ -1215,6 +1271,9 @@ pub fn clustered_mocks(
             }
             writeln!(z_out)?;
         }
+        measure_s_widths(
+            &d, &refs, p, run, &draw, &bins, &cb, &c, &mut sw_z, &mut sw_x,
+        )?;
         completed = run + 1;
         let wall = wall0.elapsed()?.as_secs_f64();
         eprintln!(
@@ -1288,12 +1347,16 @@ pub fn clustered_mocks(
         results::write_text(&root.join(format!("{stem}_timing.csv")), &timing)?;
     }
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
+    if !p.s_widths.is_empty() {
+        results::write_text(&root.join(format!("{stem}_swidth.csv")), &sw_z)?;
+        results::write_text(&root.join(format!("{stem}_swidth_xi.csv")), &sw_x)?;
+    }
     let path = format!("{stem}.csv");
     results::write_text(&root.join(&path), &z_out)?;
     Ok(path)
 }
 
-/// ζ = 0 の模擬データ（ガウス場で密度を揺らす模型）を、日本の実際の地形の上で作って測る（#81）。
+///ζ = 0 の模擬データ（ガウス場で密度を揺らす模型）を、日本の実際の地形の上で作って測る（#81）。
 ///
 /// 店の密度を「基準 × max(0, 1 + δ)」とする。δ は、点の池から選んだ `n_centers` 個の中心に、正負の符号を半々に
 /// つけた幅 `sigma_km` のガウス関数を足し、各点で sqrt(Σ K²) で割って分散をそろえ、`amp` を掛けたもの。
@@ -1430,6 +1493,8 @@ pub fn field_mocks(
         z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc,num_true_icf,num_proc_icf");
     }
     z_out.push('\n');
+    let mut sw_z = String::from("run,s_km,k1,k2,k3,r1_km,r2_km,r3_km,zeta\n");
+    let mut sw_x = String::from("run,s_km,k,r_km,xi\n");
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
     let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_legacy));
     eprintln!(
@@ -1620,6 +1685,9 @@ pub fn field_mocks(
             }
             writeln!(z_out)?;
         }
+        measure_s_widths(
+            &d, &refs, p, run, &draw, &bins, &cb, &c, &mut sw_z, &mut sw_x,
+        )?;
         eprintln!(
             "{} 回目（1 + δ < 0 で切った点 {:.1}%、{:.1} 秒）",
             run + 1,
@@ -1643,12 +1711,16 @@ pub fn field_mocks(
     }
     results::write_text(&root.join(format!("{stem}_diagnostics.csv")), &diagnostics)?;
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
+    if !p.s_widths.is_empty() {
+        results::write_text(&root.join(format!("{stem}_swidth.csv")), &sw_z)?;
+        results::write_text(&root.join(format!("{stem}_swidth_xi.csv")), &sw_x)?;
+    }
     let path = format!("{stem}.csv");
     results::write_text(&root.join(&path), &z_out)?;
     Ok(path)
 }
 
-/// zeta_clustered が書いた模擬データ（`stem`.csv と `stem`_xi.csv）を、ビンごとにまとめて `stem`_summary.csv と
+///zeta_clustered が書いた模擬データ（`stem`.csv と `stem`_xi.csv）を、ビンごとにまとめて `stem`_summary.csv と
 /// `stem`_xi_summary.csv に書く。実際の店の ζ̂（zeta が書いた `real`、同じランダムカタログと設定のもの）も並べ、
 /// 実際と同じ手順（proc）の模擬データの分布の中でどこにあるかを数える。
 pub fn summarize_clustered(
@@ -3179,6 +3251,119 @@ pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std
             )?;
         }
     }
+    Ok(log)
+}
+
+/// 模擬データを、W の幅は 50 km のまま S の幅 R だけを変えて測った ξ̂_S と ζ̂_S を並べる（#94）。
+///
+/// `models` は（表に書く模型の名前、`--s-widths` をつけた zeta_clustered・zeta_field の出力の前置き）。
+/// R ごとに、run の平均の ξ̂_S（辺のビンごと）、三辺の等しいビンの run の平均の ζ̂_S、
+/// 16 ビンの run の平均をさらにビンで平均した値 $\overline{\hat\zeta_S}$ とその平均の誤差（run ごとの 16 ビンの平均のばらつきから）、
+/// run の平均が負のビンの数を並べる。
+/// 書くもの：docs/tables/zeta_vary_r_mocks.tex
+pub fn vary_s_mocks_table(
+    root: &Path,
+    models: &[(&str, &str)],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut t = String::from(
+        "% cargo run --release --bin zeta_vary_r_mocks が書いた表\n\
+         \\begin{tabular}{lrrrrrrrrrrr}\n\\toprule\n\
+         & & \\multicolumn{4}{c}{$\\hat\\xi_S$, $r$ [km]} & \\multicolumn{4}{c}{$\\hat\\zeta_S$, $r_1 = r_2 = r_3$ [km]} & \\multicolumn{2}{c}{16 ビン} \\\\\n\
+         模型 & $R$ [km] & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 & $\\overline{\\hat\\zeta_S}$ & $< 0$ \\\\\n\\midrule\n",
+    );
+    let mut log = String::new();
+    for (mi, (name, stem)) in models.iter().enumerate() {
+        if mi > 0 {
+            t.push_str("\\midrule\n");
+        }
+        let z = results::read_numeric_csv(&root.join(format!("{stem}_swidth.csv")))?;
+        let x = results::read_numeric_csv(&root.join(format!("{stem}_swidth_xi.csv")))?;
+        let mut widths: Vec<f64> = z.iter().map(|r| r["s_km"]).collect();
+        widths.sort_by(f64::total_cmp);
+        widths.dedup();
+        for s in widths {
+            let zs: Vec<_> = z.iter().filter(|r| r["s_km"] == s).collect();
+            let xs: Vec<_> = x.iter().filter(|r| r["s_km"] == s).collect();
+            let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+            let mut ks: Vec<f64> = xs.iter().map(|r| r["k"]).collect();
+            ks.sort_by(f64::total_cmp);
+            ks.dedup();
+            let xi: Vec<f64> = ks
+                .iter()
+                .map(|k| {
+                    mean(
+                        &xs.iter()
+                            .filter(|r| r["k"] == *k)
+                            .map(|r| r["xi"])
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            let mut keys: Vec<(i64, i64, i64)> = zs
+                .iter()
+                .map(|r| (r["k1"] as i64, r["k2"] as i64, r["k3"] as i64))
+                .collect();
+            keys.sort_unstable();
+            keys.dedup();
+            let bin_mean = |key: &(i64, i64, i64)| {
+                mean(
+                    &zs.iter()
+                        .filter(|r| (r["k1"] as i64, r["k2"] as i64, r["k3"] as i64) == *key)
+                        .map(|r| r["zeta"])
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let bm: Vec<f64> = keys.iter().map(bin_mean).collect();
+            let eq: Vec<String> = keys
+                .iter()
+                .zip(&bm)
+                .filter(|(k, _)| k.0 == k.1 && k.1 == k.2)
+                .map(|(_, v)| format!("${v:+.3}$"))
+                .collect();
+            let neg = bm.iter().filter(|v| **v < 0.0).count();
+            // run ごとの 16 ビンの平均から、ビン平均の平均とその平均の誤差
+            let mut runs: Vec<f64> = zs.iter().map(|r| r["run"]).collect();
+            runs.sort_by(f64::total_cmp);
+            runs.dedup();
+            let per_run: Vec<f64> = runs
+                .iter()
+                .map(|run| {
+                    mean(
+                        &zs.iter()
+                            .filter(|r| r["run"] == *run)
+                            .map(|r| r["zeta"])
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            let m = mean(&per_run);
+            let n = per_run.len() as f64;
+            let sem = (per_run.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt();
+            writeln!(
+                t,
+                "{} & {s:.0} & {} & {} & ${m:+.3} \\pm {sem:.3}$ & {neg}/{} \\\\",
+                if s == 15.0 { name } else { "" },
+                xi.iter()
+                    .map(|v| format!("${v:.3}$"))
+                    .collect::<Vec<_>>()
+                    .join(" & "),
+                eq.join(" & "),
+                keys.len()
+            )?;
+            writeln!(
+                log,
+                "{name} R = {s:.0} km：ξ̂ {}、ζ̂ の 16 ビンの平均 {m:+.4} ± {sem:.4}（{} 回）、負 {neg}/{}",
+                xi.iter()
+                    .map(|v| format!("{v:.3}"))
+                    .collect::<Vec<_>>()
+                    .join("・"),
+                runs.len(),
+                keys.len()
+            )?;
+        }
+    }
+    t.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_vary_r_mocks.tex"), &t)?;
     Ok(log)
 }
 

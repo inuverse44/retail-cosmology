@@ -14,6 +14,8 @@
 //!   分け方は別の乱数列で決めるので、もとの列（true・proc）は --split なしと同じ。
 //! --counts on：ζ の分子（DDD − 3DDR + 3DRR − RRR）と分母（RRR）を、組の数で割った形で
 //!   true・proc それぞれ書く列（num_true,rrr_true,num_proc,rrr_proc）を足す（#94）。もとの列は変わらない。
+//! --s-widths 15,25,…：W は --footprint の幅のまま、店と同じ手順の S の幅だけを変えて同じ模擬データを測る。
+//!   幅と run ごとに別の乱数列を使うので、もとの列は変わらない。<stem>_swidth.csv と _swidth_xi.csv に書く（#94）。
 //! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
@@ -54,6 +56,7 @@ fn main() {
                 );
             }
             "--tag" => p.tag = format!("_{v}"),
+            "--s-widths" => p.s_widths = v.split(',').map(|s| s.parse().unwrap()).collect(),
             "--split" => {
                 assert!(v == "on" || v == "off", "--split は on か off");
                 split = v == "on";
