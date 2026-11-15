@@ -53,7 +53,9 @@ def with_mocks(ax, stem: str, entity: str) -> list[str]:
     x = np.arange(len(keys))
     mean = np.array([m[k].mean() for k in keys])
     sd = np.array([m[k].std(ddof=1) for k in keys])
-    ax.errorbar(x, mean, yerr=sd, color=fs.COLOR["mock"], fmt="_", ms=6, label=rf"模擬データ {N_MOCK} 個（平均 $\pm 1\sigma$）")
+    ax.errorbar(
+        x, mean, yerr=sd, color=fs.COLOR["mock"], fmt="_", ms=6, label=rf"$\langle\hat\zeta_0\rangle \pm 1\sigma$, $N = {N_MOCK}$"
+    )
     ax.plot(x, [real[k][1] for k in keys], fs.MARKER[entity], color=fs.COLOR[entity], label=entity)
     return [real[k][0] for k in keys]
 
@@ -67,8 +69,10 @@ def main() -> None:
     fp = load("zeta_jp_2026-11-12_cosmos_fp50_t8000.csv")
     keys = sorted(fp)
     x = np.arange(len(keys))
-    ax.plot(x, [pop[k][1] for k in keys], fs.MARKER["population"], color=fs.COLOR["population"], label="人口だけが基準")
-    ax.plot(x, [fp[k][1] for k in keys], fs.MARKER["COSMOS"], color=fs.COLOR["COSMOS"], label=r"選択関数 $R = 50$ km")
+    ax.plot(x, [pop[k][1] for k in keys], fs.MARKER["population"], color=fs.COLOR["population"], label=r"$\hat\zeta_\rho$")
+    ax.plot(
+        x, [fp[k][1] for k in keys], fs.MARKER["COSMOS"], color=fs.COLOR["COSMOS"], label=r"$\hat\zeta_S$, $R = 50$ km"
+    )
     ax.set_ylabel(r"$\hat\zeta$")
     ax.legend(loc="center right")
     fs.panel(ax, "a", "COSMOS")
@@ -78,17 +82,17 @@ def main() -> None:
     with_mocks(ax, "zeta_jp_2026-11-12_cosmos_fp50_t8000", "COSMOS")
     ax.set_ylabel(r"$\hat\zeta$")
     ax.legend(loc="lower right")
-    fs.panel(ax, "b", r"COSMOS、$R = 50$ km")
+    fs.panel(ax, "b", r"COSMOS, $R = 50$ km")
 
     ax = axes[2]
     fs.ref_line(ax, 0)
     labels = with_mocks(ax, "zeta_us_2026-11-13_walmart_fp50_t40000", "WALMART")
     ax.set_ylabel(r"$\hat\zeta$")
     ax.legend(loc="upper right")
-    fs.panel(ax, "c", r"WALMART、$R = 50$ km")
+    fs.panel(ax, "c", r"WALMART, $R = 50$ km")
     ax.set_xticks(np.arange(len(labels)), labels, rotation=60, ha="right")
     ax.xaxis.set_minor_locator(fs.plt.NullLocator())
-    ax.set_xlabel("三角形の三辺 [km]")
+    ax.set_xlabel(r"$(r_1, r_2, r_3)$ [km]")
     fs.save(fig, "zeta_stores")
 
 

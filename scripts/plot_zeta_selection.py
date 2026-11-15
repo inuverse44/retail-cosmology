@@ -26,9 +26,15 @@ def main() -> None:
     fig, axes = fs.figure(2, 1, height=4.4, sharex=True)
     ax = axes[0]
     fs.ref_line(ax, 0)
-    ax.plot(x, col["expected_mean"], "_", color=fs.COLOR["data"], ms=10, mew=1.2, label="見込み")
+    ax.plot(x, col["expected_mean"], "_", color=fs.COLOR["data"], ms=10, mew=1.2, label=r"$\zeta_{\mathrm{NS}}$")
     ax.errorbar(
-        x - 0.12, col["uniform_mean"], yerr=col["uniform_sd"] / se, fmt="o", color="0.45", mfc="white", label="一様な基準"
+        x - 0.12,
+        col["uniform_mean"],
+        yerr=col["uniform_sd"] / se,
+        fmt="o",
+        color="0.45",
+        mfc="white",
+        label=r"$\hat\zeta_U$",
     )
     ax.errorbar(
         x + 0.12,
@@ -36,21 +42,21 @@ def main() -> None:
         yerr=col["selection_sd"] / se,
         fmt="s",
         color=fs.COLOR["selection"],
-        label=r"点から作った選択関数（$R = 50$ km）",
+        label=r"$\hat\zeta_S$, $R = 50$ km",
     )
     ax.set_yscale("symlog", linthresh=0.05)
-    ax.set_ylabel(rf"$\hat\zeta$（{runs} 回の平均）")
+    ax.set_ylabel(rf"$\langle\hat\zeta\rangle$, $N = {runs}$")
     ax.legend(loc="upper right")
     fs.panel(ax, "a")
 
     ax = axes[1]
     fs.ref_line(ax, 0)
     ax.errorbar(x, col["shift_mean"], yerr=col["shift_err"], fmt="s", color=fs.COLOR["selection"])
-    ax.set_ylabel(r"ずれ（選択関数 $-$ 一様）")
+    ax.set_ylabel(r"$\langle\hat\zeta_S - \hat\zeta_U\rangle$")
     fs.panel(ax, "b")
     ax.set_xticks(x, labels, rotation=60, ha="right")
     ax.xaxis.set_minor_locator(fs.plt.NullLocator())
-    ax.set_xlabel("三角形の三辺 [km]")
+    ax.set_xlabel(r"$(r_1, r_2, r_3)$ [km]")
     fs.save(fig, "zeta_selection")
 
 

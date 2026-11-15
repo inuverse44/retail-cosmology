@@ -61,7 +61,7 @@ def main() -> None:
     # 同じ塊の中で、塊の大きさくらい離れた三点（近い 14 点のうち 1、7、13 番目）
     near = nearest(pts, pts[0], 14)
     triangle(ax, near[[0, 6, 13]])
-    fs.panel(ax, "a", "丸い塊")
+    fs.panel(ax, "a")
 
     ax = axes[1]
     pts = lines(rng)
@@ -72,7 +72,7 @@ def main() -> None:
     axis = np.argmax(np.ptp(seg, axis=0))
     order = np.argsort(seg[:, axis])
     triangle(ax, seg[order][[3, 14, 25]])
-    fs.panel(ax, "b", "一列")
+    fs.panel(ax, "b")
 
     ax = axes[2]
     hubs, sats = satellites(rng)
@@ -87,7 +87,7 @@ def main() -> None:
     pairs = [(a, b) for a in range(len(ring)) for b in range(a + 1, len(ring))]
     a, b = min(pairs, key=lambda p: abs(abs(np.angle(np.exp(1j * (ang[p[0]] - ang[p[1]])))) - np.pi / 2))
     triangle(ax, np.vstack([hubs[h], ring[a], ring[b]]), marks=ring[[a, b]])
-    fs.panel(ax, "c", "衛星")
+    fs.panel(ax, "c")
 
     for ax in axes:
         ax.set(xlim=(0, 1), ylim=(0, 1), aspect="equal", xticks=[], yticks=[])

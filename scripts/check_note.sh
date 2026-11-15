@@ -28,5 +28,10 @@ for fig in docs/figures/*.pdf; do
   if ! grep -q "{${name}}" notes/*.tex; then
     echo "${fig} がどのノートにも載っていない（\\includegraphics{${name}}）"; bad=1
   fi
+  # 図の中に日本語を入れない（2026-11-15 の指示）。凡例・軸・注記は記号と式で書く
+  ja="$(pdftotext "$fig" - 2>/dev/null | perl -CSD -ne 'print if /[\p{Hiragana}\p{Katakana}\p{Han}]/')"
+  if [ -n "$ja" ]; then
+    echo "${fig} に日本語がある（記号と式に置き直す）："; echo "$ja" | sed 's/^/    /'; bad=1
+  fi
 done
 exit "$bad"
