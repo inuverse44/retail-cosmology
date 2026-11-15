@@ -192,9 +192,9 @@ $\hat\zeta$ の 40 回の平均は $2.84$ で、見込みの平均 $3.01$ と、
   \centering
   \includegraphics{zeta_toy.pdf}
   \caption{toy model で確かめた推定量。どちらも乱数の種を変えた 40 回。
-    (a) 相関のない一様な $600$ 点での $\hat\zeta$（辺 $2$--$20\,\mathrm{km}$ の一つのビン）。
-    (b) Neyman--Scott の模型（親 $60$ 個、子 $10$ 個ずつ、標準偏差 $2\,\mathrm{km}$）での $\hat\zeta$ と見込み（辺 $1$--$6\,\mathrm{km}$ の一つのビン）。
-    白抜きの丸は一回ごと、黒い四角は 40 回の平均。灰色の線は $\hat\zeta$ が見込みと等しい所。}
+    (a) 相関のない一様な $600$ 点（Poisson）での $\hat\zeta$ の分布（辺 $2$--$20\,\mathrm{km}$ の一つのビン）。$N$ は回数。
+    (b) Neyman--Scott の模型（親 $60$ 個、子 $10$ 個ずつ、標準偏差 $2\,\mathrm{km}$）での $\hat\zeta$ と、同じ親の子の三角形の数から求めた $\zeta_{\mathrm{NS}}$（辺 $1$--$6\,\mathrm{km}$ の一つのビン）。
+    白抜きの丸は一回ごと、黒い四角は 40 回の平均 $\langle\hat\zeta\rangle$。灰色の線は $\hat\zeta = \zeta_{\mathrm{NS}}$。}
   \label{fig:toy}
 \end{figure}
 
@@ -230,10 +230,10 @@ $\hat\zeta$ の 40 回の平均は $2.84$ で、見込みの平均 $3.01$ と、
 \begin{figure}[t]
   \centering
   \includegraphics{zeta_stores.pdf}
-  \caption{三角形のビンごとの $\hat\zeta$。横軸のラベルは三辺の中点 [km]。
-    (a) コスモス。人口だけを基準にしたもの（灰色）と、幅 $R = 50\,\mathrm{km}$ の選択関数を入れたもの。
-    (b) コスモスの $R = 50\,\mathrm{km}$ の値と、帰無仮説の模擬データ 10 個の平均と標準偏差（灰色）。
-    (c) Walmart の $R = 50\,\mathrm{km}$ の値と模擬データ。}
+  \caption{三角形のビンごとの $\hat\zeta$。横軸 $(r_1, r_2, r_3)$ は三辺の中点 [km]。
+    (a) コスモス。人口密度 $\rho$ だけを基準にした $\hat\zeta_\rho$（灰色）と、幅 $R = 50\,\mathrm{km}$ の選択関数 $S$ を入れた $\hat\zeta_{\rho S}$。
+    (b) コスモスの $\hat\zeta_{\rho S}$ と、帰無仮説（$\zeta = 0$）の模擬データ $N = 10$ 個の $\hat\zeta_0$ の平均と標準偏差（灰色）。
+    (c) Walmart の $\hat\zeta_{\rho S}$ と $\hat\zeta_0$。}
   \label{fig:stores}
 \end{figure}
 
@@ -286,8 +286,8 @@ Walmart では、コスモスのようにどのビンでも負になることは
   \centering
   \includegraphics{zeta_selection.pdf}
   \caption{店から作った選択関数が $\hat\zeta$ をずらす大きさ。Neyman--Scott の模型（親 $350$ 個、子 $5$ 個ずつ、標準偏差 $5\,\mathrm{km}$、約 $330\,\mathrm{km}$ 四方）での 40 回の平均。
-    (a) 見込みの $\zeta$（横線）と、一様な基準（白抜きの丸）と点から作った幅 $R = 50\,\mathrm{km}$ の選択関数（四角）での $\hat\zeta$。縦軸は $\pm 0.05$ より外で対数。誤差棒は 40 回の平均の誤差。
-    (b) 二つの基準の差（選択関数 $-$ 一様）の平均と、その誤差。}
+    (a) 同じ親の子の三角形の数から求めた $\zeta_{\mathrm{NS}}$（横線）と、一様なランダムカタログで測った $\hat\zeta_U$（白抜きの丸）、点から作った幅 $R = 50\,\mathrm{km}$ の選択関数で測った $\hat\zeta_S$（四角）の 40 回の平均。縦軸は $\pm 0.05$ より外で対数。誤差棒は 40 回の平均の誤差。
+    (b) 同じ点の差 $\hat\zeta_S - \hat\zeta_U$ の平均と、その誤差。}
   \label{fig:selection-bias}
 \end{figure}
 
@@ -367,10 +367,10 @@ $m$ と $\sigma$ を変えて試し、子の数 $m = 14$（親 $124$ 個）、�
   \centering
   \includegraphics{zeta_clustered.pdf}
   \caption{二点相関関数をコスモスにそろえた三通りの模擬データとコスモスの比較。
-    丸い塊は Neyman--Scott の模型（子 $14$ 個ずつ、標準偏差 $15\,\mathrm{km}$、20 個）、密度の揺らぎはガウス場で密度を揺らす模型（$A = 0.7$、幅 $10\,\mathrm{km}$、20 個）、二つの幅の揺らぎは幅 $10$ と $20\,\mathrm{km}$ のガウス場の和（標準偏差 $0.3$ と $1.2$、100 個）。
-    模擬データも、模擬データそのものから作った幅 $R = 50\,\mathrm{km}$ の選択関数で測った。誤差棒は模擬データ一つごとの標準偏差。
+    NS は丸い塊（Neyman--Scott の模型、子 $14$ 個ずつ、標準偏差 $15\,\mathrm{km}$、$N = 20$ 個）、$G_{10}$ はガウス場で密度を揺らす模型（$A = 0.7$、幅 $10\,\mathrm{km}$、$N = 20$ 個）、$G_{10,20}$ は幅 $10$ と $20\,\mathrm{km}$ のガウス場の和（標準偏差 $0.3$ と $1.2$、$N = 100$ 個）。
+    模擬データも、模擬データそのものから作った幅 $R = 50\,\mathrm{km}$ の選択関数で測った。誤差棒は模擬データ一つごとの標準偏差 $\sigma$。
     (a) 二点相関関数 $\hat\xi_{\mathrm{LS}}$。
-    (b) 三点相関関数 $\hat\zeta$。横線は丸い塊の見込みの $\zeta$（20 個の平均）。密度の揺らぎの見込みはほぼ $0$。}
+    (b) 三点相関関数 $\hat\zeta$。横線は NS の同じ親の子の三角形の数から求めた $\zeta_{\mathrm{NS}}$（20 個の平均）。$G_{10}$ の $\zeta$ はほぼ $0$。}
   \label{fig:clustered}
 \end{figure}
 

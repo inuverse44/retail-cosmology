@@ -30,17 +30,17 @@ def main() -> None:
     ax.axvline(0.0, color=fs.COLOR["data"], lw=0.9)
     ax.set_xticks([-0.005, 0.0, 0.005])
     ax.set_xlabel(r"$\hat\zeta$")
-    ax.set_ylabel("回数")
-    fs.panel(ax, "a", "相関のない点")
+    ax.set_ylabel(r"$N$")
+    fs.panel(ax, "a", "Poisson")
 
     ax = axes[1]
     z, e = d["neyman_scott"]
     lim = (0.0, max(z.max(), e.max()) * 1.1)
     ax.plot(lim, lim, color="0.75", lw=0.6, zorder=0)
     ax.plot(e, z, "o", color=fs.COLOR["data"], ms=3.0, mfc="white", mew=0.7)
-    ax.plot(e.mean(), z.mean(), "s", color=fs.COLOR["data"], ms=5.0, label="40 回の平均")
+    ax.plot(e.mean(), z.mean(), "s", color=fs.COLOR["data"], ms=5.0, label=rf"$\langle\hat\zeta\rangle$, $N = {len(z)}$")
     ax.set(xlim=lim, ylim=lim, aspect="equal")
-    ax.set_xlabel(r"見込み")
+    ax.set_xlabel(r"$\zeta_{\mathrm{NS}}$")
     ax.set_ylabel(r"$\hat\zeta$")
     ax.legend(loc="lower right")
     fs.panel(ax, "b", "Neyman--Scott")

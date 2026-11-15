@@ -24,9 +24,9 @@ import numpy as np
 ZETA = fs.ROOT / "data" / "zeta"
 # (ファイル名の前半, 凡例, 色, マーカー, 横のずらし)
 MODELS = [
-    ("clustered_jp_2026-11-12_cosmos_m14_s15", "丸い塊", fs.COLOR["selection"], "s", -0.22),
-    ("field_jp_2026-11-12_cosmos_a0.7_s10", "密度の揺らぎ", "0.45", "o", 0.0),
-    ("field_two_scale_m81_20261114_mainG", "二つの幅の揺らぎ", "0.1", "^", 0.22),
+    ("clustered_jp_2026-11-12_cosmos_m14_s15", r"\mathrm{NS}", fs.COLOR["selection"], "s", -0.22),
+    ("field_jp_2026-11-12_cosmos_a0.7_s10", r"G_{10}", "0.45", "o", 0.0),
+    ("field_two_scale_m81_20261114_mainG", r"G_{10,20}", "0.1", "^", 0.22),
 ]
 
 
@@ -64,10 +64,10 @@ def main() -> None:
             fmt=marker,
             color=color,
             mfc="white" if marker == "o" else color,
-            label=rf"{label}（{runs} 個、平均 $\pm 1\sigma$）",
+            label=rf"$\langle\hat\zeta_{{{label}}}\rangle \pm 1\sigma$, $N = {runs}$",
         )
         if stem.startswith("clustered"):
-            ax_z.plot(x + dx, z["expected_mean"], "_", color=color, ms=8, mew=1.2, label="丸い塊の見込み")
+            ax_z.plot(x + dx, z["expected_mean"], "_", color=color, ms=8, mew=1.2, label=r"$\zeta_{\mathrm{NS}}$")
 
     ax_xi.plot(xi["r_km"], xi["real"], fs.MARKER["COSMOS"], color=fs.COLOR["COSMOS"], label="COSMOS")
     ax_xi.set_xscale("log")
@@ -81,7 +81,7 @@ def main() -> None:
     ax_z.plot(x, z["real"], fs.MARKER["COSMOS"], color=fs.COLOR["COSMOS"], ms=5, label="COSMOS")
     ax_z.set_xticks(x, labels, rotation=60, ha="right")
     ax_z.xaxis.set_minor_locator(fs.plt.NullLocator())
-    ax_z.set_xlabel("三角形の三辺 [km]")
+    ax_z.set_xlabel(r"$(r_1, r_2, r_3)$ [km]")
     ax_z.set_ylabel(r"$\hat\zeta$")
     # 凡例は (a)(b) で共通なので、図の上に一つだけ置く（点に重ならないように）
     fig.legend(*ax_z.get_legend_handles_labels(), loc="outside upper center", ncols=3)
