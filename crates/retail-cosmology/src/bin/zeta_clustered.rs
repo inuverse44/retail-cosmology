@@ -9,6 +9,8 @@
 
 //! --regional on|prefecture：地方別または都道府県別の店舗数 / 人口を使う（clustered は従来の proc に追加して比較）。
 //! --match on：親ごとに子を一つ選ぶ独立の基準を追加。新規の --tag が必要。
+//! --counts on：基準ごとに ζ̂ の分子と分母も書く（num_true,rrr_true,num_proc,rrr_proc[,num_match,rrr_match]）。
+//!   zeta_ratio で比の偏りを切り分ける（#94）。
 
 use std::path::PathBuf;
 
@@ -36,6 +38,7 @@ fn main() {
                 }
             }
             "--match" => p.match_density = v == "on",
+            "--counts" => p.counts = v == "on",
             "--footprint" => p.footprint = Some(v.parse().unwrap()),
             "--children" => m = v.parse().unwrap(),
             "--sigma" => sigma = v.parse().unwrap(),

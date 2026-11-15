@@ -65,6 +65,8 @@ pub struct Params {
     pub tag: String,
     /// selection_mismatch：池を N 個に 1 個に間引いた点で三角形を数え、ビンごとの w の平均も求める
     pub tri_thin: Option<usize>,
+    /// clustered_mocks：基準ごとに ζ̂ の分子と分母（組の数で割ったもの）も書く（比の偏りの切り分け、#94）
+    pub counts: bool,
 }
 
 impl Params {
@@ -87,6 +89,7 @@ impl Params {
             sides_km: (2.0, 32.0, 4),
             tag: String::new(),
             tri_thin: None,
+            counts: false,
         }
     }
 }
@@ -1003,6 +1006,12 @@ pub fn clustered_mocks(
     if p.match_density {
         z_out.push_str(",zeta_match,expected_match");
     }
+    if p.counts {
+        z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc");
+        if p.match_density {
+            z_out.push_str(",num_match,rrr_match");
+        }
+    }
     z_out.push('\n');
     let n_p = pts.len().div_ceil(m);
     let mut rng_m = SplitMix64::new(p.seed ^ 0xC1A5_7E00_0000_0000);
@@ -1129,6 +1138,14 @@ pub fn clustered_mocks(
         let zm = t_match.as_ref().map(TripleCounts::szapudi_szalay);
         let same = same_parent_triples(&d, m, &bins);
         let scale = c3(d.len() as f64) / c3(r_true.len() as f64);
+        // ζ̂ の分子と分母（--counts on のときだけ）。match の基準は空のビンがありうる
+        let parts = p.counts.then(|| {
+            (
+                t_true.szapudi_szalay_parts(),
+                t_proc.szapudi_szalay_parts(),
+                t_match.as_ref().map(TripleCounts::szapudi_szalay_parts),
+            )
+        });
         for b in bins.used() {
             if t_true.rrr[b] == 0
                 || t_proc.rrr[b] == 0
@@ -1157,6 +1174,16 @@ pub fn clustered_mocks(
                     f64::NAN
                 };
                 write!(z_out, ",{:.6},{em:.6}", zm[b])?;
+            }
+            if let Some((pt, pp, pm)) = &parts {
+                write!(
+                    z_out,
+                    ",{:.9e},{:.9e},{:.9e},{:.9e}",
+                    pt[b].0, pt[b].1, pp[b].0, pp[b].1
+                )?;
+                if let Some(pm) = pm {
+                    write!(z_out, ",{:.9e},{:.9e}", pm[b].0, pm[b].1)?;
+                }
             }
             writeln!(z_out)?;
         }
@@ -3308,6 +3335,10 @@ pub fn ratio_decomposition(
         ("true", "num_true", "rrr_true"),
         ("proc", "num_proc", "rrr_proc"),
     ];
+    // 丸い塊の模擬データ（zeta_clustered --match on --counts on）は、親ごとに子を一つ選ぶ基準も
+    if rows[0].contains_key("num_match") {
+        bases.push(("match", "num_match", "rrr_match"));
+    }
     if rows[0].contains_key("num_proc_icf") {
         bases.push(("true_icf", "num_true_icf", "rrr_true"));
         bases.push(("proc_icf", "num_proc_icf", "rrr_true"));
@@ -3375,6 +3406,110 @@ pub fn ratio_decomposition(
         )?;
     }
     results::write_text(&root.join(format!("data/zeta/ratio_{label}.csv")), &out)?;
+    Ok(log)
+}
+
+/// 親の数と子の数を決めた丸い塊の模擬データで、$\hat\zeta$ が $\zeta_{\mathrm{NS}}$ から決まってずれる分の見込み（#94）。
+///
+/// 店の数 N を親 ⌈N/m⌉ 個の子に分ける（最後の親は余り）。二点が同じ親の子である割合を p、
+/// 三点が同じ親の子である割合を q₃ とすると、密度が正しい基準（match）で
+/// ξ̂ ≃ ξ_NS − p、ζ̂ − ζ_NS ≃ −(q₃/p) (ξ_NS,12 + ξ_NS,23 + ξ_NS,31) + 2 q₃（ξ_NS = ξ̂ + p）。
+/// `stem` は zeta_clustered --match on の出力の前置き（`stem`.csv と `stem`_xi.csv）。
+/// 書くもの：`stem`_ic.csv（ビンごとの実測 ζ̂_match − ζ_NS の平均と誤差、見込み）
+pub fn clustered_ic(
+    root: &Path,
+    stem: &str,
+    m: usize,
+    stores_path: &str,
+    chain: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let n = stores::read_selected(&root.join(stores_path))
+        .map_err(|e| format!("{stores_path} がない：{e}"))?
+        .into_iter()
+        .filter(|(c, _)| c == chain)
+        .count();
+    if m < 3 || n < m {
+        return Err("--children は 3 以上で、店の数以下".into());
+    }
+    let (c2, c3) = (
+        |k: f64| k * (k - 1.0) / 2.0,
+        |k: f64| k * (k - 1.0) * (k - 2.0) / 6.0,
+    );
+    let (full, rest) = (n / m, n % m);
+    let pairs = full as f64 * c2(m as f64) + c2(rest as f64);
+    let triples = full as f64 * c3(m as f64) + c3(rest as f64);
+    let p = pairs / c2(n as f64);
+    let q3 = triples / c3(n as f64);
+    let xi = results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))?;
+    let xi_mean = |k: f64| {
+        let v: Vec<f64> = xi
+            .iter()
+            .filter(|r| r["run"] >= 0.0 && r["k"] == k)
+            .map(|r| r["xi_match"])
+            .collect();
+        v.iter().sum::<f64>() / v.len() as f64
+    };
+    let rows: Vec<_> = results::read_numeric_csv(&root.join(format!("{stem}.csv")))?
+        .into_iter()
+        .filter(|r| {
+            r["run"] >= 0.0 && r["zeta_match"].is_finite() && r["expected_match"].is_finite()
+        })
+        .collect();
+    let keys: std::collections::BTreeSet<(usize, usize, usize)> = rows
+        .iter()
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize))
+        .collect();
+    let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,runs,observed,observed_sem,predicted\n");
+    let mut log = format!(
+        "N = {n}、m = {m}：p = {p:.6}、q₃ = {q3:.3e}、q₃/p = {:.6}\n",
+        q3 / p
+    );
+    let (mut so, mut sp, mut n_within, mut n_same_sign) = (0.0, 0.0, 0, 0);
+    for &(a, b, c) in &keys {
+        let v: Vec<f64> = rows
+            .iter()
+            .filter(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize) == (a, b, c))
+            .map(|r| r["zeta_match"] - r["expected_match"])
+            .collect();
+        let r0 = rows
+            .iter()
+            .find(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize) == (a, b, c))
+            .unwrap();
+        let k = v.len() as f64;
+        let obs = v.iter().sum::<f64>() / k;
+        let sem = (v.iter().map(|x| (x - obs).powi(2)).sum::<f64>() / (k - 1.0) / k).sqrt();
+        let sum_xi_ns = [a, b, c]
+            .iter()
+            .map(|&j| xi_mean(j as f64) + p)
+            .sum::<f64>();
+        let pred = -(q3 / p) * sum_xi_ns + 2.0 * q3;
+        so += obs;
+        sp += pred;
+        n_within += usize::from((obs - pred).abs() <= 2.0 * sem);
+        n_same_sign += usize::from(obs.signum() == pred.signum());
+        writeln!(
+            out,
+            "{a},{b},{c},{:.3},{:.3},{:.3},{},{obs:.6},{sem:.6},{pred:.6}",
+            r0["r1_km"],
+            r0["r2_km"],
+            r0["r3_km"],
+            v.len()
+        )?;
+        writeln!(
+            log,
+            "({:.0},{:.0},{:.0}) km：実測 {obs:+.4} ± {sem:.4}、見込み {pred:+.4}",
+            r0["r1_km"], r0["r2_km"], r0["r3_km"]
+        )?;
+    }
+    let nb = keys.len();
+    writeln!(
+        log,
+        "{} ビンの平均で、実測 {:+.5}、見込み {:+.5}。2 SE 以内 {n_within}/{nb}、符号が同じ {n_same_sign}/{nb}",
+        nb,
+        so / nb as f64,
+        sp / nb as f64
+    )?;
+    results::write_text(&root.join(format!("{stem}_ic.csv")), &out)?;
     Ok(log)
 }
 
