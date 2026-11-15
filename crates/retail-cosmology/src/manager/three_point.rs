@@ -2822,6 +2822,96 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
             "{label}（{cols}）：比べる列の平均 {mean:+.5}、負 {neg}/16、−2 SE 未満 {sig}/16、差が正 {pos_diff}/16、差が 2 SE 超 {sig_diff}/16"
         )?;
     }
+
+    // 表 3：ガウス場の負の ζ̂ の内訳（二度ならしたずれの見込みと、比の偏り）。
+    // ずれの係数は data/zeta/selection_mismatch_seed1.csv（zeta_mismatch が書いたもの）。
+    const MISMATCH: &str = "data/zeta/selection_mismatch_seed1.csv";
+    const F: &str = "data/zeta/field_jp_2026-11-12_cosmos";
+    let budget: [(&str, &str, &str, String); 7] = [
+        ("gauss0", "0", "1", format!("{F}_a0_s10_m94_amp0.csv")),
+        (
+            "gauss03",
+            "0.3",
+            "1",
+            format!("{F}_a0.3_s10_m94_counts.csv"),
+        ),
+        (
+            "gauss03_seed2",
+            "0.3",
+            "2",
+            format!("{F}_a0.3_s10_m94_seed2.csv"),
+        ),
+        (
+            "gauss03_seed3",
+            "0.3",
+            "3",
+            format!("{F}_a0.3_s10_m94_seed3.csv"),
+        ),
+        (
+            "gauss04",
+            "0.4",
+            "1",
+            format!("{F}_a0.4_s10_m94_counts.csv"),
+        ),
+        (
+            "gauss04_seed2",
+            "0.4",
+            "2",
+            format!("{F}_a0.4_s10_m94_seed2.csv"),
+        ),
+        (
+            "gauss04_seed3",
+            "0.4",
+            "3",
+            format!("{F}_a0.4_s10_m94_seed3.csv"),
+        ),
+    ];
+    let mut t3 = String::from(
+        "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
+         \\begin{tabular}{rrrrrrr}\n\\toprule\n\
+         & & 0 で切った点 & \\multicolumn{4}{c}{店と同じ手順の $\\hat\\zeta$（16 ビンの平均）} \\\\\n\
+         振幅 & 種 & （最大） & 実測 & 二度ならしたずれ & 比の偏り & 残り \\\\\n\\midrule\n",
+    );
+    let labels: Vec<String> = budget.iter().map(|b| b.0.to_string()).collect();
+    for (label, _, _, file) in &budget {
+        absorption(root, label, "true", std::slice::from_ref(file))?;
+    }
+    log.push_str(&mismatch_prediction(root, MISMATCH, &labels)?);
+    for (label, amp, seed, file) in &budget {
+        let pred =
+            results::read_numeric_csv(&root.join(format!("data/zeta/mismatch_pred_{label}.csv")))?;
+        let n = pred.len() as f64;
+        let obs = pred.iter().map(|r| r["observed"]).sum::<f64>() / n;
+        let mis = pred.iter().map(|r| r["predicted"]).sum::<f64>() / n;
+        ratio_decomposition(root, &format!("budget_{label}"), file)?;
+        let rb =
+            results::read_numeric_csv(&root.join(format!("data/zeta/ratio_budget_{label}.csv")))?;
+        // ratio_ の CSV は基準ごとに 16 行ずつ（true、proc、…の順）。proc の 16 行を使う
+        let ratio = rb[pred.len()..2 * pred.len()]
+            .iter()
+            .map(|r| r["ratio_bias_pred"])
+            .sum::<f64>()
+            / n;
+        let diag = results::read_numeric_csv(&root.join(file.replace(".csv", "_diagnostics.csv")))?;
+        let clip = diag
+            .iter()
+            .map(|r| r["clipped_fraction"])
+            .fold(0.0, f64::max);
+        writeln!(
+            t3,
+            "${amp}$ & {seed} & ${:.1}\\%$ & ${obs:+.4}$ & ${mis:+.4}$ & ${ratio:+.4}$ & ${:+.4}$ \\\\",
+            100.0 * clip,
+            obs - mis - ratio
+        )?;
+        writeln!(
+            log,
+            "内訳 振幅 {amp}・種 {seed}：実測 {obs:+.5}、ずれ {mis:+.5}、比の偏り {ratio:+.5}、残り {:+.5}、切った点 最大 {:.1}%",
+            obs - mis - ratio,
+            100.0 * clip
+        )?;
+    }
+    t3.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_gauss_budget.tex"), &t3)?;
     Ok(log)
 }
 
