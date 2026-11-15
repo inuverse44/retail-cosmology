@@ -63,6 +63,8 @@ pub struct Params {
     pub sides_km: (f64, f64, usize),
     /// 出力のファイル名につける名前（空でなければ "_名前" の形）
     pub tag: String,
+    /// selection_mismatch：池を N 個に 1 個に間引いた点で三角形を数え、ビンごとの w の平均も求める
+    pub tri_thin: Option<usize>,
 }
 
 impl Params {
@@ -84,6 +86,7 @@ impl Params {
             match_density: false,
             sides_km: (2.0, 32.0, 4),
             tag: String::new(),
+            tri_thin: None,
         }
     }
 }
@@ -3005,6 +3008,62 @@ pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std
         &root.join(format!("data/zeta/selection_mismatch_seed{}.csv", p.seed)),
         &out,
     )?;
+
+    // 三角形の数そのもので求める：池を thin 個に 1 個に間引いた点で三角形を数え、
+    // 三角形の w を三頂点の w の平均として、ビンごとに ⟨w²(1−w)⟩₃、⟨(w−1)³⟩₃、⟨w⟩₃ を求める。
+    if let Some(thin) = p.tri_thin {
+        let t1 = Instant::now();
+        let mut tp: Vec<Unit> = Vec::new();
+        let mut tw: Vec<f64> = Vec::new();
+        for q in pool.iter().step_by(thin) {
+            let den = sr_real.eval(q);
+            if den > 0.0 {
+                let x = sr_pool.eval(q) / den;
+                if x.is_finite() && x > 0.0 {
+                    tp.push(*q);
+                    tw.push(mean_w0 / x);
+                }
+            }
+        }
+        let (lo, hi, n) = p.sides_km;
+        let sides_km = Bins::log(lo, hi, n);
+        let bins = TriangleBins::new(sides_km.map(km_to_chord2));
+        let c = sides_km.centers();
+        let (cnt, sums) = crate::engine::triple_count::accumulate_aaa(&tp, &bins, |i, j, k| {
+            let w = (tw[i] + tw[j] + tw[k]) / 3.0;
+            [w * w * (1.0 - w), (w - 1.0).powi(3), w]
+        });
+        let mut tout = String::from("k1,k2,k3,r1_km,r2_km,r3_km,n_tri,w2_1mw,wm1_cubed,w_mean\n");
+        // 三辺がそろわない（三角形がない）ビンは書かない
+        for b in bins.used().into_iter().filter(|&b| cnt[b] > 0) {
+            let (k1, k2, k3) = bins.unflatten(b);
+            let nt = cnt[b] as f64;
+            let [a2, a3, a1] = sums[b].map(|s| s / nt);
+            writeln!(
+                tout,
+                "{k1},{k2},{k3},{:.3},{:.3},{:.3},{},{a2:.6},{a3:.6},{a1:.6}",
+                c[k1], c[k2], c[k3], cnt[b]
+            )?;
+            writeln!(
+                log,
+                "三角形 ({:.1}, {:.1}, {:.1}) km：{} 個、⟨w²(1−w)⟩₃ = {a2:+.5}、⟨(w−1)³⟩₃ = {a3:+.6}、⟨w⟩₃ = {a1:.4}",
+                c[k1], c[k2], c[k3], cnt[b]
+            )?;
+        }
+        writeln!(
+            log,
+            "三角形の計算：点 {} 個（池の {thin} 個に 1 個）、{:.1} 秒",
+            tp.len(),
+            t1.elapsed().as_secs_f64()
+        )?;
+        results::write_text(
+            &root.join(format!(
+                "data/zeta/selection_mismatch_tri_seed{}_thin{thin}.csv",
+                p.seed
+            )),
+            &tout,
+        )?;
+    }
     Ok(log)
 }
 
@@ -3085,7 +3144,16 @@ pub fn mismatch_prediction(
     labels: &[String],
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mm = results::read_numeric_csv(&root.join(mismatch_csv))?;
-    let coef = |r: f64, col: &str| -> f64 {
+    // 係数の CSV に k1 の列があれば（zeta_mismatch --tri-thin の出力）、三角形のビンごとに引く。
+    // 出力のファイル名には _tri をつけ、r で補間した前の結果と分ける。
+    let per_bin = mm.first().is_some_and(|m| m.contains_key("k1"));
+    let suffix = if per_bin { "_tri" } else { "" };
+    let coef_bin = |r: &std::collections::HashMap<String, f64>, col: &str| -> f64 {
+        mm.iter()
+            .find(|m| m["k1"] == r["k1"] && m["k2"] == r["k2"] && m["k3"] == r["k3"])
+            .map_or(f64::NAN, |m| m[col])
+    };
+    let coef_r = |r: f64, col: &str| -> f64 {
         let xs: Vec<(f64, f64)> = mm.iter().map(|m| (m["r_km"].ln(), m[col])).collect();
         let x = r.ln();
         if x <= xs[0].0 {
@@ -3098,6 +3166,13 @@ pub fn mismatch_prediction(
             }
         }
         xs[xs.len() - 1].1
+    };
+    let coef = |r: &std::collections::HashMap<String, f64>, col: &str| -> f64 {
+        if per_bin {
+            coef_bin(r, col)
+        } else {
+            coef_r((r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0, col)
+        }
     };
     let mut log = String::new();
     for label in labels {
@@ -3112,9 +3187,8 @@ pub fn mismatch_prediction(
         let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,observed,observed_sem,predicted\n");
         let (mut so, mut sp, mut n_within, mut n_same_sign) = (0.0, 0.0, 0, 0);
         for r in &z {
-            let rm = (r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0;
             let sum_xi = xi(r["k1"]) + xi(r["k2"]) + xi(r["k3"]);
-            let pred = coef(rm, "wm1_cubed") - coef(rm, "w2_1mw") * sum_xi;
+            let pred = coef(r, "wm1_cubed") - coef(r, "w2_1mw") * sum_xi;
             let (obs, sem) = (r["proc_mean"], r["proc_sem"]);
             so += obs;
             sp += pred;
@@ -3128,7 +3202,7 @@ pub fn mismatch_prediction(
         }
         let n = z.len() as f64;
         results::write_text(
-            &root.join(format!("data/zeta/mismatch_pred_{label}.csv")),
+            &root.join(format!("data/zeta/mismatch_pred_{label}{suffix}.csv")),
             &out,
         )?;
         writeln!(
@@ -3158,9 +3232,8 @@ pub fn mismatch_prediction(
     let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,cosmos_zeta,predicted\n");
     let (mut lo, mut hi, mut sum) = (f64::INFINITY, f64::NEG_INFINITY, 0.0);
     for r in &cz {
-        let rm = (r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0;
-        let pred = coef(rm, "wm1_cubed")
-            - coef(rm, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]));
+        let pred =
+            coef(r, "wm1_cubed") - coef(r, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]));
         lo = lo.min(pred);
         hi = hi.max(pred);
         sum += pred;
@@ -3170,7 +3243,10 @@ pub fn mismatch_prediction(
             r["k1"], r["k2"], r["k3"], r["r1_km"], r["r2_km"], r["r3_km"], r["zeta"]
         )?;
     }
-    results::write_text(&root.join("data/zeta/mismatch_pred_cosmos.csv"), &out)?;
+    results::write_text(
+        &root.join(format!("data/zeta/mismatch_pred_cosmos{suffix}.csv")),
+        &out,
+    )?;
     writeln!(
         log,
         "コスモスの ξ̂ での見込み：ビンごとに {lo:+.4}〜{hi:+.4}、平均 {:+.4}（{} ビン）",

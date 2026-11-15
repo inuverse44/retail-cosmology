@@ -3,6 +3,8 @@
 //! cargo run --release --bin zeta_mismatch_pred -- data/zeta/selection_mismatch_seed1.csv <ラベル>...
 //! ラベルは zeta_absorption が書いた data/zeta/absorption_<ラベル>.csv（と _xi.csv）。
 //! 書くもの：data/zeta/mismatch_pred_<ラベル>.csv
+//! ずれの CSV に zeta_mismatch --tri-thin の出力（三角形のビンごとの係数）を渡すと、
+//! ビンごとの係数を使い、data/zeta/mismatch_pred_<ラベル>_tri.csv（コスモスは mismatch_pred_cosmos_tri.csv）に書く。
 
 use std::path::PathBuf;
 
