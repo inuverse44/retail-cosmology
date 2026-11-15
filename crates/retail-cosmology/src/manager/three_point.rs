@@ -2557,21 +2557,56 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
         ("mainG", "二つの幅（G）", "true", four(G)),
         ("compareE", "二つの幅（E）", "true", four(E)),
     ];
-    let gauss: [(&str, &str, &str); 3] = [
+    // (ラベル, 振幅, 乱数の種, 前置き)。種 1 の三つは同じ中心と符号の列（場の形が同じ）で、振幅だけ違う。
+    let gauss: [(&str, &str, &str, &str); 5] = [
         (
             "gauss015",
             "0.15",
+            "1",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.15_s10_m94_gauss",
         ),
         (
             "gauss03",
             "0.3",
+            "1",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_gauss",
         ),
         (
             "gauss04",
             "0.4",
+            "1",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.4_s10_m94_gauss",
+        ),
+        (
+            "gauss03_seed2",
+            "0.3",
+            "2",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_seed2",
+        ),
+        (
+            "gauss03_seed3",
+            "0.3",
+            "3",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_seed3",
+        ),
+    ];
+    // ζ̂ の分子と分母を書いたもの（--counts on）。比の偏りの切り分けに使う。
+    let counts: [(&str, &str); 4] = [
+        (
+            "counts03",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_counts.csv",
+        ),
+        (
+            "counts04",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.4_s10_m94_counts.csv",
+        ),
+        (
+            "seed2",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_seed2.csv",
+        ),
+        (
+            "seed3",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_seed3.csv",
         ),
     ];
     let split = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_split.csv".to_string();
@@ -2646,12 +2681,12 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     // 表 2：ガウス場の負の ζ̂
     let mut t2 = String::from(
         "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
-         \\begin{tabular}{rrrrrrr}\n\\toprule\n\
-         & 0 で切った点 & $\\xi(3\\,\\mathrm{km})$ & \\multicolumn{3}{c}{店と同じ手順の $\\hat\\zeta$} & 正しい基準 \\\\\n\
-         振幅 & （最大） & & 16 ビンの平均 & 負 & $-2$ SE 未満 & $|t| > 2$ \\\\\n\\midrule\n",
+         \\begin{tabular}{rrrrrrrr}\n\\toprule\n\
+         & & 0 で切った点 & $\\xi(3\\,\\mathrm{km})$ & \\multicolumn{3}{c}{店と同じ手順の $\\hat\\zeta$} & 正しい基準 \\\\\n\
+         振幅 & 種 & （最大） & & 16 ビンの平均 & 負 & $-2$ SE 未満 & $|t| > 2$ \\\\\n\\midrule\n",
     );
     let mut pts = Vec::new();
-    for (label, amp, stem) in gauss {
+    for (label, amp, seed, stem) in gauss {
         absorption(root, label, "true", &[format!("{stem}.csv")])?;
         let (z, x) = (read(label, false)?, read(label, true)?);
         let diag = results::read_numeric_csv(&root.join(format!("{stem}_diagnostics.csv")))?;
@@ -2678,20 +2713,26 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
             });
         writeln!(
             t2,
-            "${amp}$ & ${:.1}\\%$ & ${xi3:.3}$ & ${mean:+.4}$ & {neg}/16 & {sig}/16 & {tsig}/16 \\\\",
+            "${amp}$ & {seed} & ${:.1}\\%$ & ${xi3:.3}$ & ${mean:+.4}$ & {neg}/16 & {sig}/16 & {tsig}/16 \\\\",
             100.0 * clip
         )?;
+        let tmean = z.iter().map(|r| r["true_mean"]).sum::<f64>() / n;
         writeln!(
             log,
-            "振幅 {amp}：ξ(3km) {xi3:.4}、負の ζ̂ の平均 {mean:+.5}、範囲 {lo:+.4}〜{hi:+.4}"
+            "振幅 {amp}・種 {seed}：ξ(3km) {xi3:.4}、店と同じ手順の ζ̂ の平均 {mean:+.5}、範囲 {lo:+.4}〜{hi:+.4}、正しい基準の平均 {tmean:+.5}"
         )?;
-        pts.push((xi3, mean, lo, hi));
+        if seed == "1" {
+            pts.push((xi3, mean, lo, hi));
+        }
+    }
+    for (label, file) in counts {
+        log.push_str(&ratio_decomposition(root, label, file)?);
     }
     t2.push_str("\\bottomrule\n\\end{tabular}\n");
     results::write_text(&root.join("docs/tables/zeta_gauss_offset.tex"), &t2)?;
 
     // 何乗で増えるか（両端の振幅から）と、コスモスの ξ に直した大きさ
-    let real_xi3 = results::read_numeric_csv(&root.join(format!("{}_xi.csv", gauss[0].2)))?
+    let real_xi3 = results::read_numeric_csv(&root.join(format!("{}_xi.csv", gauss[0].3)))?
         .into_iter()
         .find(|r| r["run"] < 0.0 && r["k"] == 0.0)
         .ok_or("コスモスの ξ がない")?["xi_true"];
