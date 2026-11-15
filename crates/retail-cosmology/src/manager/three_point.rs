@@ -1324,7 +1324,7 @@ pub fn field_mocks(
         .map(Unit::from)
         .collect();
     let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
-    let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
+    let draw_sel = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| {
         sample_selected(
             &grid,
             n,
@@ -1333,7 +1333,9 @@ pub fn field_mocks(
             2 * n,
             rng,
         )
-        .points
+    };
+    let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
+        draw_sel(sr, n, rng).points
     };
     let real = units(&pts);
     let sr_real = SmoothRatio::new(&real, &refs, r_km);
@@ -1367,7 +1369,7 @@ pub fn field_mocks(
         "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected"
     });
     if model.counts {
-        z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc");
+        z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc,num_true_icf,num_proc_icf");
     }
     z_out.push('\n');
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
@@ -1377,7 +1379,11 @@ pub fn field_mocks(
         pool.len(),
         t0.elapsed().as_secs_f64()
     );
-    let mut diagnostics = String::from("run,clipped_fraction,elapsed_seconds\n");
+    let mut diagnostics = String::from(if model.counts {
+        "run,clipped_fraction,elapsed_seconds,alpha,beta,proc_cap_clipped,proc_candidates\n"
+    } else {
+        "run,clipped_fraction,elapsed_seconds\n"
+    });
     let first_run = start.unwrap_or(0);
     let legacy_stream = model.second.is_none() && start.is_none();
     for run in first_run
@@ -1441,7 +1447,28 @@ pub fn field_mocks(
             }
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
-        let r_proc = units(&draw(&sr_mock, p.n_random, rng_m));
+        let sel_proc = draw_sel(&sr_mock, p.n_random, rng_m);
+        let r_proc = units(&sel_proc.points);
+
+        // 全体で割る規格化の量（#94、--counts on のときだけ）。
+        // 店：池から重み w で店の数だけ選ぶので、店の割合の密度は W(1+δ)/(1+α)、1+α = 池での w の平均。
+        // ランダム（店と同じ手順）：割合の密度は W(1+δ_R)/(1+β)。1+δ_R = (1+α) S_mock/S_real とおくと
+        // 1+β = (1+α)⟨S_mock/S_real⟩_W。⟨⟩_W は池（W に比例して撒いた点）の 8 個に 1 個で平均する。
+        let norm = if model.counts {
+            let alpha = w.iter().sum::<f64>() / w.len() as f64 - 1.0;
+            let (mut s, mut m) = (0.0, 0usize);
+            for q in pool.iter().step_by(8) {
+                let den = sr_real.eval(q);
+                if den > 0.0 {
+                    s += sr_mock.eval(q) / den;
+                    m += 1;
+                }
+            }
+            let beta = (1.0 + alpha) * s / m as f64 - 1.0;
+            Some((alpha, beta))
+        } else {
+            None
+        };
 
         // 半分に分けた測り方（#94）。もとの乱数列を使わないよう、run ごとの別の列で分ける。
         let halves = if split {
@@ -1499,6 +1526,13 @@ pub fn field_mocks(
         let parts = model
             .counts
             .then(|| (t_true.szapudi_szalay_parts(), t_proc.szapudi_szalay_parts()));
+        // 規格化を割り戻した分子（店は 1+α、店と同じ手順のランダムは 1+β を掛ける。正しい基準のランダムは 1）
+        let icf = norm.map(|(a, bt)| {
+            (
+                t_true.szapudi_szalay_numerator_scaled(1.0 + a, 1.0),
+                t_proc.szapudi_szalay_numerator_scaled(1.0 + a, 1.0 + bt),
+            )
+        });
         for b in bins.used() {
             if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
                 continue;
@@ -1523,6 +1557,9 @@ pub fn field_mocks(
                     pt[b].0, pt[b].1, pp[b].0, pp[b].1
                 )?;
             }
+            if let Some((it, ip)) = &icf {
+                write!(z_out, ",{:.9e},{:.9e}", it[b], ip[b])?;
+            }
             writeln!(z_out)?;
         }
         eprintln!(
@@ -1531,12 +1568,20 @@ pub fn field_mocks(
             100.0 * clipped as f64 / pool.len() as f64,
             t0.elapsed().as_secs_f64()
         );
-        writeln!(
+        write!(
             diagnostics,
             "{run},{:.6},{:.3}",
             clipped as f64 / pool.len() as f64,
             t0.elapsed().as_secs_f64()
         )?;
+        if let Some((a, bt)) = norm {
+            write!(
+                diagnostics,
+                ",{a:.6},{bt:.6},{},{}",
+                sel_proc.clipped, sel_proc.candidates
+            )?;
+        }
+        writeln!(diagnostics)?;
     }
     results::write_text(&root.join(format!("{stem}_diagnostics.csv")), &diagnostics)?;
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
@@ -2777,6 +2822,296 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
             "{label}（{cols}）：比べる列の平均 {mean:+.5}、負 {neg}/16、−2 SE 未満 {sig}/16、差が正 {pos_diff}/16、差が 2 SE 超 {sig_diff}/16"
         )?;
     }
+
+    // 表 3：ガウス場の負の ζ̂ の内訳（二度ならしたずれの見込みと、比の偏り）。
+    // ずれの係数は data/zeta/selection_mismatch_seed1.csv（zeta_mismatch が書いたもの）。
+    const MISMATCH: &str = "data/zeta/selection_mismatch_seed1.csv";
+    const F: &str = "data/zeta/field_jp_2026-11-12_cosmos";
+    let budget: [(&str, &str, &str, String); 7] = [
+        ("gauss0", "0", "1", format!("{F}_a0_s10_m94_amp0.csv")),
+        (
+            "gauss03",
+            "0.3",
+            "1",
+            format!("{F}_a0.3_s10_m94_counts.csv"),
+        ),
+        (
+            "gauss03_seed2",
+            "0.3",
+            "2",
+            format!("{F}_a0.3_s10_m94_seed2.csv"),
+        ),
+        (
+            "gauss03_seed3",
+            "0.3",
+            "3",
+            format!("{F}_a0.3_s10_m94_seed3.csv"),
+        ),
+        (
+            "gauss04",
+            "0.4",
+            "1",
+            format!("{F}_a0.4_s10_m94_counts.csv"),
+        ),
+        (
+            "gauss04_seed2",
+            "0.4",
+            "2",
+            format!("{F}_a0.4_s10_m94_seed2.csv"),
+        ),
+        (
+            "gauss04_seed3",
+            "0.4",
+            "3",
+            format!("{F}_a0.4_s10_m94_seed3.csv"),
+        ),
+    ];
+    let mut t3 = String::from(
+        "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
+         \\begin{tabular}{rrrrrrr}\n\\toprule\n\
+         & & 0 で切った点 & \\multicolumn{4}{c}{店と同じ手順の $\\hat\\zeta$（16 ビンの平均）} \\\\\n\
+         振幅 & 種 & （最大） & 実測 & 二度ならしたずれ & 比の偏り & 残り \\\\\n\\midrule\n",
+    );
+    let labels: Vec<String> = budget.iter().map(|b| b.0.to_string()).collect();
+    for (label, _, _, file) in &budget {
+        absorption(root, label, "true", std::slice::from_ref(file))?;
+    }
+    log.push_str(&mismatch_prediction(root, MISMATCH, &labels)?);
+    for (label, amp, seed, file) in &budget {
+        let pred =
+            results::read_numeric_csv(&root.join(format!("data/zeta/mismatch_pred_{label}.csv")))?;
+        let n = pred.len() as f64;
+        let obs = pred.iter().map(|r| r["observed"]).sum::<f64>() / n;
+        let mis = pred.iter().map(|r| r["predicted"]).sum::<f64>() / n;
+        ratio_decomposition(root, &format!("budget_{label}"), file)?;
+        let rb =
+            results::read_numeric_csv(&root.join(format!("data/zeta/ratio_budget_{label}.csv")))?;
+        // ratio_ の CSV は基準ごとに 16 行ずつ（true、proc、…の順）。proc の 16 行を使う
+        let ratio = rb[pred.len()..2 * pred.len()]
+            .iter()
+            .map(|r| r["ratio_bias_pred"])
+            .sum::<f64>()
+            / n;
+        let diag = results::read_numeric_csv(&root.join(file.replace(".csv", "_diagnostics.csv")))?;
+        let clip = diag
+            .iter()
+            .map(|r| r["clipped_fraction"])
+            .fold(0.0, f64::max);
+        writeln!(
+            t3,
+            "${amp}$ & {seed} & ${:.1}\\%$ & ${obs:+.4}$ & ${mis:+.4}$ & ${ratio:+.4}$ & ${:+.4}$ \\\\",
+            100.0 * clip,
+            obs - mis - ratio
+        )?;
+        writeln!(
+            log,
+            "内訳 振幅 {amp}・種 {seed}：実測 {obs:+.5}、ずれ {mis:+.5}、比の偏り {ratio:+.5}、残り {:+.5}、切った点 最大 {:.1}%",
+            obs - mis - ratio,
+            100.0 * clip
+        )?;
+    }
+    t3.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_gauss_budget.tex"), &t3)?;
+    Ok(log)
+}
+
+/// 場がなくても残る、店から作った選択関数のずれ（二度ならしたずれ）を測る（#94）。
+///
+/// [`field_mocks`] と同じ種で、同じ参照の点・コスモスの選択関数 S_real・点の池（W = 人口 × S_real に比例）を作る。
+/// 池そのもの（16 万点）から店と同じ手順の選択関数 S_pool を作ると、模擬の店から作る選択関数の期待値になる。
+/// 店の割合の密度と、店と同じ手順のランダムの割合の密度の比は
+/// w(x) = ⟨w₀⟩_W / w₀(x)、w₀ = S_pool / S_real で、式 eq:zeta-edge の w にあたる。
+/// 三角形の重み W³ は、池の点に「半径 r の中の池の点の数」の二乗を掛けて近づける（r は辺のビンの中点）。
+/// 池の 8 個に 1 個で平均し、r ごとに ⟨w²(1−w)⟩₃ と ⟨(w−1)³⟩₃ を返す。
+pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>> {
+    let t0 = Instant::now();
+    let r_km = p.footprint.ok_or("--footprint R が要る")?;
+    let (grid, _) = grid_of(root, &p.country)?;
+    let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
+        .map_err(|e| format!("{} がない：{e}", p.stores))?
+        .into_iter()
+        .filter(|(c, _)| *c == p.chain)
+        .map(|(_, q)| q)
+        .collect();
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    // field_mocks と同じ乱数列で、参照の点と点の池を作る
+    let mut rng_ref = SplitMix64::new(p.seed ^ 0x3E7A_0000_0000_0000);
+    let refs: Vec<Unit> = units(&sample(&grid, p.n_ref, Weight::Population, &mut rng_ref));
+    let real = units(&pts);
+    let sr_real = SmoothRatio::new(&real, &refs, r_km);
+    let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
+    let pool = units(
+        &sample_selected(
+            &grid,
+            20 * p.n_random,
+            Weight::Population,
+            |q| sr_real.eval(&Unit::from(q)),
+            40 * p.n_random,
+            &mut rng_legacy,
+        )
+        .points,
+    );
+    let sr_pool = SmoothRatio::new(&pool, &refs, r_km);
+    let sub: Vec<Unit> = pool.iter().step_by(8).copied().collect();
+    let w0: Vec<f64> = sub
+        .iter()
+        .map(|q| {
+            let den = sr_real.eval(q);
+            if den > 0.0 {
+                sr_pool.eval(q) / den
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    let ok: Vec<usize> = (0..sub.len())
+        .filter(|&i| w0[i].is_finite() && w0[i] > 0.0)
+        .collect();
+    let mean_w0 = ok.iter().map(|&i| w0[i]).sum::<f64>() / ok.len() as f64;
+    let w: Vec<f64> = w0.iter().map(|x| mean_w0 / x).collect();
+    let sd_w = (ok.iter().map(|&i| (w[i] - 1.0).powi(2)).sum::<f64>() / ok.len() as f64).sqrt();
+    let mut log = format!(
+        "池 {} 点、平均に使った点 {}（{:.1} 秒）。⟨w₀⟩_W = {mean_w0:.4}、w の 1 からのずれの二乗平均の平方根 {sd_w:.4}\n",
+        pool.len(),
+        ok.len(),
+        t0.elapsed().as_secs_f64()
+    );
+    let mut out = String::from("r_km,w2_1mw,wm1_cubed,w_mean\n");
+    for r in [3.0, 6.0, 12.0, 24.0] {
+        let rc = km_to_chord2(r).sqrt();
+        let g = crate::util::spatial::UnitGrid::build(&pool, rc);
+        let (mut s2, mut s3, mut s1, mut sw) = (0.0, 0.0, 0.0, 0.0);
+        for &i in &ok {
+            let mut n = 0usize;
+            g.for_each_near(&sub[i], rc, |j| {
+                if chord2(&sub[i], &pool[j]) < rc * rc {
+                    n += 1;
+                }
+            });
+            let wt = (n as f64).powi(2);
+            s2 += wt * w[i] * w[i] * (1.0 - w[i]);
+            s3 += wt * (w[i] - 1.0).powi(3);
+            s1 += wt * w[i];
+            sw += wt;
+        }
+        let (a2, a3, a1) = (s2 / sw, s3 / sw, s1 / sw);
+        writeln!(out, "{r},{a2:.6},{a3:.6},{a1:.6}")?;
+        writeln!(
+            log,
+            "r = {r} km：⟨w²(1−w)⟩₃ = {a2:+.5}、⟨(w−1)³⟩₃ = {a3:+.6}、⟨w⟩₃ = {a1:.4}"
+        )?;
+    }
+    results::write_text(
+        &root.join(format!("data/zeta/selection_mismatch_seed{}.csv", p.seed)),
+        &out,
+    )?;
+    Ok(log)
+}
+
+/// 二度ならしたずれ w（[`selection_mismatch`]）から式 eq:zeta-edge で見込む ζ̂ と、
+/// ガウス場の模擬データを店と同じ手順で測った ζ̂ を、ビンごとに比べる（#94）。
+///
+/// 見込み = ⟨(w−1)³⟩₃ − ⟨w²(1−w)⟩₃ (ξ̂₁ + ξ̂₂ + ξ̂₃)。ξ̂ は同じ模擬データを店と同じ手順で測った ξ の平均
+/// （場の揺らぎのうち選択関数に吸い込まれなかった部分）。係数は三角形の三辺の平均の r の値を、
+/// 隣の r の値との対数での線形補間で求める。`labels` は [`absorption`] が書いた data/zeta/absorption_`label`.csv。
+pub fn mismatch_prediction(
+    root: &Path,
+    mismatch_csv: &str,
+    labels: &[String],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mm = results::read_numeric_csv(&root.join(mismatch_csv))?;
+    let coef = |r: f64, col: &str| -> f64 {
+        let xs: Vec<(f64, f64)> = mm.iter().map(|m| (m["r_km"].ln(), m[col])).collect();
+        let x = r.ln();
+        if x <= xs[0].0 {
+            return xs[0].1;
+        }
+        for w in xs.windows(2) {
+            if x <= w[1].0 {
+                let t = (x - w[0].0) / (w[1].0 - w[0].0);
+                return w[0].1 + t * (w[1].1 - w[0].1);
+            }
+        }
+        xs[xs.len() - 1].1
+    };
+    let mut log = String::new();
+    for label in labels {
+        let z = results::read_numeric_csv(&root.join(format!("data/zeta/absorption_{label}.csv")))?;
+        let x =
+            results::read_numeric_csv(&root.join(format!("data/zeta/absorption_{label}_xi.csv")))?;
+        let xi = |k: f64| {
+            x.iter()
+                .find(|r| r["k"] == k)
+                .map_or(f64::NAN, |r| r["proc_mean"])
+        };
+        let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,observed,observed_sem,predicted\n");
+        let (mut so, mut sp, mut n_within, mut n_same_sign) = (0.0, 0.0, 0, 0);
+        for r in &z {
+            let rm = (r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0;
+            let sum_xi = xi(r["k1"]) + xi(r["k2"]) + xi(r["k3"]);
+            let pred = coef(rm, "wm1_cubed") - coef(rm, "w2_1mw") * sum_xi;
+            let (obs, sem) = (r["proc_mean"], r["proc_sem"]);
+            so += obs;
+            sp += pred;
+            n_within += usize::from((obs - pred).abs() <= 2.0 * sem);
+            n_same_sign += usize::from(obs.signum() == pred.signum());
+            writeln!(
+                out,
+                "{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{obs:.6},{sem:.6},{pred:.6}",
+                r["k1"], r["k2"], r["k3"], r["r1_km"], r["r2_km"], r["r3_km"]
+            )?;
+        }
+        let n = z.len() as f64;
+        results::write_text(
+            &root.join(format!("data/zeta/mismatch_pred_{label}.csv")),
+            &out,
+        )?;
+        writeln!(
+            log,
+            "{label}：16 ビンの平均で、実測 {:+.5}、見込み {:+.5}。実測と見込みが 2 SE 以内 {n_within}/{}、符号が同じ {n_same_sign}/{}",
+            so / n,
+            sp / n,
+            z.len(),
+            z.len()
+        )?;
+    }
+
+    // コスモス：同じ係数に、コスモスの ξ̂（コスモスから作った選択関数で測ったもの）を入れた見込み
+    const COSMOS_XI: &str = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_gauss_xi.csv";
+    const COSMOS_ZETA: &str = "data/zeta/zeta_jp_2026-11-12_cosmos_fp50_t8000.csv";
+    let cx = results::read_numeric_csv(&root.join(COSMOS_XI))?;
+    let cxi = |k: f64| {
+        cx.iter()
+            .find(|r| r["run"] < 0.0 && r["k"] == k)
+            .map_or(f64::NAN, |r| r["xi_true"])
+    };
+    // 測っていないビン（ζ が NaN）は除く
+    let cz: Vec<_> = results::read_numeric_csv(&root.join(COSMOS_ZETA))?
+        .into_iter()
+        .filter(|r| r["zeta"].is_finite())
+        .collect();
+    let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,cosmos_zeta,predicted\n");
+    let (mut lo, mut hi, mut sum) = (f64::INFINITY, f64::NEG_INFINITY, 0.0);
+    for r in &cz {
+        let rm = (r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0;
+        let pred = coef(rm, "wm1_cubed")
+            - coef(rm, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]));
+        lo = lo.min(pred);
+        hi = hi.max(pred);
+        sum += pred;
+        writeln!(
+            out,
+            "{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.6},{pred:.6}",
+            r["k1"], r["k2"], r["k3"], r["r1_km"], r["r2_km"], r["r3_km"], r["zeta"]
+        )?;
+    }
+    results::write_text(&root.join("data/zeta/mismatch_pred_cosmos.csv"), &out)?;
+    writeln!(
+        log,
+        "コスモスの ξ̂ での見込み：ビンごとに {lo:+.4}〜{hi:+.4}、平均 {:+.4}（{} ビン）",
+        sum / cz.len() as f64,
+        cz.len()
+    )?;
     Ok(log)
 }
 
@@ -2808,8 +3143,17 @@ pub fn ratio_decomposition(
         "k1,k2,k3,r1_km,r2_km,r3_km,baseline,runs,mean_ratio,mean_ratio_sem,ratio_of_means,ratio_of_means_se,ratio_bias_pred,d_cv\n",
     );
     let mut log = String::new();
-    for base in ["true", "proc"] {
-        let (cn, cd) = (format!("num_{base}"), format!("rrr_{base}"));
+    // 規格化を割り戻した分子（--counts on の新しい出力）があれば、正しい基準の RRR で割ったものも比べる
+    let mut bases = vec![
+        ("true", "num_true", "rrr_true"),
+        ("proc", "num_proc", "rrr_proc"),
+    ];
+    if rows[0].contains_key("num_proc_icf") {
+        bases.push(("true_icf", "num_true_icf", "rrr_true"));
+        bases.push(("proc_icf", "num_proc_icf", "rrr_true"));
+    }
+    for (base, cn, cd) in bases {
+        let (cn, cd) = (cn.to_string(), cd.to_string());
         let (mut sum_mr, mut sum_rm, mut sum_pred) = (0.0, 0.0, 0.0);
         let (mut n_rm_sig, mut n_mr_sig, mut n_pred_match) = (0, 0, 0);
         for &(a, b, c) in &keys {
