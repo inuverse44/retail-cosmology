@@ -1257,6 +1257,8 @@ pub struct FieldModel {
     /// 店を半分ずつ A・B に分け、B を正しい基準・B 自身の選択関数・A の選択関数の三通りで測る列を足す（#94）。
     /// 分け方は run ごとの別の乱数列で決めるので、もとの列は変わらない。
     pub split: bool,
+    /// ζ の分子と分母（組の数で割ったもの）を true・proc それぞれ書く列を足す（#94）。もとの列は変わらない。
+    pub counts: bool,
 }
 
 /// [`FieldModel`] の密度場を生成し、true/proc の ξ、ζ と切り捨て割合を書く。
@@ -1360,10 +1362,14 @@ pub fn field_mocks(
         )?;
     }
     let mut z_out = String::from(if split {
-        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected,zeta_half_true,zeta_half_proc,zeta_half_split\n"
+        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected,zeta_half_true,zeta_half_proc,zeta_half_split"
     } else {
-        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n"
+        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected"
     });
+    if model.counts {
+        z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc");
+    }
+    z_out.push('\n');
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
     let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_legacy));
     eprintln!(
@@ -1490,6 +1496,9 @@ pub fn field_mocks(
         let zh = halves
             .as_ref()
             .map(|(_, ts)| ts.each_ref().map(TripleCounts::szapudi_szalay));
+        let parts = model
+            .counts
+            .then(|| (t_true.szapudi_szalay_parts(), t_proc.szapudi_szalay_parts()));
         for b in bins.used() {
             if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
                 continue;
@@ -1506,6 +1515,13 @@ pub fn field_mocks(
                     let v = if t.rrr[b] == 0 { f64::NAN } else { zh[j][b] };
                     write!(z_out, ",{v:.6}")?;
                 }
+            }
+            if let Some((pt, pp)) = &parts {
+                write!(
+                    z_out,
+                    ",{:.9e},{:.9e},{:.9e},{:.9e}",
+                    pt[b].0, pt[b].1, pp[b].0, pp[b].1
+                )?;
             }
             writeln!(z_out)?;
         }
@@ -2720,6 +2736,100 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
             "{label}（{cols}）：比べる列の平均 {mean:+.5}、負 {neg}/16、−2 SE 未満 {sig}/16、差が正 {pos_diff}/16、差が 2 SE 超 {sig_diff}/16"
         )?;
     }
+    Ok(log)
+}
+
+/// ζ̂ = 分子 ÷ 分母 の、比の平均と平均の比を比べる（#94）。`zeta_field --counts on` の出力を読む。
+///
+/// run ごとの分子 N と分母 D（どちらも組の数で割ったもの）から、ビンごとに
+/// - 比の平均 E[N/D] とその平均の誤差
+/// - 平均の比 E[N]/E[D] と、その jackknife（run を一つずつ抜く）の誤差
+/// - 比の偏りの一次の見積もり −Cov(N, D)/E[D]² + E[N] Var(D)/E[D]³
+///
+/// を求め、data/zeta/ratio_`label`.csv に書く。基準は true と proc の両方。
+pub fn ratio_decomposition(
+    root: &Path,
+    label: &str,
+    file: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let rows: Vec<_> = results::read_numeric_csv(&root.join(file))?
+        .into_iter()
+        .filter(|r| r["run"] >= 0.0)
+        .collect();
+    if !rows.first().is_some_and(|r| r.contains_key("num_proc")) {
+        return Err(format!("{file} に num_proc の列がない（--counts on で作る）").into());
+    }
+    let keys: std::collections::BTreeSet<(usize, usize, usize)> = rows
+        .iter()
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize))
+        .collect();
+    let mut out = String::from(
+        "k1,k2,k3,r1_km,r2_km,r3_km,baseline,runs,mean_ratio,mean_ratio_sem,ratio_of_means,ratio_of_means_se,ratio_bias_pred,d_cv\n",
+    );
+    let mut log = String::new();
+    for base in ["true", "proc"] {
+        let (cn, cd) = (format!("num_{base}"), format!("rrr_{base}"));
+        let (mut sum_mr, mut sum_rm, mut sum_pred) = (0.0, 0.0, 0.0);
+        let (mut n_rm_sig, mut n_mr_sig, mut n_pred_match) = (0, 0, 0);
+        for &(a, b, c) in &keys {
+            let v: Vec<_> = rows
+                .iter()
+                .filter(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize) == (a, b, c))
+                .collect();
+            let n: Vec<f64> = v.iter().map(|r| r[&cn]).collect();
+            let d: Vec<f64> = v.iter().map(|r| r[&cd]).collect();
+            let m = n.len() as f64;
+            let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len() as f64;
+            let ratio: Vec<f64> = n.iter().zip(&d).map(|(x, y)| x / y).collect();
+            let mr = mean(&ratio);
+            let mr_sem =
+                (ratio.iter().map(|x| (x - mr).powi(2)).sum::<f64>() / (m - 1.0) / m).sqrt();
+            let (en, ed) = (mean(&n), mean(&d));
+            let rm = en / ed;
+            // jackknife：run を一つずつ抜いた平均の比
+            let (sn, sd): (f64, f64) = (n.iter().sum(), d.iter().sum());
+            let jk: Vec<f64> = n.iter().zip(&d).map(|(x, y)| (sn - x) / (sd - y)).collect();
+            let jm = mean(&jk);
+            let rm_se = ((m - 1.0) / m * jk.iter().map(|x| (x - jm).powi(2)).sum::<f64>()).sqrt();
+            let cov = n
+                .iter()
+                .zip(&d)
+                .map(|(x, y)| (x - en) * (y - ed))
+                .sum::<f64>()
+                / (m - 1.0);
+            let var_d = d.iter().map(|y| (y - ed).powi(2)).sum::<f64>() / (m - 1.0);
+            let pred = -cov / (ed * ed) + en * var_d / ed.powi(3);
+            let d_cv = var_d.sqrt() / ed;
+            sum_mr += mr;
+            sum_rm += rm;
+            sum_pred += pred;
+            n_rm_sig += usize::from(rm.abs() > 2.0 * rm_se);
+            n_mr_sig += usize::from(mr.abs() > 2.0 * mr_sem);
+            n_pred_match += usize::from(((mr - rm) - pred).abs() <= 2.0 * mr_sem);
+            writeln!(
+                out,
+                "{a},{b},{c},{:.3},{:.3},{:.3},{base},{},{mr:.6},{mr_sem:.6},{rm:.6},{rm_se:.6},{pred:.6},{d_cv:.5}",
+                v[0]["r1_km"],
+                v[0]["r2_km"],
+                v[0]["r3_km"],
+                n.len()
+            )?;
+        }
+        let k = keys.len() as f64;
+        writeln!(
+            log,
+            "{label} {base}：16 ビンの平均で、比の平均 {:+.5}、平均の比 {:+.5}、比の偏りの見積もり {:+.5}。\
+             比の平均が 2 SE を超えるビン {n_mr_sig}/{}、平均の比が 2 SE を超えるビン {n_rm_sig}/{}、\
+             （比の平均 − 平均の比）が見積もりと 2 SE 以内 {n_pred_match}/{}",
+            sum_mr / k,
+            sum_rm / k,
+            sum_pred / k,
+            keys.len(),
+            keys.len(),
+            keys.len()
+        )?;
+    }
+    results::write_text(&root.join(format!("data/zeta/ratio_{label}.csv")), &out)?;
     Ok(log)
 }
 
