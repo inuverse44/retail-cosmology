@@ -1324,7 +1324,7 @@ pub fn field_mocks(
         .map(Unit::from)
         .collect();
     let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
-    let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
+    let draw_sel = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| {
         sample_selected(
             &grid,
             n,
@@ -1333,7 +1333,9 @@ pub fn field_mocks(
             2 * n,
             rng,
         )
-        .points
+    };
+    let draw = |sr: &SmoothRatio, n: usize, rng: &mut SplitMix64| -> Vec<LatLon> {
+        draw_sel(sr, n, rng).points
     };
     let real = units(&pts);
     let sr_real = SmoothRatio::new(&real, &refs, r_km);
@@ -1367,7 +1369,7 @@ pub fn field_mocks(
         "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected"
     });
     if model.counts {
-        z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc");
+        z_out.push_str(",num_true,rrr_true,num_proc,rrr_proc,num_true_icf,num_proc_icf");
     }
     z_out.push('\n');
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
@@ -1377,7 +1379,11 @@ pub fn field_mocks(
         pool.len(),
         t0.elapsed().as_secs_f64()
     );
-    let mut diagnostics = String::from("run,clipped_fraction,elapsed_seconds\n");
+    let mut diagnostics = String::from(if model.counts {
+        "run,clipped_fraction,elapsed_seconds,alpha,beta,proc_cap_clipped,proc_candidates\n"
+    } else {
+        "run,clipped_fraction,elapsed_seconds\n"
+    });
     let first_run = start.unwrap_or(0);
     let legacy_stream = model.second.is_none() && start.is_none();
     for run in first_run
@@ -1441,7 +1447,28 @@ pub fn field_mocks(
             }
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
-        let r_proc = units(&draw(&sr_mock, p.n_random, rng_m));
+        let sel_proc = draw_sel(&sr_mock, p.n_random, rng_m);
+        let r_proc = units(&sel_proc.points);
+
+        // 全体で割る規格化の量（#94、--counts on のときだけ）。
+        // 店：池から重み w で店の数だけ選ぶので、店の割合の密度は W(1+δ)/(1+α)、1+α = 池での w の平均。
+        // ランダム（店と同じ手順）：割合の密度は W(1+δ_R)/(1+β)。1+δ_R = (1+α) S_mock/S_real とおくと
+        // 1+β = (1+α)⟨S_mock/S_real⟩_W。⟨⟩_W は池（W に比例して撒いた点）の 8 個に 1 個で平均する。
+        let norm = if model.counts {
+            let alpha = w.iter().sum::<f64>() / w.len() as f64 - 1.0;
+            let (mut s, mut m) = (0.0, 0usize);
+            for q in pool.iter().step_by(8) {
+                let den = sr_real.eval(q);
+                if den > 0.0 {
+                    s += sr_mock.eval(q) / den;
+                    m += 1;
+                }
+            }
+            let beta = (1.0 + alpha) * s / m as f64 - 1.0;
+            Some((alpha, beta))
+        } else {
+            None
+        };
 
         // 半分に分けた測り方（#94）。もとの乱数列を使わないよう、run ごとの別の列で分ける。
         let halves = if split {
@@ -1499,6 +1526,13 @@ pub fn field_mocks(
         let parts = model
             .counts
             .then(|| (t_true.szapudi_szalay_parts(), t_proc.szapudi_szalay_parts()));
+        // 規格化を割り戻した分子（店は 1+α、店と同じ手順のランダムは 1+β を掛ける。正しい基準のランダムは 1）
+        let icf = norm.map(|(a, bt)| {
+            (
+                t_true.szapudi_szalay_numerator_scaled(1.0 + a, 1.0),
+                t_proc.szapudi_szalay_numerator_scaled(1.0 + a, 1.0 + bt),
+            )
+        });
         for b in bins.used() {
             if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
                 continue;
@@ -1523,6 +1557,9 @@ pub fn field_mocks(
                     pt[b].0, pt[b].1, pp[b].0, pp[b].1
                 )?;
             }
+            if let Some((it, ip)) = &icf {
+                write!(z_out, ",{:.9e},{:.9e}", it[b], ip[b])?;
+            }
             writeln!(z_out)?;
         }
         eprintln!(
@@ -1531,12 +1568,20 @@ pub fn field_mocks(
             100.0 * clipped as f64 / pool.len() as f64,
             t0.elapsed().as_secs_f64()
         );
-        writeln!(
+        write!(
             diagnostics,
             "{run},{:.6},{:.3}",
             clipped as f64 / pool.len() as f64,
             t0.elapsed().as_secs_f64()
         )?;
+        if let Some((a, bt)) = norm {
+            write!(
+                diagnostics,
+                ",{a:.6},{bt:.6},{},{}",
+                sel_proc.clipped, sel_proc.candidates
+            )?;
+        }
+        writeln!(diagnostics)?;
     }
     results::write_text(&root.join(format!("{stem}_diagnostics.csv")), &diagnostics)?;
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
@@ -2808,8 +2853,17 @@ pub fn ratio_decomposition(
         "k1,k2,k3,r1_km,r2_km,r3_km,baseline,runs,mean_ratio,mean_ratio_sem,ratio_of_means,ratio_of_means_se,ratio_bias_pred,d_cv\n",
     );
     let mut log = String::new();
-    for base in ["true", "proc"] {
-        let (cn, cd) = (format!("num_{base}"), format!("rrr_{base}"));
+    // 規格化を割り戻した分子（--counts on の新しい出力）があれば、正しい基準の RRR で割ったものも比べる
+    let mut bases = vec![
+        ("true", "num_true", "rrr_true"),
+        ("proc", "num_proc", "rrr_proc"),
+    ];
+    if rows[0].contains_key("num_proc_icf") {
+        bases.push(("true_icf", "num_true_icf", "rrr_true"));
+        bases.push(("proc_icf", "num_proc_icf", "rrr_true"));
+    }
+    for (base, cn, cd) in bases {
+        let (cn, cd) = (cn.to_string(), cd.to_string());
         let (mut sum_mr, mut sum_rm, mut sum_pred) = (0.0, 0.0, 0.0);
         let (mut n_rm_sig, mut n_mr_sig, mut n_pred_match) = (0, 0, 0);
         for &(a, b, c) in &keys {

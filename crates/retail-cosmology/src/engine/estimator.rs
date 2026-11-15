@@ -99,6 +99,27 @@ impl TripleCounts {
             .collect()
     }
 
+    /// 店の割合の密度を `sd` 倍、ランダムの割合の密度を `sr` 倍にしたときの Szapudi--Szalay の分子（#94）。
+    /// 店とランダムの数を決めて全体で割る規格化を割り戻すのに使う。`sd = sr = 1` なら
+    /// [`Self::szapudi_szalay_parts`] の分子と同じ。RRR が 0 のビンは NaN。
+    pub fn szapudi_szalay_numerator_scaled(&self, sd: f64, sr: f64) -> Vec<f64> {
+        let (nd, nr) = (self.n_d as f64, self.n_r as f64);
+        let c2 = |n: f64| n * (n - 1.0) / 2.0;
+        let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+        (0..self.ddd.len())
+            .map(|b| {
+                if self.rrr[b] == 0 {
+                    return f64::NAN;
+                }
+                let ddd = self.ddd[b] as f64 / c3(nd) * sd.powi(3);
+                let ddr = self.ddr[b] as f64 / (c2(nd) * nr) * sd * sd * sr;
+                let drr = self.drr[b] as f64 / (nd * c2(nr)) * sd * sr * sr;
+                let rrr = self.rrr[b] as f64 / c3(nr) * sr.powi(3);
+                ddd - 3.0 * ddr + 3.0 * drr - rrr
+            })
+            .collect()
+    }
+
     pub fn szapudi_szalay(&self) -> Vec<f64> {
         let (nd, nr) = (self.n_d as f64, self.n_r as f64);
         let c2 = |n: f64| n * (n - 1.0) / 2.0;
@@ -620,6 +641,22 @@ mod tests {
         let r = units(&uniform_patch(2000, &mut rng));
         let z = TripleCounts::compute(&d, &r, &one_triangle_bin(2.0, 20.0)).szapudi_szalay()[0];
         assert!(z.abs() < 0.1, "相関のない点で ζ = {z}");
+    }
+
+    /// 分子と分母に分けたもの・規格化を掛けた分子が、もとの ζ と矛盾しない（#94）。
+    #[test]
+    fn szapudi_szalay_parts_and_scaled_numerator_agree() {
+        let mut rng = SplitMix64::new(12);
+        let d = units(&uniform_patch(300, &mut rng));
+        let r = units(&uniform_patch(900, &mut rng));
+        let t = TripleCounts::compute(&d, &r, &one_triangle_bin(2.0, 20.0));
+        let z = t.szapudi_szalay()[0];
+        let (n, rrr) = t.szapudi_szalay_parts()[0];
+        assert_eq!(z, n / rrr);
+        assert_eq!(t.szapudi_szalay_numerator_scaled(1.0, 1.0)[0], n);
+        // 店とランダムを同じ倍率にすると、分子はその三乗倍
+        let s = t.szapudi_szalay_numerator_scaled(1.1, 1.1)[0];
+        assert!((s - 1.1f64.powi(3) * n).abs() < 1e-12 * rrr);
     }
 
     /// 親 60 個のまわりに標準偏差 2 km で 10 個ずつ子を撒いた点（Neyman–Scott の模型）では、
