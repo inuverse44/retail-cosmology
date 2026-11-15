@@ -6,6 +6,9 @@
 //! 書くもの：data/zeta/selection_mismatch_seed<種>.csv（r ごとの ⟨w²(1−w)⟩₃、⟨(w−1)³⟩₃、⟨w⟩₃）
 //! --tri-thin N をつけると、池を N 個に 1 個に間引いた点で三角形を数え、三角形のビンごとの係数も
 //! data/zeta/selection_mismatch_tri_seed<種>_thin<N>.csv に書く（N = 4 で約 10 分、N = 8 で約 1.5 分）。
+//! --tri-exact on（--tri-thin と一緒に）：三角形の重みをランダムの三角形の数（R³）に直し、
+//! 三頂点の w を平均しない係数（辺ごとの ⟨w_a w_b (1 − w_c)⟩₃ と ⟨Π(w − 1)⟩₃）も
+//! data/zeta/selection_mismatch_tri_exact_seed<種>_thin<N>.csv に書く。
 
 use std::path::PathBuf;
 
@@ -25,6 +28,7 @@ fn main() {
             "--seed" => p.seed = v.parse().unwrap(),
             "--footprint" => p.footprint = Some(v.parse().unwrap()),
             "--tri-thin" => p.tri_thin = Some(v.parse().unwrap()),
+            "--tri-exact" => p.tri_exact = v == "on",
             _ => panic!("知らない引数：{k}"),
         }
     }

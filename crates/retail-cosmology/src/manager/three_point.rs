@@ -67,6 +67,8 @@ pub struct Params {
     pub tri_thin: Option<usize>,
     /// clustered_mocks：基準ごとに ζ̂ の分子と分母（組の数で割ったもの）も書く（比の偏りの切り分け、#94）
     pub counts: bool,
+    /// selection_mismatch（tri_thin と一緒に）：三角形の重みを R³ に直し、近似しない係数も求める（#94）
+    pub tri_exact: bool,
 }
 
 impl Params {
@@ -90,6 +92,7 @@ impl Params {
             tag: String::new(),
             tri_thin: None,
             counts: false,
+            tri_exact: false,
         }
     }
 }
@@ -2879,8 +2882,9 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     }
 
     // 表 3：ガウス場の負の ζ̂ の内訳（二度ならしたずれの見込みと、比の偏り）。
-    // ずれの係数は、三角形の数そのもので求めたもの（zeta_mismatch --seed 1 --tri-thin 4 が書いたもの）。
-    const MISMATCH: &str = "data/zeta/selection_mismatch_tri_seed1_thin4.csv";
+    // ずれの係数は、三角形の数そのもので、ランダムの三角形の数（R³）の重みで、三頂点の w を平均せずに
+    // 求めたもの（zeta_mismatch --seed 1 --tri-thin 4 --tri-exact on が書いたもの）。
+    const MISMATCH: &str = "data/zeta/selection_mismatch_tri_exact_seed1_thin4.csv";
     const F: &str = "data/zeta/field_jp_2026-11-12_cosmos";
     let budget: [(&str, &str, &str, String); 7] = [
         ("gauss0", "0", "1", format!("{F}_a0_s10_m94_amp0.csv")),
@@ -2934,7 +2938,7 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     log.push_str(&mismatch_prediction(root, MISMATCH, &labels)?);
     for (label, amp, seed, file) in &budget {
         let pred = results::read_numeric_csv(
-            &root.join(format!("data/zeta/mismatch_pred_{label}_tri.csv")),
+            &root.join(format!("data/zeta/mismatch_pred_{label}_tri_exact.csv")),
         )?;
         let n = pred.len() as f64;
         let obs = pred.iter().map(|r| r["observed"]).sum::<f64>() / n;
@@ -3117,6 +3121,63 @@ pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std
             )),
             &tout,
         )?;
+
+        // --tri-exact：池の三角形は W³ = w_i w_j w_k R³ で並ぶので、1/(w_i w_j w_k) を掛けて
+        // ランダムの三角形の数（R³）の重みに直す。そのうえで
+        // - 三頂点の平均の w での ⟨w²(1−w)⟩₃、⟨(w−1)³⟩₃（重みだけ直したもの）
+        // - 近似しない形：⟨Π(w_a − 1)⟩₃ と、辺 ab ごとの ⟨w_a w_b (1 − w_c)⟩₃（c は向かいの頂点）。
+        //   辺は短い順に並べ、ビンの k₁ ≤ k₂ ≤ k₃ に合わせる（c1・c2・c3）
+        // を求める。ζ̂ ≃ ⟨Π(w − 1)⟩₃ − Σ_辺 ⟨w_a w_b (1 − w_c)⟩₃ ξ_ab（ζ = 0 のとき）。
+        if p.tri_exact {
+            let t2 = Instant::now();
+            let (cnt, sums) = crate::engine::triple_count::accumulate_aaa(&tp, &bins, |i, j, k| {
+                let u = 1.0 / (tw[i] * tw[j] * tw[k]);
+                let w = (tw[i] + tw[j] + tw[k]) / 3.0;
+                // 辺（弦の長さの 2 乗）と、その向かいの頂点
+                let mut s = [
+                    (chord2(&tp[i], &tp[j]), i, j, k),
+                    (chord2(&tp[i], &tp[k]), i, k, j),
+                    (chord2(&tp[j], &tp[k]), j, k, i),
+                ];
+                s.sort_unstable_by(|x, y| x.0.total_cmp(&y.0));
+                let side = |e: (f64, usize, usize, usize)| tw[e.1] * tw[e.2] * (1.0 - tw[e.3]);
+                [
+                    u * w * w * (1.0 - w),
+                    u * (w - 1.0).powi(3),
+                    u * (tw[i] - 1.0) * (tw[j] - 1.0) * (tw[k] - 1.0),
+                    u * side(s[0]),
+                    u * side(s[1]),
+                    u * side(s[2]),
+                    u,
+                ]
+            });
+            let mut eout = String::from(
+                "k1,k2,k3,r1_km,r2_km,r3_km,n_tri,w2_1mw,wm1_cubed,exact_const,c1,c2,c3\n",
+            );
+            for b in bins.used().into_iter().filter(|&b| cnt[b] > 0) {
+                let (k1, k2, k3) = bins.unflatten(b);
+                let su = sums[b][6];
+                let [a2, a3, e0, c1, c2, c3, _] = sums[b].map(|s| s / su);
+                writeln!(
+                    eout,
+                    "{k1},{k2},{k3},{:.3},{:.3},{:.3},{},{a2:.6},{a3:.6},{e0:.6},{c1:.6},{c2:.6},{c3:.6}",
+                    c[k1], c[k2], c[k3], cnt[b]
+                )?;
+                writeln!(
+                    log,
+                    "R³ の重み ({:.1}, {:.1}, {:.1}) km：平均の w で ⟨w²(1−w)⟩₃ = {a2:+.5}、⟨(w−1)³⟩₃ = {a3:+.6}；近似なしで辺ごとに {c1:+.5}・{c2:+.5}・{c3:+.5}、⟨Π(w−1)⟩₃ = {e0:+.6}",
+                    c[k1], c[k2], c[k3]
+                )?;
+            }
+            writeln!(log, "近似なしの計算：{:.1} 秒", t2.elapsed().as_secs_f64())?;
+            results::write_text(
+                &root.join(format!(
+                    "data/zeta/selection_mismatch_tri_exact_seed{}_thin{thin}.csv",
+                    p.seed
+                )),
+                &eout,
+            )?;
+        }
     }
     Ok(log)
 }
@@ -3201,7 +3262,16 @@ pub fn mismatch_prediction(
     // 係数の CSV に k1 の列があれば（zeta_mismatch --tri-thin の出力）、三角形のビンごとに引く。
     // 出力のファイル名には _tri をつけ、r で補間した前の結果と分ける。
     let per_bin = mm.first().is_some_and(|m| m.contains_key("k1"));
-    let suffix = if per_bin { "_tri" } else { "" };
+    // c1 の列があれば（zeta_mismatch --tri-exact on の出力）、近似しない形
+    // ⟨Π(w − 1)⟩₃ − Σ_辺 c_s ξ̂(k_s) を見込みにし、R³ の重みで三頂点の平均をとった見込みも並べる。
+    let exact = mm.first().is_some_and(|m| m.contains_key("c1"));
+    let suffix = if exact {
+        "_tri_exact"
+    } else if per_bin {
+        "_tri"
+    } else {
+        ""
+    };
     let coef_bin = |r: &std::collections::HashMap<String, f64>, col: &str| -> f64 {
         mm.iter()
             .find(|m| m["k1"] == r["k1"] && m["k2"] == r["k2"] && m["k3"] == r["k3"])
@@ -3238,23 +3308,47 @@ pub fn mismatch_prediction(
                 .find(|r| r["k"] == k)
                 .map_or(f64::NAN, |r| r["proc_mean"])
         };
-        let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,observed,observed_sem,predicted\n");
+        let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,observed,observed_sem,predicted");
+        out.push_str(if exact { ",predicted_mean\n" } else { "\n" });
         let (mut so, mut sp, mut n_within, mut n_same_sign) = (0.0, 0.0, 0, 0);
+        let (mut sm, mut n_within_m) = (0.0, 0);
         for r in &z {
             let sum_xi = xi(r["k1"]) + xi(r["k2"]) + xi(r["k3"]);
-            let pred = coef(r, "wm1_cubed") - coef(r, "w2_1mw") * sum_xi;
+            let pred_mean = coef(r, "wm1_cubed") - coef(r, "w2_1mw") * sum_xi;
+            let pred = if exact {
+                coef(r, "exact_const")
+                    - (coef(r, "c1") * xi(r["k1"])
+                        + coef(r, "c2") * xi(r["k2"])
+                        + coef(r, "c3") * xi(r["k3"]))
+            } else {
+                pred_mean
+            };
             let (obs, sem) = (r["proc_mean"], r["proc_sem"]);
             so += obs;
             sp += pred;
+            sm += pred_mean;
             n_within += usize::from((obs - pred).abs() <= 2.0 * sem);
+            n_within_m += usize::from((obs - pred_mean).abs() <= 2.0 * sem);
             n_same_sign += usize::from(obs.signum() == pred.signum());
-            writeln!(
+            write!(
                 out,
                 "{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{obs:.6},{sem:.6},{pred:.6}",
                 r["k1"], r["k2"], r["k3"], r["r1_km"], r["r2_km"], r["r3_km"]
             )?;
+            if exact {
+                write!(out, ",{pred_mean:.6}")?;
+            }
+            out.push('\n');
         }
         let n = z.len() as f64;
+        if exact {
+            writeln!(
+                log,
+                "{label}（R³ の重み、三頂点の平均）：見込み {:+.5}、実測と 2 SE 以内 {n_within_m}/{}",
+                sm / n,
+                z.len()
+            )?;
+        }
         results::write_text(
             &root.join(format!("data/zeta/mismatch_pred_{label}{suffix}.csv")),
             &out,
@@ -3288,8 +3382,14 @@ pub fn mismatch_prediction(
     let (mut n_below, mut diff) = (0usize, 0.0);
     let mut each = Vec::new();
     for r in &cz {
-        let pred =
-            coef(r, "wm1_cubed") - coef(r, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]));
+        let pred = if exact {
+            coef(r, "exact_const")
+                - (coef(r, "c1") * cxi(r["k1"])
+                    + coef(r, "c2") * cxi(r["k2"])
+                    + coef(r, "c3") * cxi(r["k3"]))
+        } else {
+            coef(r, "wm1_cubed") - coef(r, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]))
+        };
         lo = lo.min(pred);
         hi = hi.max(pred);
         sum += pred;
