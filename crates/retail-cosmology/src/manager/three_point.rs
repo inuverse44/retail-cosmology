@@ -20,7 +20,7 @@ use crate::engine::random_catalog::{
 use crate::engine::selection_function::{
     RegionalRatio, SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
 };
-use crate::engine::triple_count::TriangleBins;
+use crate::engine::triple_count::{TriangleBins, count_aaa, count_aab};
 use crate::util::geo::{LatLon, Unit, chord2, km_to_chord2};
 use crate::util::rng::SplitMix64;
 
@@ -547,6 +547,31 @@ pub fn toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::Error
     let path = "data/toy/zeta_toy.csv".to_string();
     results::write_text(&root.join(&path), &out)?;
     Ok(path)
+}
+
+/// 同じ親の子である二点（子は親ごとに `m` 個続けて並ぶ）と、ランダムカタログ `r` の一点の三角形を、ビンごとに数える。
+/// DDR のうち、二点が同じ親の子であるものにあたる。
+fn same_parent_ddr(d: &[Unit], m: usize, r: &[Unit], bins: &TriangleBins) -> Vec<u64> {
+    let max = *bins.sides().edges().last().unwrap();
+    let g = crate::util::spatial::UnitGrid::build(r, max.sqrt());
+    let mut out = vec![0u64; bins.len()];
+    for grp in d.chunks(m) {
+        for i in 0..grp.len() {
+            for j in i + 1..grp.len() {
+                let cij = chord2(&grp[i], &grp[j]);
+                if cij >= max {
+                    continue;
+                }
+                g.for_each_near(&grp[i], max.sqrt(), |k| {
+                    if let Some(b) = bins.index(cij, chord2(&grp[i], &r[k]), chord2(&grp[j], &r[k]))
+                    {
+                        out[b] += 1;
+                    }
+                });
+            }
+        }
+    }
+    out
 }
 
 /// 同じ親の子である三つ組のうち、三角形のビンに入るものをビンごとに数える（子は親ごとに `m` 個続けて並ぶ）。
@@ -3409,6 +3434,395 @@ pub fn ratio_decomposition(
     Ok(log)
 }
 
+/// 丸い塊の模擬データ（[`clustered_mocks`]）の平均の密度と、match の基準（親ごとに最初の子だけ）の密度の比 w を、
+/// 池の点ごとの期待値として求め、式 eq:zeta-edge の ζ_w を見込む（#94）。
+///
+/// 池と親の選び方は [`clustered_mocks`] と同じ（同じ種なら同じ池）。池の各点を親の候補として、
+/// - 基準：点 j が最初の子に選ばれる確率（距離の正規分布の重みの割合）を足す（厳密）
+/// - 模擬データ：同じ点を取らずに m 個選ぶ抽出を `reps` 回まわし、選ばれた回数の平均を足す
+///   （乱数のキー ln u / 重み の大きい順に m 個。重みに比例して順に選ぶのと同じ分布）
+///
+/// 近くの池の点が m 個に満たない親は、模擬データと同じく使わない。w_j = 模擬の割合 / 基準の割合、
+/// g_j = 基準の割合 × 池の点の数。池を `p.tri_thin`（既定 8）個に 1 個に間引いた点で三角形を数え、
+/// 重み g_i g_j g_k で ⟨w²(1−w)⟩₃、⟨(w−1)³⟩₃ を求める（三角形の w は三頂点の平均）。
+/// `stem` の _ic.csv（[`clustered_ic`] の出力）と _xi.csv の ξ̂_match から、
+/// 実測、数を決めたことによるずれ、ζ_w = ⟨(w−1)³⟩₃ − ⟨w²(1−w)⟩₃ Σξ̂ を並べる。
+/// 書くもの：`stem`_wchild.csv
+pub fn clustered_child_density(
+    root: &Path,
+    p: &Params,
+    m: usize,
+    sigma_km: f64,
+    reps: usize,
+    stem: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let t0 = Instant::now();
+    let r_km = p.footprint.ok_or("--footprint R が要る")?;
+    let (grid, _) = grid_of(root, &p.country)?;
+    let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
+        .map_err(|e| format!("{} がない：{e}", p.stores))?
+        .into_iter()
+        .filter(|(c, _)| *c == p.chain)
+        .map(|(_, q)| q)
+        .collect();
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    // clustered_mocks と同じ乱数列で、参照の点と点の池を作る
+    let mut rng_ref = SplitMix64::new(p.seed ^ 0x3E7A_0000_0000_0000);
+    let refs: Vec<Unit> = units(&sample(&grid, p.n_ref, Weight::Population, &mut rng_ref));
+    let sr_real = SmoothRatio::new(&units(&pts), &refs, r_km);
+    let mut rng_m = SplitMix64::new(p.seed ^ 0xC1A5_7E00_0000_0000);
+    let n_pool = 20 * p.n_random;
+    let pool = units(
+        &sample_selected(
+            &grid,
+            n_pool,
+            Weight::Population,
+            |q| sr_real.eval(&Unit::from(q)),
+            2 * n_pool,
+            &mut rng_m,
+        )
+        .points,
+    );
+    let cut = km_to_chord2(3.0 * sigma_km);
+    let two_s2 = 2.0 * km_to_chord2(sigma_km);
+    let g_pool = crate::util::spatial::UnitGrid::build(&pool, cut.sqrt());
+    let mut first = vec![0.0; pool.len()];
+    let mut inc = vec![0.0; pool.len()];
+    let mut rng = SplitMix64::new(p.seed ^ 0x0C41_1D00_0000_0000);
+    let (mut used, mut keys) = (0usize, Vec::new());
+    for parent in &pool {
+        let mut near: Vec<(usize, f64)> = Vec::new();
+        g_pool.for_each_near(parent, cut.sqrt(), |i| {
+            let c2 = chord2(parent, &pool[i]);
+            if c2 < cut {
+                near.push((i, (-c2 / two_s2).exp()));
+            }
+        });
+        if near.len() < m {
+            continue;
+        }
+        used += 1;
+        let total: f64 = near.iter().map(|x| x.1).sum();
+        for &(j, wt) in &near {
+            first[j] += wt / total;
+        }
+        for _ in 0..reps {
+            keys.clear();
+            keys.extend(
+                near.iter()
+                    .map(|&(j, wt)| (rng.next_f64().max(1e-300).ln() / wt, j)),
+            );
+            // 大きい順に m 個
+            keys.select_nth_unstable_by(m - 1, |a, b| b.0.total_cmp(&a.0));
+            for &(_, j) in &keys[..m] {
+                inc[j] += 1.0 / reps as f64;
+            }
+        }
+    }
+    let (sf, si) = (first.iter().sum::<f64>(), inc.iter().sum::<f64>());
+    let np = pool.len() as f64;
+    let g: Vec<f64> = first.iter().map(|x| x / sf * np).collect();
+    let w: Vec<f64> = first
+        .iter()
+        .zip(&inc)
+        .map(|(f, i)| if *f > 0.0 { (i / si) / (f / sf) } else { 1.0 })
+        .collect();
+    // 基準の密度で重みをつけた w の平均と、1 からのずれの二乗平均の平方根
+    let sg: f64 = g.iter().sum();
+    let wm = g.iter().zip(&w).map(|(a, b)| a * b).sum::<f64>() / sg;
+    let wrms = (g
+        .iter()
+        .zip(&w)
+        .map(|(a, b)| a * (b - 1.0).powi(2))
+        .sum::<f64>()
+        / sg)
+        .sqrt();
+    let mut log = format!(
+        "池 {} 点、使った親 {used}、くり返し {reps}（{:.1} 秒）。基準の重みで ⟨w⟩ = {wm:.4}、w − 1 の二乗平均の平方根 {wrms:.4}\n",
+        pool.len(),
+        t0.elapsed().as_secs_f64()
+    );
+
+    let thin = p.tri_thin.unwrap_or(8);
+    let idx: Vec<usize> = (0..pool.len()).step_by(thin).collect();
+    let tp: Vec<Unit> = idx.iter().map(|&i| pool[i]).collect();
+    let (tg, tw): (Vec<f64>, Vec<f64>) = idx.iter().map(|&i| (g[i], w[i])).unzip();
+    let (lo, hi, nb) = p.sides_km;
+    let sides_km = Bins::log(lo, hi, nb);
+    let bins = TriangleBins::new(sides_km.map(km_to_chord2));
+    let t1 = Instant::now();
+    let (_, sums) = crate::engine::triple_count::accumulate_aaa(&tp, &bins, |i, j, k| {
+        let wt = tg[i] * tg[j] * tg[k];
+        let x = (tw[i] + tw[j] + tw[k]) / 3.0;
+        [wt * x * x * (1.0 - x), wt * (x - 1.0).powi(3), wt]
+    });
+    writeln!(
+        log,
+        "三角形：点 {} 個（池の {thin} 個に 1 個）、{:.1} 秒",
+        tp.len(),
+        t1.elapsed().as_secs_f64()
+    )?;
+
+    let ic = results::read_numeric_csv(&root.join(format!("{stem}_ic.csv")))?;
+    let xi = results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))?;
+    let xi_mean = |k: f64| {
+        let v: Vec<f64> = xi
+            .iter()
+            .filter(|r| r["run"] >= 0.0 && r["k"] == k)
+            .map(|r| r["xi_match"])
+            .collect();
+        v.iter().sum::<f64>() / v.len() as f64
+    };
+    let n = sides_km.len();
+    let mut out = String::from(
+        "k1,k2,k3,r1_km,r2_km,r3_km,w2_1mw,wm1_cubed,observed,observed_sem,fixed_count,zeta_w,residual\n",
+    );
+    let (mut so, mut sf2, mut sw, mut sr, mut n_within) = (0.0, 0.0, 0.0, 0.0, 0);
+    for r in &ic {
+        let (a, b, c) = (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize);
+        let s = sums[(a * n + b) * n + c];
+        let (a2, a3) = (s[0] / s[2], s[1] / s[2]);
+        let zw = a3 - a2 * (xi_mean(a as f64) + xi_mean(b as f64) + xi_mean(c as f64));
+        let (obs, sem, fc) = (r["observed"], r["observed_sem"], r["predicted"]);
+        let res = obs - fc - zw;
+        so += obs;
+        sf2 += fc;
+        sw += zw;
+        sr += res;
+        n_within += usize::from(res.abs() <= 2.0 * sem);
+        writeln!(
+            out,
+            "{a},{b},{c},{:.3},{:.3},{:.3},{a2:.6},{a3:.6},{obs:.6},{sem:.6},{fc:.6},{zw:.6},{res:.6}",
+            r["r1_km"], r["r2_km"], r["r3_km"]
+        )?;
+        writeln!(
+            log,
+            "({:.0},{:.0},{:.0}) km：⟨w²(1−w)⟩₃ {a2:+.4}、実測 {obs:+.4} ± {sem:.4}、数を決めたずれ {fc:+.4}、ζ_w {zw:+.4}、残り {res:+.4}",
+            r["r1_km"], r["r2_km"], r["r3_km"]
+        )?;
+    }
+    let k = ic.len() as f64;
+    writeln!(
+        log,
+        "{} ビンの平均で、実測 {:+.5}、数を決めたずれ {:+.5}、ζ_w {:+.5}、残り {:+.5}。残りが 2 SE 以内 {n_within}/{}",
+        ic.len(),
+        so / k,
+        sf2 / k,
+        sw / k,
+        sr / k,
+        ic.len()
+    )?;
+    results::write_text(&root.join(format!("{stem}_wchild.csv")), &out)?;
+    Ok(log)
+}
+
+/// 縁のない球面で、親の数と子の数を決めた Neyman–Scott の toy を作り、[`clustered_ic`] の見込みを確かめる（#94）。
+///
+/// 半径 `radius_km` の球面に親を一様に置き、子を標準偏差 `sigma_km` の正規分布で m 個ずつ撒く（店は n 個、
+/// 最後の親は余り）。ランダムカタログは球面に一様な `n_random` 点（全 run で共通）。縁も選択関数もないので
+/// 基準は正確で、ζ̂ − ζ_NS に残るのは親と子の数を決めたことによるずれだけのはず。
+/// 列の名前は zeta_clustered --match on に合わせる（zeta_match・expected_match・xi_match）。
+/// 書くもの：data/toy/ic_sphere_<名前>.csv、_xi.csv、_ic.csv
+#[allow(clippy::too_many_arguments)]
+pub fn ic_sphere_toy(
+    root: &Path,
+    name: &str,
+    radius_km: f64,
+    n: usize,
+    m: usize,
+    sigma_km: f64,
+    n_random: usize,
+    runs: usize,
+    seed: u64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if m < 3 || n < m || runs < 2 || n_random < 3 {
+        return Err("m は 3 以上・n 以下、runs は 2 以上、n_random は 3 以上".into());
+    }
+    let t0 = Instant::now();
+    let mut rng = SplitMix64::new(seed);
+    let uniform = |rng: &mut SplitMix64| -> Unit {
+        let z = 2.0 * rng.next_f64() - 1.0;
+        let phi = std::f64::consts::TAU * rng.next_f64();
+        let s = (1.0 - z * z).sqrt();
+        Unit([s * phi.cos(), s * phi.sin(), z])
+    };
+    // 球面の距離 [km] → 弦の長さの 2 乗（半径 radius_km）
+    let to_chord2 = |d: f64| (2.0 * (d / (2.0 * radius_km)).sin()).powi(2);
+    let (lo, hi, nb) = Params::new(String::new()).sides_km;
+    let sides_km = Bins::log(lo, hi, nb);
+    let cb = sides_km.map(to_chord2);
+    let bins = TriangleBins::new(cb.clone());
+    let c = sides_km.centers();
+    let c3 = |k: f64| k * (k - 1.0) * (k - 2.0) / 6.0;
+    let r: Vec<Unit> = (0..n_random).map(|_| uniform(&mut rng)).collect();
+    let rrr = count_aaa(&r, &bins);
+    eprintln!("RRR {:.1} 秒", t0.elapsed().as_secs_f64());
+    // 二点・三点が同じ親の子である割合（fixed_count_shift と同じ数え方）
+    let c2 = |k: f64| k * (k - 1.0) / 2.0;
+    let (full, rest) = (n / m, n % m);
+    let p_pair = (full as f64 * c2(m as f64) + c2(rest as f64)) / c2(n as f64);
+    let q3 = (full as f64 * c3(m as f64) + c3(rest as f64)) / c3(n as f64);
+    // exact_shift：同じ親の子の二点とランダムの一点の三角形を数えて求めた、近似なしの見込み
+    // −q₃(Σa − 2)、Σa = 3 (DDR_同じ親 / (C(N,2) N_r)) / (RRR / C(N_r,3)) / p
+    let mut z_out =
+        String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_match,expected_match,exact_shift\n");
+    // xi_ns：同じ親の子の組の数 / (RR を点の数で写したもの)。見込みは xi_match ≃ xi_ns − p
+    let mut xi_out = String::from("run,k,r_km,xi_match,xi_ns\n");
+    let n_p = n.div_ceil(m);
+    for run in 0..runs {
+        let mut d = Vec::with_capacity(n_p * m);
+        for _ in 0..n_p {
+            let u = uniform(&mut rng);
+            // 接平面の正規直交基底
+            let a = if u.0[0].abs() < 0.9 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            let cross = |x: [f64; 3], y: [f64; 3]| {
+                [
+                    x[1] * y[2] - x[2] * y[1],
+                    x[2] * y[0] - x[0] * y[2],
+                    x[0] * y[1] - x[1] * y[0],
+                ]
+            };
+            let e1 = cross(u.0, a);
+            let l = (e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2]).sqrt();
+            let e1 = [e1[0] / l, e1[1] / l, e1[2] / l];
+            let e2 = cross(u.0, e1);
+            for _ in 0..m {
+                let (u1, u2) = (rng.next_f64().max(1e-12), rng.next_f64());
+                let th = sigma_km * (-2.0 * u1.ln()).sqrt() / radius_km;
+                let ph = std::f64::consts::TAU * u2;
+                let (ct, st) = (th.cos(), th.sin());
+                let v: [f64; 3] = std::array::from_fn(|i| {
+                    ct * u.0[i] + st * (ph.cos() * e1[i] + ph.sin() * e2[i])
+                });
+                d.push(Unit(v));
+            }
+        }
+        d.truncate(n);
+        let pc = PairCounts::compute(&d, &r, &cb, chord2);
+        // 同じ親の子の組を、辺のビンごとに数える
+        let mut same2 = vec![0u64; sides_km.len()];
+        for grp in d.chunks(m) {
+            for i in 0..grp.len() {
+                for j in i + 1..grp.len() {
+                    if let Some(k) = cb.index(chord2(&grp[i], &grp[j])) {
+                        same2[k] += 1;
+                    }
+                }
+            }
+        }
+        let nr = r.len() as f64;
+        for (k, v) in pc.landy_szalay().iter().enumerate() {
+            let xi_ns = (same2[k] as f64 / c2(d.len() as f64)) / (pc.rr[k] as f64 / c2(nr));
+            writeln!(xi_out, "{run},{k},{:.3},{v:.6},{xi_ns:.6}", c[k])?;
+        }
+        // RRR は全 run で共通なので、最初に一度だけ数えたものを使う
+        let t = TripleCounts {
+            n_d: d.len(),
+            n_r: r.len(),
+            ddd: count_aaa(&d, &bins),
+            ddr: count_aab(&d, &r, &bins),
+            drr: count_aab(&r, &d, &bins),
+            rrr: rrr.clone(),
+        };
+        let z = t.szapudi_szalay();
+        let same = same_parent_triples(&d, m, &bins);
+        let scale = c3(d.len() as f64) / c3(r.len() as f64);
+        let sddr = same_parent_ddr(&d, m, &r, &bins);
+        let nr = r.len() as f64;
+        for b in bins.used() {
+            if t.rrr[b] == 0 {
+                continue;
+            }
+            let (x, y, w) = bins.unflatten(b);
+            let ratio = (sddr[b] as f64 / (c2(d.len() as f64) * nr)) / (t.rrr[b] as f64 / c3(nr));
+            let exact = -q3 * (3.0 * ratio / p_pair - 2.0);
+            writeln!(
+                z_out,
+                "{run},{x},{y},{w},{:.3},{:.3},{:.3},{:.6},{:.6},{exact:.6}",
+                c[x],
+                c[y],
+                c[w],
+                z[b],
+                same[b] as f64 / (t.rrr[b] as f64 * scale)
+            )?;
+        }
+        if run == 0 {
+            eprintln!("1 回目 {:.1} 秒", t0.elapsed().as_secs_f64());
+        }
+    }
+    let stem = format!("data/toy/ic_sphere_{name}");
+    results::write_text(&root.join(format!("{stem}.csv")), &z_out)?;
+    results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;
+    let mut log = format!(
+        "球面 半径 {radius_km} km、店 {n}、子 {m}、σ {sigma_km} km、ランダム {n_random}、{runs} 回（{:.1} 秒）\n",
+        t0.elapsed().as_secs_f64()
+    );
+    // 二点：ξ̂ − ξ_NS の平均と、見込み −p
+    let xr = results::read_numeric_csv(&root.join(format!("{stem}_xi.csv")))?;
+    for (k, ck) in c.iter().enumerate() {
+        let v: Vec<f64> = xr
+            .iter()
+            .filter(|r| r["k"] == k as f64)
+            .map(|r| r["xi_match"] - r["xi_ns"])
+            .collect();
+        let kk = v.len() as f64;
+        let mean = v.iter().sum::<f64>() / kk;
+        let sem = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (kk - 1.0) / kk).sqrt();
+        writeln!(
+            log,
+            "二点 r = {ck:.0} km：ξ̂ − ξ_NS {mean:+.5} ± {sem:.5}、見込み −p = {:+.5}",
+            -p_pair
+        )?;
+    }
+    log.push_str(&fixed_count_shift(root, &stem, m, n)?);
+
+    // 近似なしの見込み（exact_shift）との比較：run ごとに ζ̂ − ζ_NS − exact_shift をとって平均する
+    let rows = results::read_numeric_csv(&root.join(format!("{stem}.csv")))?;
+    let mut keys: Vec<(usize, usize, usize)> = rows
+        .iter()
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize))
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let (mut sd, mut se, mut n_within) = (0.0, 0.0, 0);
+    for key in &keys {
+        let v: Vec<&std::collections::HashMap<String, f64>> = rows
+            .iter()
+            .filter(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize) == *key)
+            .collect();
+        let k = v.len() as f64;
+        let ex = v.iter().map(|r| r["exact_shift"]).sum::<f64>() / k;
+        let diff: Vec<f64> = v
+            .iter()
+            .map(|r| r["zeta_match"] - r["expected_match"] - r["exact_shift"])
+            .collect();
+        let dm = diff.iter().sum::<f64>() / k;
+        let dsem = (diff.iter().map(|x| (x - dm).powi(2)).sum::<f64>() / (k - 1.0) / k).sqrt();
+        sd += dm;
+        se += ex;
+        n_within += usize::from(dm.abs() <= 2.0 * dsem);
+        writeln!(
+            log,
+            "近似なし ({:.0},{:.0},{:.0}) km：見込み {ex:+.4}、実測 − 見込み {dm:+.4} ± {dsem:.4}",
+            v[0]["r1_km"], v[0]["r2_km"], v[0]["r3_km"]
+        )?;
+    }
+    let nk = keys.len() as f64;
+    writeln!(
+        log,
+        "近似なし：{} ビンの平均で、見込み {:+.5}、実測 − 見込み {:+.5}。2 SE 以内 {n_within}/{}",
+        keys.len(),
+        se / nk,
+        sd / nk,
+        keys.len()
+    )?;
+    Ok(log)
+}
+
 /// 親の数と子の数を決めた丸い塊の模擬データで、$\hat\zeta$ が $\zeta_{\mathrm{NS}}$ から決まってずれる分の見込み（#94）。
 ///
 /// 店の数 N を親 ⌈N/m⌉ 個の子に分ける（最後の親は余り）。二点が同じ親の子である割合を p、
@@ -3428,6 +3842,17 @@ pub fn clustered_ic(
         .into_iter()
         .filter(|(c, _)| c == chain)
         .count();
+    fixed_count_shift(root, stem, m, n)
+}
+
+/// [`clustered_ic`] の中身：店の数 `n` を渡して、`stem`.csv（zeta_match・expected_match）と
+/// `stem`_xi.csv（xi_match）から見込みと実測を比べ、`stem`_ic.csv に書く。
+fn fixed_count_shift(
+    root: &Path,
+    stem: &str,
+    m: usize,
+    n: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
     if m < 3 || n < m {
         return Err("--children は 3 以上で、店の数以下".into());
     }
