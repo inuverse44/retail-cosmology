@@ -7,6 +7,8 @@
 //! - 密度の揺らぎ：field_jp_2026-11-12_cosmos_a0.7_s10.csv（PR #90）
 //! - 二つの幅 G・E：docs/field-mocks-81.md の手順
 //! - ガウス場（--sigma 10 --centers 20000 --runs 40）：--amp 0.15・0.3・0.4 に --tag m94_gauss
+//! - 別の種：--amp 0.3 に --seed 2 --tag m94_seed2 --counts on と --seed 3 --tag m94_seed3 --counts on
+//! - 分子と分母：--amp 0.3 と --amp 0.4 に --tag m94_counts --counts on（もとの列は m94_gauss と同じ）
 //! - 店を半分に分けた測り方：--amp 0.3 --tag m94_split --split on
 //!   共通：zeta_field -- 2026-11-12 --country jp --stores data/cosmos_site/cosmos_site_clean_2026-11-12.csv
 //!   --chain COSMOS --footprint 50 --n-random 8000

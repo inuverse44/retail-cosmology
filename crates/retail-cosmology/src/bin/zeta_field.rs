@@ -12,6 +12,8 @@
 //! --split on：店を半分ずつ A・B に分け、B の ξ・ζ を三通りで測る列を足す（#94）。
 //!   half_true（正しい基準）、half_proc（B 自身から選択関数）、half_split（A から選択関数）。
 //!   分け方は別の乱数列で決めるので、もとの列（true・proc）は --split なしと同じ。
+//! --counts on：ζ の分子（DDD − 3DDR + 3DRR − RRR）と分母（RRR）を、組の数で割った形で
+//!   true・proc それぞれ書く列（num_true,rrr_true,num_proc,rrr_proc）を足す（#94）。もとの列は変わらない。
 //! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
@@ -24,7 +26,7 @@ fn main() {
     let mut p = Params::new(it.next().expect("日付（YYYY-MM-DD）を渡す"));
     let (mut amp, mut sigma, mut centers, mut runs) = (0.5f64, 15.0f64, 20_000usize, 3usize);
     let (mut amp2, mut sigma2, mut start) = (None, None, None);
-    let mut split = false;
+    let (mut split, mut counts) = (false, false);
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -56,6 +58,10 @@ fn main() {
                 assert!(v == "on" || v == "off", "--split は on か off");
                 split = v == "on";
             }
+            "--counts" => {
+                assert!(v == "on" || v == "off", "--counts は on か off");
+                counts = v == "on";
+            }
             _ => panic!("知らない引数：{k}"),
         }
     }
@@ -73,6 +79,7 @@ fn main() {
         runs,
         start,
         split,
+        counts,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),

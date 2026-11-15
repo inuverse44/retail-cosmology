@@ -79,6 +79,26 @@ impl TripleCounts {
     /// それぞれ全三つ組の数 C(n_d,3)、C(n_d,2) n_r、n_d C(n_r,2)、C(n_r,3) で割った値。
     /// 三角形のビンは頂点を区別しない（辺のビンを小さい順に並べた組）ので、係数 3 がそのまま使える。
     /// rrr が 0 のビン（使わない番号を含む）は NaN。
+    /// Szapudi--Szalay の分子（DDD − 3DDR + 3DRR − RRR）と分母（RRR）を、組の数で割った形で返す（#94）。
+    /// 比 [`Self::szapudi_szalay`] の平均と、分子・分母それぞれの平均の比を比べるために使う。RRR が 0 のビンは NaN。
+    pub fn szapudi_szalay_parts(&self) -> Vec<(f64, f64)> {
+        let (nd, nr) = (self.n_d as f64, self.n_r as f64);
+        let c2 = |n: f64| n * (n - 1.0) / 2.0;
+        let c3 = |n: f64| n * (n - 1.0) * (n - 2.0) / 6.0;
+        (0..self.ddd.len())
+            .map(|b| {
+                if self.rrr[b] == 0 {
+                    return (f64::NAN, f64::NAN);
+                }
+                let ddd = self.ddd[b] as f64 / c3(nd);
+                let ddr = self.ddr[b] as f64 / (c2(nd) * nr);
+                let drr = self.drr[b] as f64 / (nd * c2(nr));
+                let rrr = self.rrr[b] as f64 / c3(nr);
+                (ddd - 3.0 * ddr + 3.0 * drr - rrr, rrr)
+            })
+            .collect()
+    }
+
     pub fn szapudi_szalay(&self) -> Vec<f64> {
         let (nd, nr) = (self.n_d as f64, self.n_r as f64);
         let c2 = |n: f64| n * (n - 1.0) / 2.0;
