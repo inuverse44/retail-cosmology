@@ -836,11 +836,11 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
     };
     let mut out =
         String::from("model,k1,k2,k3,r1_km,r2_km,r3_km,runs,expected_mean,diff_mean,diff_err\n");
-    // ノートの表（ビンごとに、windowed の見込みと、二通りの ζ̂ − 見込み）
+    // ノートの表（ビンごとに、windowed の ζ_NS と、二通りの ζ̂_U − ζ_NS。leaky = NS_in、windowed = NS_out）
     let mut tex = format!(
         "% cargo run --release --bin zeta_edge_toy -- {runs} が書いた表\n\\begin{{tabular}}{{rrrrrr}}\n\\toprule\n\
-         \\multicolumn{{3}}{{c}}{{三辺 [km]}} & 見込み & \\multicolumn{{2}}{{c}}{{$\\hat\\zeta - $ 見込み}} \\\\\n\
-         & & & & 縁で薄い & 縁で薄くない \\\\\n\\midrule\n"
+         $r_1$ & $r_2$ & $r_3$ & $\\zeta_{{\\mathrm{{NS}}}}$ & \\multicolumn{{2}}{{c}}{{$\\hat\\zeta_U - \\zeta_{{\\mathrm{{NS}}}}$}} \\\\\n\
+         & & & & $\\mathrm{{NS}}_{{\\mathrm{{in}}}}$ & $\\mathrm{{NS}}_{{\\mathrm{{out}}}}$ \\\\\n\\midrule\n"
     );
     for b in bins.used() {
         if leaky[b].len() < 2 || windowed[b].len() < 2 {
@@ -2589,18 +2589,18 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     let models: Vec<(&str, &str, &str, Vec<String>)> = vec![
         (
             "clumps_match",
-            "丸い塊",
+            "NS",
             "match",
             vec!["data/zeta/clustered_jp_2026-11-12_cosmos_m14_s15_mdens20.csv".into()],
         ),
         (
             "field90",
-            "密度の揺らぎ",
+            "$G_{10}$",
             "true",
             vec!["data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10.csv".into()],
         ),
-        ("mainG", "二つの幅（G）", "true", four(G)),
-        ("compareE", "二つの幅（E）", "true", four(E)),
+        ("mainG", "$G_{10,20}$", "true", four(G)),
+        ("compareE", "$G'_{10,20}$", "true", four(E)),
     ];
     // (ラベル, 振幅, 乱数の種, 前置き)。種 1 の三つは同じ中心と符号の列（場の形が同じ）で、振幅だけ違う。
     let gauss: [(&str, &str, &str, &str); 5] = [
@@ -2674,8 +2674,8 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     let mut t1 = String::from(
         "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
          \\begin{tabular}{lrrrrrrrrr}\n\\toprule\n\
-         & & \\multicolumn{4}{c}{$\\xi$（辺 [km]）} & \\multicolumn{4}{c}{$\\zeta$（正三角形の辺 [km]）} \\\\\n\
-         模型 & 個数 & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 \\\\\n\\midrule\n",
+         & & \\multicolumn{4}{c}{$\\Delta\\hat\\xi / \\hat\\xi_W$, $r$ [km]} & \\multicolumn{4}{c}{$\\Delta\\hat\\zeta / \\hat\\zeta_W$, $r_1 = r_2 = r_3$ [km]} \\\\\n\
+         & $N$ & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 \\\\\n\\midrule\n",
     );
     for (label, name, baseline, files) in &models {
         absorption(root, label, baseline, files)?;
@@ -2727,8 +2727,8 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     let mut t2 = String::from(
         "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
          \\begin{tabular}{rrrrrrrr}\n\\toprule\n\
-         & & 0 で切った点 & $\\xi(3\\,\\mathrm{km})$ & \\multicolumn{3}{c}{店と同じ手順の $\\hat\\zeta$} & 正しい基準 \\\\\n\
-         振幅 & 種 & （最大） & & 16 ビンの平均 & 負 & $-2$ SE 未満 & $|t| > 2$ \\\\\n\\midrule\n",
+         & & & & \\multicolumn{3}{c}{$\\hat\\zeta_S$} & $\\hat\\zeta_W$ \\\\\n\
+         $A$ & 種 & $\\max f_{\\mathrm{clip}}$ & $\\hat\\xi_W(3\\,\\mathrm{km})$ & $\\overline{\\hat\\zeta_S}$ & $< 0$ & $< -2\\,\\mathrm{SE}$ & $|t| > 2$ \\\\\n\\midrule\n",
     );
     let mut pts = Vec::new();
     for (label, amp, seed, stem) in gauss {
@@ -2869,8 +2869,8 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     let mut t3 = String::from(
         "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
          \\begin{tabular}{rrrrrrr}\n\\toprule\n\
-         & & 0 で切った点 & \\multicolumn{4}{c}{店と同じ手順の $\\hat\\zeta$（16 ビンの平均）} \\\\\n\
-         振幅 & 種 & （最大） & 実測 & 二度ならしたずれ & 比の偏り & 残り \\\\\n\\midrule\n",
+         & & & \\multicolumn{4}{c}{16 ビンの平均} \\\\\n\
+         $A$ & 種 & $\\max f_{\\mathrm{clip}}$ & $\\hat\\zeta_S$ & $\\zeta_w$ & $\\zeta_{N/D}$ & $\\hat\\zeta_S - \\zeta_w - \\zeta_{N/D}$ \\\\\n\\midrule\n",
     );
     let labels: Vec<String> = budget.iter().map(|b| b.0.to_string()).collect();
     for (label, _, _, file) in &budget {
@@ -3018,8 +3018,8 @@ pub fn vary_r_table(root: &Path, rs: &[u32]) -> Result<String, Box<dyn std::erro
     let mut t = String::from(
         "% cargo run --release --bin zeta_vary_r が書いた表\n\
          \\begin{tabular}{rrrrrrrrrrr}\n\\toprule\n\
-         & \\multicolumn{4}{c}{$\\hat\\xi$（辺 [km]）} & \\multicolumn{4}{c}{$\\hat\\zeta$（正三角形の辺 [km]）} & \\multicolumn{2}{c}{$\\hat\\zeta$ の 16 ビン} \\\\\n\
-         $R$ [km] & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 & 平均 & 負 \\\\\n\\midrule\n",
+         & \\multicolumn{4}{c}{$\\hat\\xi_S$, $r$ [km]} & \\multicolumn{4}{c}{$\\hat\\zeta_S$, $r_1 = r_2 = r_3$ [km]} & \\multicolumn{2}{c}{16 ビン} \\\\\n\
+         $R$ [km] & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 & $\\overline{\\hat\\zeta_S}$ & $< 0$ \\\\\n\\midrule\n",
     );
     let mut log = String::new();
     for &r in rs {

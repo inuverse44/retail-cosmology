@@ -71,7 +71,7 @@ def main() -> None:
     x = np.arange(len(keys))
     ax.plot(x, [pop[k][1] for k in keys], fs.MARKER["population"], color=fs.COLOR["population"], label=r"$\hat\zeta_\rho$")
     ax.plot(
-        x, [fp[k][1] for k in keys], fs.MARKER["COSMOS"], color=fs.COLOR["COSMOS"], label=r"$\hat\zeta_{\rho S}$, $R = 50$ km"
+        x, [fp[k][1] for k in keys], fs.MARKER["COSMOS"], color=fs.COLOR["COSMOS"], label=r"$\hat\zeta_S$, $R = 50$ km"
     )
     ax.set_ylabel(r"$\hat\zeta$")
     ax.legend(loc="center right")
