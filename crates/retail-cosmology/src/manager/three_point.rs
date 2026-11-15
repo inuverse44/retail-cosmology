@@ -14,7 +14,8 @@ use crate::access::{boundary, population, results, stores};
 use crate::contract::{Bins, Chain, PairCounts, PopulationGrid, TripleCounts};
 use crate::engine::estimator::{density_ratio_summary, mock_summary};
 use crate::engine::random_catalog::{
-    Weight, count_coarse_cells, sample, sample_conditional_children, sample_reweighted, sample_selected,
+    Weight, count_coarse_cells, sample, sample_conditional_children, sample_reweighted,
+    sample_selected,
 };
 use crate::engine::selection_function::{
     RegionalRatio, SmoothRatio, Tabulated, fit_density_exponent, mean_log_density,
@@ -710,10 +711,16 @@ fn patch_clustered_windowed(
     let (lat0, dlat, lon0, dlon) = patch;
     let mlat = margin_sd * s / 111.2;
     let mlon = margin_sd * s / (111.2 * lat0.to_radians().cos());
-    let ext: Patch = (lat0 - mlat, dlat + 2.0 * mlat, lon0 - mlon, dlon + 2.0 * mlon);
+    let ext: Patch = (
+        lat0 - mlat,
+        dlat + 2.0 * mlat,
+        lon0 - mlon,
+        dlon + 2.0 * mlon,
+    );
     let n_ext = (n_p as f64 * ext.1 * ext.3 / (dlat * dlon)).round() as usize;
     let all = patch_clustered(n_ext, m, s, ext, rng);
-    let inside = |q: &LatLon| q.lat >= lat0 && q.lat < lat0 + dlat && q.lon >= lon0 && q.lon < lon0 + dlon;
+    let inside =
+        |q: &LatLon| q.lat >= lat0 && q.lat < lat0 + dlat && q.lon >= lon0 && q.lon < lon0 + dlon;
     let mut pts = Vec::new();
     let mut parent = Vec::new();
     for (i, q) in all.iter().enumerate() {
@@ -738,7 +745,11 @@ fn same_parent_triples_labeled(d: &[Unit], parent: &[usize], bins: &TriangleBins
         for i in 0..g.len() {
             for j in i + 1..g.len() {
                 for k in j + 1..g.len() {
-                    if let Some(b) = bins.index(chord2(&g[i], &g[j]), chord2(&g[i], &g[k]), chord2(&g[j], &g[k])) {
+                    if let Some(b) = bins.index(
+                        chord2(&g[i], &g[j]),
+                        chord2(&g[i], &g[k]),
+                        chord2(&g[j], &g[k]),
+                    ) {
                         out[b] += 1;
                     }
                 }
@@ -783,7 +794,9 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
         }
         .szapudi_szalay()
     };
-    let expected = |same: &[u64], n_d: usize, b: usize| same[b] as f64 / (rrr[b] as f64 * c3(n_d as f64) / c3(n_r as f64));
+    let expected = |same: &[u64], n_d: usize, b: usize| {
+        same[b] as f64 / (rrr[b] as f64 * c3(n_d as f64) / c3(n_r as f64))
+    };
 
     // ビンごとに、一回ごとの (見込み, ζ̂ − 見込み) を、leaky と windowed で集める
     let mut leaky: Vec<Vec<(f64, f64)>> = vec![Vec::new(); bins.len()];
@@ -809,7 +822,11 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
         }
         eprintln!("{} 回目（{:.1} 秒）", run + 1, t0.elapsed().as_secs_f64());
     }
-    eprintln!("windowed の点の数の平均：{:.0}（leaky は {}）", n_win as f64 / runs as f64, n_p * m);
+    eprintln!(
+        "windowed の点の数の平均：{:.0}（leaky は {}）",
+        n_win as f64 / runs as f64,
+        n_p * m
+    );
 
     let mean_err = |v: &[f64]| {
         let n = v.len() as f64;
@@ -817,7 +834,8 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
         let sd = (v.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
         (mu, sd / n.sqrt())
     };
-    let mut out = String::from("model,k1,k2,k3,r1_km,r2_km,r3_km,runs,expected_mean,diff_mean,diff_err\n");
+    let mut out =
+        String::from("model,k1,k2,k3,r1_km,r2_km,r3_km,runs,expected_mean,diff_mean,diff_err\n");
     // ノートの表（ビンごとに、windowed の見込みと、二通りの ζ̂ − 見込み）
     let mut tex = format!(
         "% cargo run --release --bin zeta_edge_toy -- {runs} が書いた表\n\\begin{{tabular}}{{rrrrrr}}\n\\toprule\n\
@@ -863,7 +881,9 @@ pub fn edge_toy(root: &Path, runs: usize) -> Result<String, Box<dyn std::error::
             )?;
         }
         // 本文に書くビンの数は手で数えず、ここで数える（振り返り 2026-11-14 の T-03）
-        eprintln!("{name}：ビン {total} 個、ζ̂ − 見込みが負 {neg}、平均の誤差の 2 倍を超える {beyond2}");
+        eprintln!(
+            "{name}：ビン {total} 個、ζ̂ − 見込みが負 {neg}、平均の誤差の 2 倍を超える {beyond2}"
+        );
     }
     let path = "data/toy/zeta_edge.csv".to_string();
     results::write_text(&root.join(&path), &out)?;
@@ -1234,6 +1254,9 @@ pub struct FieldModel {
     pub runs: usize,
     /// 明示すると run ごとの種で分割する。None かつ second=None なら旧来の連続した乱数列。
     pub start: Option<usize>,
+    /// 店を半分ずつ A・B に分け、B を正しい基準・B 自身の選択関数・A の選択関数の三通りで測る列を足す（#94）。
+    /// 分け方は run ごとの別の乱数列で決めるので、もとの列は変わらない。
+    pub split: bool,
 }
 
 /// [`FieldModel`] の密度場を生成し、true/proc の ξ、ζ と切り捨て割合を書く。
@@ -1322,11 +1345,25 @@ pub fn field_mocks(
     let c = sides_km.centers();
     let xi_of = |d: &[Unit], r: &[Unit]| PairCounts::compute(d, r, &cb, chord2).landy_szalay();
 
-    let mut xi_out = String::from("run,k,r_km,xi_true,xi_proc\n");
+    let split = model.split;
+    let mut xi_out = String::from(if split {
+        "run,k,r_km,xi_true,xi_proc,xi_half_true,xi_half_proc,xi_half_split\n"
+    } else {
+        "run,k,r_km,xi_true,xi_proc\n"
+    });
     for (k, v) in xi_of(&real, &r_true).iter().enumerate() {
-        writeln!(xi_out, "-1,{k},{:.3},{v:.6},", c[k])?;
+        writeln!(
+            xi_out,
+            "-1,{k},{:.3},{v:.6},{}",
+            c[k],
+            if split { ",,," } else { "" }
+        )?;
     }
-    let mut z_out = String::from("run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n");
+    let mut z_out = String::from(if split {
+        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected,zeta_half_true,zeta_half_proc,zeta_half_split\n"
+    } else {
+        "run,k1,k2,k3,r1_km,r2_km,r3_km,zeta_true,zeta_proc,expected\n"
+    });
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
     let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_legacy));
     eprintln!(
@@ -1399,26 +1436,78 @@ pub fn field_mocks(
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
         let r_proc = units(&draw(&sr_mock, p.n_random, rng_m));
+
+        // 半分に分けた測り方（#94）。もとの乱数列を使わないよう、run ごとの別の列で分ける。
+        let halves = if split {
+            let mut rng_split = SplitMix64::new(p.seed ^ 0x5A17_0000_0000_0000 ^ run as u64);
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            for q in &d {
+                if rng_split.next_f64() < 0.5 {
+                    a.push(*q);
+                } else {
+                    b.push(*q);
+                }
+            }
+            let r_self = units(&draw(
+                &SmoothRatio::new(&b, &refs, r_km),
+                p.n_random,
+                &mut rng_split,
+            ));
+            let r_cross = units(&draw(
+                &SmoothRatio::new(&a, &refs, r_km),
+                p.n_random,
+                &mut rng_split,
+            ));
+            let xis = [xi_of(&b, &r_true), xi_of(&b, &r_self), xi_of(&b, &r_cross)];
+            let ts = [
+                TripleCounts::compute(&b, &r_true, &bins),
+                TripleCounts::compute(&b, &r_self, &bins),
+                TripleCounts::compute(&b, &r_cross, &bins),
+            ];
+            Some((xis, ts))
+        } else {
+            None
+        };
+
         for (k, (a, b)) in xi_of(&d, &r_true)
             .iter()
             .zip(xi_of(&d, &r_proc))
             .enumerate()
         {
-            writeln!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
+            write!(xi_out, "{run},{k},{:.3},{a:.6},{b:.6}", c[k])?;
+            if let Some((xis, _)) = &halves {
+                write!(
+                    xi_out,
+                    ",{:.6},{:.6},{:.6}",
+                    xis[0][k], xis[1][k], xis[2][k]
+                )?;
+            }
+            writeln!(xi_out)?;
         }
         let t_true = TripleCounts::compute(&d, &r_true, &bins);
         let t_proc = TripleCounts::compute(&d, &r_proc, &bins);
         let (zt, zp) = (t_true.szapudi_szalay(), t_proc.szapudi_szalay());
+        let zh = halves
+            .as_ref()
+            .map(|(_, ts)| ts.each_ref().map(TripleCounts::szapudi_szalay));
         for b in bins.used() {
             if t_true.rrr[b] == 0 || t_proc.rrr[b] == 0 {
                 continue;
             }
             let (x, y, z) = bins.unflatten(b);
-            writeln!(
+            write!(
                 z_out,
                 "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},0",
                 c[x], c[y], c[z], zt[b], zp[b]
             )?;
+            if let (Some(zh), Some((_, ts))) = (&zh, &halves) {
+                // 半分の点では空のビンがありうる。そのときは NaN を書く
+                for (j, t) in ts.iter().enumerate() {
+                    let v = if t.rrr[b] == 0 { f64::NAN } else { zh[j][b] };
+                    write!(z_out, ",{v:.6}")?;
+                }
+            }
+            writeln!(z_out)?;
         }
         eprintln!(
             "{} 回目（1 + δ < 0 で切った点 {:.1}%、{:.1} 秒）",
@@ -2221,9 +2310,433 @@ pub fn summarize_mock_density(
     Ok(out)
 }
 
+/// 対にした標本 (x_i, y_i) の要約：差 x − y の平均と標準誤差、y を x に回帰した傾き・その標準誤差・切片。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairedStats {
+    pub n: usize,
+    pub x_mean: f64,
+    pub x_sem: f64,
+    pub y_mean: f64,
+    pub y_sem: f64,
+    pub diff_mean: f64,
+    pub diff_sem: f64,
+    pub slope: f64,
+    pub slope_se: f64,
+    pub intercept: f64,
+}
+
+pub fn paired_stats(x: &[f64], y: &[f64]) -> PairedStats {
+    assert_eq!(x.len(), y.len());
+    let n = x.len();
+    let nf = n as f64;
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / nf;
+    let sem = |v: &[f64], m: f64| {
+        (v.iter().map(|a| (a - m).powi(2)).sum::<f64>() / (nf - 1.0) / nf).sqrt()
+    };
+    let (xm, ym) = (mean(x), mean(y));
+    let d: Vec<f64> = x.iter().zip(y).map(|(a, b)| a - b).collect();
+    let dm = mean(&d);
+    let sxx: f64 = x.iter().map(|a| (a - xm).powi(2)).sum();
+    let sxy: f64 = x.iter().zip(y).map(|(a, b)| (a - xm) * (b - ym)).sum();
+    let slope = sxy / sxx;
+    let intercept = ym - slope * xm;
+    let rss: f64 = x
+        .iter()
+        .zip(y)
+        .map(|(a, b)| (b - intercept - slope * a).powi(2))
+        .sum();
+    PairedStats {
+        n,
+        x_mean: xm,
+        x_sem: sem(x, xm),
+        y_mean: ym,
+        y_sem: sem(y, ym),
+        diff_mean: dm,
+        diff_sem: sem(&d, dm),
+        slope,
+        slope_se: (rss / (nf - 2.0) / sxx).sqrt(),
+        intercept,
+    }
+}
+
+/// 選択関数がどれだけ吸い込むかを、模擬データの「正しい基準」と「店と同じ手順（proc）」の対から測る（#94）。
+///
+/// `files` は模擬データの ζ の CSV（run ごと）。同じ名前の `_xi.csv` も読む。`baseline` は正しい基準の列の名前の後半
+/// （"true" なら zeta_true／xi_true、"match" なら zeta_match／xi_match）。"基準:比べる列" の形なら比べる列も選べる
+/// （例："half_true:half_split" は zeta_half_true と zeta_half_split）。既定の比べる列は proc。
+/// どちらかが NaN の行（半分の点で空になったビン）は除く。
+/// 書くもの：data/zeta/absorption_`label`.csv（ζ）と absorption_`label`_xi.csv（ξ）。
+/// 相対的な吸い込み（吸い込み ÷ 正しい基準の平均）は、正しい基準の平均が 2 SE を超えるビンだけ数える。
+pub fn absorption(
+    root: &Path,
+    label: &str,
+    baseline: &str,
+    files: &[String],
+) -> Result<String, Box<dyn std::error::Error>> {
+    type Row = std::collections::HashMap<String, f64>;
+    let mut zrows: Vec<Row> = Vec::new();
+    let mut xrows: Vec<Row> = Vec::new();
+    for f in files {
+        let p = root.join(f);
+        zrows.extend(
+            results::read_numeric_csv(&p)?
+                .into_iter()
+                .filter(|r| r["run"] >= 0.0),
+        );
+        let xp = p.with_file_name(format!(
+            "{}_xi.csv",
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or("ファイル名が読めない")?
+        ));
+        xrows.extend(
+            results::read_numeric_csv(&xp)?
+                .into_iter()
+                .filter(|r| r["run"] >= 0.0),
+        );
+    }
+    let (base, other) = baseline.split_once(':').unwrap_or((baseline, "proc"));
+    let (zt, zp) = (format!("zeta_{base}"), format!("zeta_{other}"));
+    let (xt, xp) = (format!("xi_{base}"), format!("xi_{other}"));
+    for col in [&zt, &zp] {
+        if !zrows.first().is_some_and(|r| r.contains_key(col)) {
+            return Err(format!("列 {col} がない").into());
+        }
+    }
+    let finite = |r: &Row, a: &str, b: &str| r[a].is_finite() && r[b].is_finite();
+    zrows.retain(|r| finite(r, &zt, &zp));
+    xrows.retain(|r| finite(r, &xt, &xp));
+
+    let head = "runs,true_mean,true_sem,proc_mean,proc_sem,absorb_mean,absorb_sem,rel_absorb,slope,slope_se,intercept";
+    let fmt = |s: &PairedStats| {
+        let rel = if s.x_mean.abs() > 2.0 * s.x_sem {
+            s.diff_mean / s.x_mean
+        } else {
+            f64::NAN
+        };
+        format!(
+            "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{rel:.4},{:.4},{:.4},{:.6}",
+            s.n,
+            s.x_mean,
+            s.x_sem,
+            s.y_mean,
+            s.y_sem,
+            s.diff_mean,
+            s.diff_sem,
+            s.slope,
+            s.slope_se,
+            s.intercept
+        )
+    };
+
+    // ξ
+    let mut xo = format!("k,r_km,{head}\n");
+    let mut xi_rel = std::collections::BTreeMap::new();
+    let ks: std::collections::BTreeSet<usize> = xrows.iter().map(|r| r["k"] as usize).collect();
+    for k in ks {
+        let v: Vec<_> = xrows.iter().filter(|r| r["k"] as usize == k).collect();
+        let s = paired_stats(
+            &v.iter().map(|r| r[&xt]).collect::<Vec<_>>(),
+            &v.iter().map(|r| r[&xp]).collect::<Vec<_>>(),
+        );
+        xi_rel.insert(k, (v[0]["r_km"], s));
+        writeln!(xo, "{k},{:.3},{}", v[0]["r_km"], fmt(&s))?;
+    }
+    results::write_text(
+        &root.join(format!("data/zeta/absorption_{label}_xi.csv")),
+        &xo,
+    )?;
+
+    // ζ
+    let mut zo = format!("k1,k2,k3,r1_km,r2_km,r3_km,{head}\n");
+    let keys: std::collections::BTreeSet<(usize, usize, usize)> = zrows
+        .iter()
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize))
+        .collect();
+    let (mut n_bins, mut n_sig_absorb, mut n_pos_absorb, mut n_slope_lt1) = (0, 0, 0, 0);
+    let mut summary = String::new();
+    for (a, b, c) in keys {
+        let v: Vec<_> = zrows
+            .iter()
+            .filter(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize) == (a, b, c))
+            .collect();
+        let s = paired_stats(
+            &v.iter().map(|r| r[&zt]).collect::<Vec<_>>(),
+            &v.iter().map(|r| r[&zp]).collect::<Vec<_>>(),
+        );
+        n_bins += 1;
+        n_sig_absorb += usize::from(s.diff_mean.abs() > 2.0 * s.diff_sem);
+        n_pos_absorb += usize::from(s.diff_mean > 0.0);
+        n_slope_lt1 += usize::from(s.slope + 2.0 * s.slope_se < 1.0);
+        writeln!(
+            zo,
+            "{a},{b},{c},{:.3},{:.3},{:.3},{}",
+            v[0]["r1_km"],
+            v[0]["r2_km"],
+            v[0]["r3_km"],
+            fmt(&s)
+        )?;
+        // 正三角形のビンは、同じ辺の ξ の相対的な吸い込みと並べる（Hui & Gaztañaga 1999 の 3c12/S3 との比較）
+        if a == b
+            && b == c
+            && let Some((r, sx)) = xi_rel.get(&a)
+        {
+            let rz = s.diff_mean / s.x_mean;
+            let rx = sx.diff_mean / sx.x_mean;
+            writeln!(
+                summary,
+                "  正三角形 {r:.0} km：ζ 吸い込み {:+.4}±{:.4}（正しい基準 {:+.4}±{:.4}、相対 {rz:+.2}）、\
+                 ξ 吸い込み {:+.4}±{:.4}（相対 {rx:+.3}）、比 {:+.2}、傾き {:.2}±{:.2}、切片 {:+.4}",
+                s.diff_mean,
+                s.diff_sem,
+                s.x_mean,
+                s.x_sem,
+                sx.diff_mean,
+                sx.diff_sem,
+                rz / rx,
+                s.slope,
+                s.slope_se,
+                s.intercept
+            )?;
+        }
+    }
+    results::write_text(&root.join(format!("data/zeta/absorption_{label}.csv")), &zo)?;
+    let msg = format!(
+        "{label}（{} run 分の行、基準 {baseline}）：ビン {n_bins} 個のうち、吸い込みが 2 SE を超える {n_sig_absorb}、\
+         吸い込みが正（proc が小さい）{n_pos_absorb}、傾きが 1 より 2 SE 以上小さい {n_slope_lt1}\n{summary}",
+        zrows.len() / n_bins.max(1)
+    );
+    Ok(msg)
+}
+
+/// ノート（#94）の表を二つ書く。どちらも [`absorption`] を走らせ直してから、その CSV を読む。
+///
+/// - docs/tables/zeta_absorption.tex：模型ごとの、正三角形のビンでの ζ と同じ辺の ξ の相対的な吸い込み
+/// - docs/tables/zeta_gauss_offset.tex：0 で切る点がほぼないガウス場で、店と同じ手順の ζ̂ が負になる大きさ
+///
+/// あわせて、負の ζ̂ の平均が 3 km の ξ の何乗で増えるか、それをコスモスの ξ に直した大きさ、
+/// 店を半分に分けた測り方（#94）の結果を、文字で返す。
+pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    const G: &str = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_a21.2_s220_m81_20261114_mainG";
+    const E: &str =
+        "data/zeta/field_jp_2026-11-12_cosmos_a0.6_s10_a20.9_s220_m81_20261114_compareE";
+    let four = |stem: &str| {
+        (0..4)
+            .map(|w| format!("{stem}_w{w}.csv"))
+            .collect::<Vec<_>>()
+    };
+    let models: Vec<(&str, &str, &str, Vec<String>)> = vec![
+        (
+            "clumps_match",
+            "丸い塊",
+            "match",
+            vec!["data/zeta/clustered_jp_2026-11-12_cosmos_m14_s15_mdens20.csv".into()],
+        ),
+        (
+            "field90",
+            "密度の揺らぎ",
+            "true",
+            vec!["data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10.csv".into()],
+        ),
+        ("mainG", "二つの幅（G）", "true", four(G)),
+        ("compareE", "二つの幅（E）", "true", four(E)),
+    ];
+    let gauss: [(&str, &str, &str); 3] = [
+        (
+            "gauss015",
+            "0.15",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.15_s10_m94_gauss",
+        ),
+        (
+            "gauss03",
+            "0.3",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_gauss",
+        ),
+        (
+            "gauss04",
+            "0.4",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.4_s10_m94_gauss",
+        ),
+    ];
+    let split = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_split.csv".to_string();
+    let read = |label: &str, xi: bool| {
+        results::read_numeric_csv(&root.join(format!(
+            "data/zeta/absorption_{label}{}.csv",
+            if xi { "_xi" } else { "" }
+        )))
+    };
+    let cell = |v: f64| {
+        if v.is_finite() {
+            format!("${v:.2}$")
+        } else {
+            "—".to_string()
+        }
+    };
+    let mut log = String::new();
+
+    // 表 1：相対的な吸い込み
+    let mut t1 = String::from(
+        "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
+         \\begin{tabular}{lrrrrrrrrr}\n\\toprule\n\
+         & & \\multicolumn{4}{c}{$\\xi$（辺 [km]）} & \\multicolumn{4}{c}{$\\zeta$（正三角形の辺 [km]）} \\\\\n\
+         模型 & 個数 & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 \\\\\n\\midrule\n",
+    );
+    for (label, name, baseline, files) in &models {
+        absorption(root, label, baseline, files)?;
+        let (z, x) = (read(label, false)?, read(label, true)?);
+        let runs = z.first().map_or(0.0, |r| r["runs"]);
+        let xs: Vec<String> = x.iter().map(|r| cell(r["rel_absorb"])).collect();
+        let zs: Vec<String> = z
+            .iter()
+            .filter(|r| r["k1"] == r["k2"] && r["k2"] == r["k3"])
+            .map(|r| cell(r["rel_absorb"]))
+            .collect();
+        writeln!(
+            t1,
+            "{name} & {runs:.0} & {} & {} \\\\",
+            xs.join(" & "),
+            zs.join(" & ")
+        )?;
+        // 小さい尺度の ζ が吸い込まれないことは、相対値でなく差そのもので見る
+        for r in z
+            .iter()
+            .filter(|r| r["k1"] == r["k2"] && r["k2"] == r["k3"])
+        {
+            writeln!(
+                log,
+                "{label} 正三角形 {:.0} km：正しい基準 {:+.4}±{:.4}、吸い込み {:+.4}±{:.4}、傾き {:.2}±{:.2}",
+                r["r1_km"],
+                r["true_mean"],
+                r["true_sem"],
+                r["absorb_mean"],
+                r["absorb_sem"],
+                r["slope"],
+                r["slope_se"]
+            )?;
+        }
+        let n_sig = z
+            .iter()
+            .filter(|r| r["absorb_mean"].abs() > 2.0 * r["absorb_sem"])
+            .count();
+        writeln!(
+            log,
+            "{label}：吸い込みが 2 SE を超えるビン {n_sig}/{}",
+            z.len()
+        )?;
+    }
+    t1.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_absorption.tex"), &t1)?;
+
+    // 表 2：ガウス場の負の ζ̂
+    let mut t2 = String::from(
+        "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
+         \\begin{tabular}{rrrrrrr}\n\\toprule\n\
+         & 0 で切った点 & $\\xi(3\\,\\mathrm{km})$ & \\multicolumn{3}{c}{店と同じ手順の $\\hat\\zeta$} & 正しい基準 \\\\\n\
+         振幅 & （最大） & & 16 ビンの平均 & 負 & $-2$ SE 未満 & $|t| > 2$ \\\\\n\\midrule\n",
+    );
+    let mut pts = Vec::new();
+    for (label, amp, stem) in gauss {
+        absorption(root, label, "true", &[format!("{stem}.csv")])?;
+        let (z, x) = (read(label, false)?, read(label, true)?);
+        let diag = results::read_numeric_csv(&root.join(format!("{stem}_diagnostics.csv")))?;
+        let clip = diag
+            .iter()
+            .map(|r| r["clipped_fraction"])
+            .fold(0.0, f64::max);
+        let xi3 = x.iter().find(|r| r["k"] == 0.0).ok_or("3 km の ξ がない")?["true_mean"];
+        let n = z.len() as f64;
+        let mean = z.iter().map(|r| r["proc_mean"]).sum::<f64>() / n;
+        let neg = z.iter().filter(|r| r["proc_mean"] < 0.0).count();
+        let sig = z
+            .iter()
+            .filter(|r| r["proc_mean"] < -2.0 * r["proc_sem"])
+            .count();
+        let tsig = z
+            .iter()
+            .filter(|r| r["true_mean"].abs() > 2.0 * r["true_sem"])
+            .count();
+        let (lo, hi) = z
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), r| {
+                (a.min(r["proc_mean"]), b.max(r["proc_mean"]))
+            });
+        writeln!(
+            t2,
+            "${amp}$ & ${:.1}\\%$ & ${xi3:.3}$ & ${mean:+.4}$ & {neg}/16 & {sig}/16 & {tsig}/16 \\\\",
+            100.0 * clip
+        )?;
+        writeln!(
+            log,
+            "振幅 {amp}：ξ(3km) {xi3:.4}、負の ζ̂ の平均 {mean:+.5}、範囲 {lo:+.4}〜{hi:+.4}"
+        )?;
+        pts.push((xi3, mean, lo, hi));
+    }
+    t2.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_gauss_offset.tex"), &t2)?;
+
+    // 何乗で増えるか（両端の振幅から）と、コスモスの ξ に直した大きさ
+    let real_xi3 = results::read_numeric_csv(&root.join(format!("{}_xi.csv", gauss[0].2)))?
+        .into_iter()
+        .find(|r| r["run"] < 0.0 && r["k"] == 0.0)
+        .ok_or("コスモスの ξ がない")?["xi_true"];
+    let slope =
+        |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| (b.1 / a.1).ln() / (b.0 / a.0).ln();
+    let (p0, p1, p2) = (pts[0], pts[1], pts[2]);
+    let scale = (real_xi3 / p2.0).powi(2);
+    writeln!(
+        log,
+        "負の ζ̂ の平均の、3 km の ξ に対する冪：{:.2}（0.15→0.3）、{:.2}（0.3→0.4）、{:.2}（0.15→0.4）\n\
+         振幅 0.4 を ξ² でコスモス（3 km の ξ {real_xi3:.3}）に直すと：平均 {:+.4}、範囲 {:+.4}〜{:+.4}",
+        slope(p0, p1),
+        slope(p1, p2),
+        slope(p0, p2),
+        p2.1 * scale,
+        p2.2 * scale,
+        p2.3 * scale
+    )?;
+
+    // 店を半分に分けた測り方
+    for (label, cols) in [
+        ("split_self", "half_true:half_proc"),
+        ("split_cross", "half_true:half_split"),
+        ("split_self_vs_cross", "half_proc:half_split"),
+    ] {
+        absorption(root, label, cols, std::slice::from_ref(&split))?;
+        let z = read(label, false)?;
+        let n = z.len() as f64;
+        let mean = z.iter().map(|r| r["proc_mean"]).sum::<f64>() / n;
+        let neg = z.iter().filter(|r| r["proc_mean"] < 0.0).count();
+        let sig = z
+            .iter()
+            .filter(|r| r["proc_mean"] < -2.0 * r["proc_sem"])
+            .count();
+        let pos_diff = z.iter().filter(|r| r["absorb_mean"] > 0.0).count();
+        let sig_diff = z
+            .iter()
+            .filter(|r| r["absorb_mean"].abs() > 2.0 * r["absorb_sem"])
+            .count();
+        writeln!(
+            log,
+            "{label}（{cols}）：比べる列の平均 {mean:+.5}、負 {neg}/16、−2 SE 未満 {sig}/16、差が正 {pos_diff}/16、差が 2 SE 超 {sig_diff}/16"
+        )?;
+    }
+    Ok(log)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paired_stats_recovers_exact_line() {
+        let x = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let y: Vec<f64> = x.iter().map(|a| 0.5 * a - 0.1).collect();
+        let s = paired_stats(&x, &y);
+        assert!((s.slope - 0.5).abs() < 1e-12);
+        assert!((s.intercept + 0.1).abs() < 1e-12);
+        assert!(s.slope_se < 1e-12);
+        assert!((s.diff_mean - (2.0 - 0.9)).abs() < 1e-12);
+    }
 
     #[test]
     fn field_analysis_merges_disjoint_runs_and_rejects_duplicate_or_incomplete_inputs() {

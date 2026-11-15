@@ -9,7 +9,10 @@ use retail_cosmology::manager::three_point::compare_mocks;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    assert!(args.len() >= 3, "実際の CSV と、模擬データの CSV を 2 つ以上渡す");
+    assert!(
+        args.len() >= 3,
+        "実際の CSV と、模擬データの CSV を 2 つ以上渡す"
+    );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     match compare_mocks(&root, &args[0], &args[1..]) {
         Ok(t) => print!("{t}"),

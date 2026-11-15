@@ -180,9 +180,11 @@ mod tests {
         for i in 0..a.len() {
             for j in i + 1..a.len() {
                 for k in j + 1..a.len() {
-                    if let Some(t) =
-                        bins.index(chord2(&a[i], &a[j]), chord2(&a[i], &a[k]), chord2(&a[j], &a[k]))
-                    {
+                    if let Some(t) = bins.index(
+                        chord2(&a[i], &a[j]),
+                        chord2(&a[i], &a[k]),
+                        chord2(&a[j], &a[k]),
+                    ) {
                         c[t] += 1;
                     }
                 }
@@ -196,7 +198,9 @@ mod tests {
         for i in 0..a.len() {
             for j in i + 1..a.len() {
                 for p in b {
-                    if let Some(t) = bins.index(chord2(&a[i], &a[j]), chord2(&a[i], p), chord2(&a[j], p)) {
+                    if let Some(t) =
+                        bins.index(chord2(&a[i], &a[j]), chord2(&a[i], p), chord2(&a[j], p))
+                    {
                         c[t] += 1;
                     }
                 }
@@ -210,7 +214,10 @@ mod tests {
         let a = patch(300, 1);
         let b = bins();
         let fast = count_aaa(&a, &b);
-        assert!(fast.iter().sum::<u64>() > 1000, "三つ組が少なすぎて確かめにならない");
+        assert!(
+            fast.iter().sum::<u64>() > 1000,
+            "三つ組が少なすぎて確かめにならない"
+        );
         assert_eq!(fast, brute_aaa(&a, &b));
     }
 

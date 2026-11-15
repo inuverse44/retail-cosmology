@@ -60,10 +60,17 @@ fn parse_zeta_line(line: &str) -> Option<ZetaRow> {
 
 /// 見出しつきの数値の CSV を読み、見出しの名前ごとの列を返す。数でない欄（空欄など）は NaN にする。
 /// zeta_clustered が書いた CSV（ζ と ξ）を読むのに使う。
-pub fn read_numeric_csv(path: &Path) -> std::io::Result<Vec<std::collections::HashMap<String, f64>>> {
+pub fn read_numeric_csv(
+    path: &Path,
+) -> std::io::Result<Vec<std::collections::HashMap<String, f64>>> {
     let text = std::fs::read_to_string(path)?;
     let mut lines = text.lines();
-    let head: Vec<String> = lines.next().unwrap_or("").split(',').map(String::from).collect();
+    let head: Vec<String> = lines
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(String::from)
+        .collect();
     Ok(lines
         .filter(|l| !l.is_empty())
         .map(|l| {
