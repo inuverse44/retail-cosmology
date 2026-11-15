@@ -2827,8 +2827,8 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     }
 
     // 表 3：ガウス場の負の ζ̂ の内訳（二度ならしたずれの見込みと、比の偏り）。
-    // ずれの係数は data/zeta/selection_mismatch_seed1.csv（zeta_mismatch が書いたもの）。
-    const MISMATCH: &str = "data/zeta/selection_mismatch_seed1.csv";
+    // ずれの係数は、三角形の数そのもので求めたもの（zeta_mismatch --seed 1 --tri-thin 4 が書いたもの）。
+    const MISMATCH: &str = "data/zeta/selection_mismatch_tri_seed1_thin4.csv";
     const F: &str = "data/zeta/field_jp_2026-11-12_cosmos";
     let budget: [(&str, &str, &str, String); 7] = [
         ("gauss0", "0", "1", format!("{F}_a0_s10_m94_amp0.csv")),
@@ -2881,8 +2881,9 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     }
     log.push_str(&mismatch_prediction(root, MISMATCH, &labels)?);
     for (label, amp, seed, file) in &budget {
-        let pred =
-            results::read_numeric_csv(&root.join(format!("data/zeta/mismatch_pred_{label}.csv")))?;
+        let pred = results::read_numeric_csv(
+            &root.join(format!("data/zeta/mismatch_pred_{label}_tri.csv")),
+        )?;
         let n = pred.len() as f64;
         let obs = pred.iter().map(|r| r["observed"]).sum::<f64>() / n;
         let mis = pred.iter().map(|r| r["predicted"]).sum::<f64>() / n;
@@ -2908,8 +2909,9 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
         )?;
         writeln!(
             log,
-            "内訳 振幅 {amp}・種 {seed}：実測 {obs:+.5}、ずれ {mis:+.5}、比の偏り {ratio:+.5}、残り {:+.5}、切った点 最大 {:.1}%",
+            "内訳 振幅 {amp}・種 {seed}：実測 {obs:+.5}、ずれ {mis:+.5}、比の偏り {ratio:+.5}、残り {:+.5}、(ずれ+比の偏り)/実測 {:.0}%、切った点 最大 {:.1}%",
             obs - mis - ratio,
+            100.0 * (mis + ratio) / obs,
             100.0 * clip
         )?;
     }
@@ -3231,12 +3233,20 @@ pub fn mismatch_prediction(
         .collect();
     let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,cosmos_zeta,predicted\n");
     let (mut lo, mut hi, mut sum) = (f64::INFINITY, f64::NEG_INFINITY, 0.0);
+    let (mut n_below, mut diff) = (0usize, 0.0);
+    let mut each = Vec::new();
     for r in &cz {
         let pred =
             coef(r, "wm1_cubed") - coef(r, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]));
         lo = lo.min(pred);
         hi = hi.max(pred);
         sum += pred;
+        n_below += usize::from(r["zeta"] < pred);
+        diff += r["zeta"] - pred;
+        each.push(format!(
+            "({:.0},{:.0},{:.0}) km：コスモス {:+.4}、見込み {pred:+.4}",
+            r["r1_km"], r["r2_km"], r["r3_km"], r["zeta"]
+        ));
         writeln!(
             out,
             "{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.6},{pred:.6}",
@@ -3253,6 +3263,15 @@ pub fn mismatch_prediction(
         sum / cz.len() as f64,
         cz.len()
     )?;
+    writeln!(
+        log,
+        "コスモスの ζ̂ が見込みより小さいビン {n_below}/{}、差の平均 {:+.4}",
+        cz.len(),
+        diff / cz.len() as f64
+    )?;
+    for e in each {
+        writeln!(log, "  {e}")?;
+    }
     Ok(log)
 }
 
