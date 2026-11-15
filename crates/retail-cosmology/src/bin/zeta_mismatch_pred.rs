@@ -5,6 +5,8 @@
 //! 書くもの：data/zeta/mismatch_pred_<ラベル>.csv
 //! ずれの CSV に zeta_mismatch --tri-thin の出力（三角形のビンごとの係数）を渡すと、
 //! ビンごとの係数を使い、data/zeta/mismatch_pred_<ラベル>_tri.csv（コスモスは mismatch_pred_cosmos_tri.csv）に書く。
+//! --tri-exact on の出力（selection_mismatch_tri_exact_…）を渡すと、近似しない形
+//! ⟨Π(w − 1)⟩₃ − Σ_辺 c_s ξ̂(k_s) を見込みにして _tri_exact.csv に書く（三頂点の平均の見込みも predicted_mean に並べる）。
 
 use std::path::PathBuf;
 
