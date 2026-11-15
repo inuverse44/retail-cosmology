@@ -2825,6 +2825,206 @@ pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Erro
     Ok(log)
 }
 
+/// 場がなくても残る、店から作った選択関数のずれ（二度ならしたずれ）を測る（#94）。
+///
+/// [`field_mocks`] と同じ種で、同じ参照の点・コスモスの選択関数 S_real・点の池（W = 人口 × S_real に比例）を作る。
+/// 池そのもの（16 万点）から店と同じ手順の選択関数 S_pool を作ると、模擬の店から作る選択関数の期待値になる。
+/// 店の割合の密度と、店と同じ手順のランダムの割合の密度の比は
+/// w(x) = ⟨w₀⟩_W / w₀(x)、w₀ = S_pool / S_real で、式 eq:zeta-edge の w にあたる。
+/// 三角形の重み W³ は、池の点に「半径 r の中の池の点の数」の二乗を掛けて近づける（r は辺のビンの中点）。
+/// 池の 8 個に 1 個で平均し、r ごとに ⟨w²(1−w)⟩₃ と ⟨(w−1)³⟩₃ を返す。
+pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std::error::Error>> {
+    let t0 = Instant::now();
+    let r_km = p.footprint.ok_or("--footprint R が要る")?;
+    let (grid, _) = grid_of(root, &p.country)?;
+    let pts: Vec<LatLon> = stores::read_selected(&root.join(&p.stores))
+        .map_err(|e| format!("{} がない：{e}", p.stores))?
+        .into_iter()
+        .filter(|(c, _)| *c == p.chain)
+        .map(|(_, q)| q)
+        .collect();
+    let units = |v: &[LatLon]| -> Vec<Unit> { v.iter().map(Unit::from).collect() };
+    // field_mocks と同じ乱数列で、参照の点と点の池を作る
+    let mut rng_ref = SplitMix64::new(p.seed ^ 0x3E7A_0000_0000_0000);
+    let refs: Vec<Unit> = units(&sample(&grid, p.n_ref, Weight::Population, &mut rng_ref));
+    let real = units(&pts);
+    let sr_real = SmoothRatio::new(&real, &refs, r_km);
+    let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
+    let pool = units(
+        &sample_selected(
+            &grid,
+            20 * p.n_random,
+            Weight::Population,
+            |q| sr_real.eval(&Unit::from(q)),
+            40 * p.n_random,
+            &mut rng_legacy,
+        )
+        .points,
+    );
+    let sr_pool = SmoothRatio::new(&pool, &refs, r_km);
+    let sub: Vec<Unit> = pool.iter().step_by(8).copied().collect();
+    let w0: Vec<f64> = sub
+        .iter()
+        .map(|q| {
+            let den = sr_real.eval(q);
+            if den > 0.0 {
+                sr_pool.eval(q) / den
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    let ok: Vec<usize> = (0..sub.len())
+        .filter(|&i| w0[i].is_finite() && w0[i] > 0.0)
+        .collect();
+    let mean_w0 = ok.iter().map(|&i| w0[i]).sum::<f64>() / ok.len() as f64;
+    let w: Vec<f64> = w0.iter().map(|x| mean_w0 / x).collect();
+    let sd_w = (ok.iter().map(|&i| (w[i] - 1.0).powi(2)).sum::<f64>() / ok.len() as f64).sqrt();
+    let mut log = format!(
+        "池 {} 点、平均に使った点 {}（{:.1} 秒）。⟨w₀⟩_W = {mean_w0:.4}、w の 1 からのずれの二乗平均の平方根 {sd_w:.4}\n",
+        pool.len(),
+        ok.len(),
+        t0.elapsed().as_secs_f64()
+    );
+    let mut out = String::from("r_km,w2_1mw,wm1_cubed,w_mean\n");
+    for r in [3.0, 6.0, 12.0, 24.0] {
+        let rc = km_to_chord2(r).sqrt();
+        let g = crate::util::spatial::UnitGrid::build(&pool, rc);
+        let (mut s2, mut s3, mut s1, mut sw) = (0.0, 0.0, 0.0, 0.0);
+        for &i in &ok {
+            let mut n = 0usize;
+            g.for_each_near(&sub[i], rc, |j| {
+                if chord2(&sub[i], &pool[j]) < rc * rc {
+                    n += 1;
+                }
+            });
+            let wt = (n as f64).powi(2);
+            s2 += wt * w[i] * w[i] * (1.0 - w[i]);
+            s3 += wt * (w[i] - 1.0).powi(3);
+            s1 += wt * w[i];
+            sw += wt;
+        }
+        let (a2, a3, a1) = (s2 / sw, s3 / sw, s1 / sw);
+        writeln!(out, "{r},{a2:.6},{a3:.6},{a1:.6}")?;
+        writeln!(
+            log,
+            "r = {r} km：⟨w²(1−w)⟩₃ = {a2:+.5}、⟨(w−1)³⟩₃ = {a3:+.6}、⟨w⟩₃ = {a1:.4}"
+        )?;
+    }
+    results::write_text(
+        &root.join(format!("data/zeta/selection_mismatch_seed{}.csv", p.seed)),
+        &out,
+    )?;
+    Ok(log)
+}
+
+/// 二度ならしたずれ w（[`selection_mismatch`]）から式 eq:zeta-edge で見込む ζ̂ と、
+/// ガウス場の模擬データを店と同じ手順で測った ζ̂ を、ビンごとに比べる（#94）。
+///
+/// 見込み = ⟨(w−1)³⟩₃ − ⟨w²(1−w)⟩₃ (ξ̂₁ + ξ̂₂ + ξ̂₃)。ξ̂ は同じ模擬データを店と同じ手順で測った ξ の平均
+/// （場の揺らぎのうち選択関数に吸い込まれなかった部分）。係数は三角形の三辺の平均の r の値を、
+/// 隣の r の値との対数での線形補間で求める。`labels` は [`absorption`] が書いた data/zeta/absorption_`label`.csv。
+pub fn mismatch_prediction(
+    root: &Path,
+    mismatch_csv: &str,
+    labels: &[String],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mm = results::read_numeric_csv(&root.join(mismatch_csv))?;
+    let coef = |r: f64, col: &str| -> f64 {
+        let xs: Vec<(f64, f64)> = mm.iter().map(|m| (m["r_km"].ln(), m[col])).collect();
+        let x = r.ln();
+        if x <= xs[0].0 {
+            return xs[0].1;
+        }
+        for w in xs.windows(2) {
+            if x <= w[1].0 {
+                let t = (x - w[0].0) / (w[1].0 - w[0].0);
+                return w[0].1 + t * (w[1].1 - w[0].1);
+            }
+        }
+        xs[xs.len() - 1].1
+    };
+    let mut log = String::new();
+    for label in labels {
+        let z = results::read_numeric_csv(&root.join(format!("data/zeta/absorption_{label}.csv")))?;
+        let x =
+            results::read_numeric_csv(&root.join(format!("data/zeta/absorption_{label}_xi.csv")))?;
+        let xi = |k: f64| {
+            x.iter()
+                .find(|r| r["k"] == k)
+                .map_or(f64::NAN, |r| r["proc_mean"])
+        };
+        let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,observed,observed_sem,predicted\n");
+        let (mut so, mut sp, mut n_within, mut n_same_sign) = (0.0, 0.0, 0, 0);
+        for r in &z {
+            let rm = (r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0;
+            let sum_xi = xi(r["k1"]) + xi(r["k2"]) + xi(r["k3"]);
+            let pred = coef(rm, "wm1_cubed") - coef(rm, "w2_1mw") * sum_xi;
+            let (obs, sem) = (r["proc_mean"], r["proc_sem"]);
+            so += obs;
+            sp += pred;
+            n_within += usize::from((obs - pred).abs() <= 2.0 * sem);
+            n_same_sign += usize::from(obs.signum() == pred.signum());
+            writeln!(
+                out,
+                "{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{obs:.6},{sem:.6},{pred:.6}",
+                r["k1"], r["k2"], r["k3"], r["r1_km"], r["r2_km"], r["r3_km"]
+            )?;
+        }
+        let n = z.len() as f64;
+        results::write_text(
+            &root.join(format!("data/zeta/mismatch_pred_{label}.csv")),
+            &out,
+        )?;
+        writeln!(
+            log,
+            "{label}：16 ビンの平均で、実測 {:+.5}、見込み {:+.5}。実測と見込みが 2 SE 以内 {n_within}/{}、符号が同じ {n_same_sign}/{}",
+            so / n,
+            sp / n,
+            z.len(),
+            z.len()
+        )?;
+    }
+
+    // コスモス：同じ係数に、コスモスの ξ̂（コスモスから作った選択関数で測ったもの）を入れた見込み
+    const COSMOS_XI: &str = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_gauss_xi.csv";
+    const COSMOS_ZETA: &str = "data/zeta/zeta_jp_2026-11-12_cosmos_fp50_t8000.csv";
+    let cx = results::read_numeric_csv(&root.join(COSMOS_XI))?;
+    let cxi = |k: f64| {
+        cx.iter()
+            .find(|r| r["run"] < 0.0 && r["k"] == k)
+            .map_or(f64::NAN, |r| r["xi_true"])
+    };
+    // 測っていないビン（ζ が NaN）は除く
+    let cz: Vec<_> = results::read_numeric_csv(&root.join(COSMOS_ZETA))?
+        .into_iter()
+        .filter(|r| r["zeta"].is_finite())
+        .collect();
+    let mut out = String::from("k1,k2,k3,r1_km,r2_km,r3_km,cosmos_zeta,predicted\n");
+    let (mut lo, mut hi, mut sum) = (f64::INFINITY, f64::NEG_INFINITY, 0.0);
+    for r in &cz {
+        let rm = (r["r1_km"] + r["r2_km"] + r["r3_km"]) / 3.0;
+        let pred = coef(rm, "wm1_cubed")
+            - coef(rm, "w2_1mw") * (cxi(r["k1"]) + cxi(r["k2"]) + cxi(r["k3"]));
+        lo = lo.min(pred);
+        hi = hi.max(pred);
+        sum += pred;
+        writeln!(
+            out,
+            "{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.6},{pred:.6}",
+            r["k1"], r["k2"], r["k3"], r["r1_km"], r["r2_km"], r["r3_km"], r["zeta"]
+        )?;
+    }
+    results::write_text(&root.join("data/zeta/mismatch_pred_cosmos.csv"), &out)?;
+    writeln!(
+        log,
+        "コスモスの ξ̂ での見込み：ビンごとに {lo:+.4}〜{hi:+.4}、平均 {:+.4}（{} ビン）",
+        sum / cz.len() as f64,
+        cz.len()
+    )?;
+    Ok(log)
+}
+
 /// ζ̂ = 分子 ÷ 分母 の、比の平均と平均の比を比べる（#94）。`zeta_field --counts on` の出力を読む。
 ///
 /// run ごとの分子 N と分母 D（どちらも組の数で割ったもの）から、ビンごとに
