@@ -3008,6 +3008,71 @@ pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std
     Ok(log)
 }
 
+/// 選択関数の幅 R を変えたコスモスの ξ̂ と ζ̂ を並べる（#94）。
+///
+/// 入力は zeta の --footprint R --xi on --tag fp<R>_t8000 の出力
+/// （R = 50 は ζ が zeta_jp_2026-11-12_cosmos_fp50_t8000.csv、ξ が tag fp50_t8000_xi の _xi_xi.csv）。
+/// 書くもの：docs/tables/zeta_vary_r.tex（R ごとの ξ̂ と三辺の等しいビンの ζ̂、16 ビンの平均と負のビンの数）
+pub fn vary_r_table(root: &Path, rs: &[u32]) -> Result<String, Box<dyn std::error::Error>> {
+    const P: &str = "data/zeta/zeta_jp_2026-11-12_cosmos";
+    let mut t = String::from(
+        "% cargo run --release --bin zeta_vary_r が書いた表\n\
+         \\begin{tabular}{rrrrrrrrrrr}\n\\toprule\n\
+         & \\multicolumn{4}{c}{$\\hat\\xi$（辺 [km]）} & \\multicolumn{4}{c}{$\\hat\\zeta$（正三角形の辺 [km]）} & \\multicolumn{2}{c}{$\\hat\\zeta$ の 16 ビン} \\\\\n\
+         $R$ [km] & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 & 平均 & 負 \\\\\n\\midrule\n",
+    );
+    let mut log = String::new();
+    for &r in rs {
+        let (zp, xp) = if r == 50 {
+            (
+                format!("{P}_fp50_t8000.csv"),
+                format!("{P}_fp50_t8000_xi_xi.csv"),
+            )
+        } else {
+            (
+                format!("{P}_fp{r}_t8000.csv"),
+                format!("{P}_fp{r}_t8000_xi.csv"),
+            )
+        };
+        let z: Vec<_> = results::read_numeric_csv(&root.join(&zp))?
+            .into_iter()
+            .filter(|r| r["zeta"].is_finite())
+            .collect();
+        let x = results::read_numeric_csv(&root.join(&xp))?;
+        let xs: Vec<String> = x.iter().map(|r| format!("${:.3}$", r["xi"])).collect();
+        let eq: Vec<String> = z
+            .iter()
+            .filter(|r| r["k1"] == r["k2"] && r["k2"] == r["k3"])
+            .map(|r| format!("${:+.3}$", r["zeta"]))
+            .collect();
+        let n = z.len();
+        let mean = z.iter().map(|r| r["zeta"]).sum::<f64>() / n as f64;
+        let neg = z.iter().filter(|r| r["zeta"] < 0.0).count();
+        let (lo, hi) = z
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), r| {
+                (a.min(r["zeta"]), b.max(r["zeta"]))
+            });
+        writeln!(
+            t,
+            "{r} & {} & {} & ${mean:+.3}$ & {neg}/{n} \\\\",
+            xs.join(" & "),
+            eq.join(" & ")
+        )?;
+        writeln!(
+            log,
+            "R = {r} km：ξ̂ {}、ζ̂ の 16 ビンの平均 {mean:+.4}（{lo:+.4}〜{hi:+.4}）、負 {neg}/{n}",
+            x.iter()
+                .map(|r| format!("{:.3}", r["xi"]))
+                .collect::<Vec<_>>()
+                .join("・")
+        )?;
+    }
+    t.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_vary_r.tex"), &t)?;
+    Ok(log)
+}
+
 /// 二度ならしたずれ w（[`selection_mismatch`]）から式 eq:zeta-edge で見込む ζ̂ と、
 /// ガウス場の模擬データを店と同じ手順で測った ζ̂ を、ビンごとに比べる（#94）。
 ///
