@@ -2509,6 +2509,220 @@ pub fn absorption(
     Ok(msg)
 }
 
+/// ノート（#94）の表を二つ書く。どちらも [`absorption`] を走らせ直してから、その CSV を読む。
+///
+/// - docs/tables/zeta_absorption.tex：模型ごとの、正三角形のビンでの ζ と同じ辺の ξ の相対的な吸い込み
+/// - docs/tables/zeta_gauss_offset.tex：0 で切る点がほぼないガウス場で、店と同じ手順の ζ̂ が負になる大きさ
+///
+/// あわせて、負の ζ̂ の平均が 3 km の ξ の何乗で増えるか、それをコスモスの ξ に直した大きさ、
+/// 店を半分に分けた測り方（#94）の結果を、文字で返す。
+pub fn absorption_tables(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    const G: &str = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_a21.2_s220_m81_20261114_mainG";
+    const E: &str =
+        "data/zeta/field_jp_2026-11-12_cosmos_a0.6_s10_a20.9_s220_m81_20261114_compareE";
+    let four = |stem: &str| {
+        (0..4)
+            .map(|w| format!("{stem}_w{w}.csv"))
+            .collect::<Vec<_>>()
+    };
+    let models: Vec<(&str, &str, &str, Vec<String>)> = vec![
+        (
+            "clumps_match",
+            "丸い塊",
+            "match",
+            vec!["data/zeta/clustered_jp_2026-11-12_cosmos_m14_s15_mdens20.csv".into()],
+        ),
+        (
+            "field90",
+            "密度の揺らぎ",
+            "true",
+            vec!["data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10.csv".into()],
+        ),
+        ("mainG", "二つの幅（G）", "true", four(G)),
+        ("compareE", "二つの幅（E）", "true", four(E)),
+    ];
+    let gauss: [(&str, &str, &str); 3] = [
+        (
+            "gauss015",
+            "0.15",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.15_s10_m94_gauss",
+        ),
+        (
+            "gauss03",
+            "0.3",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_gauss",
+        ),
+        (
+            "gauss04",
+            "0.4",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.4_s10_m94_gauss",
+        ),
+    ];
+    let split = "data/zeta/field_jp_2026-11-12_cosmos_a0.3_s10_m94_split.csv".to_string();
+    let read = |label: &str, xi: bool| {
+        results::read_numeric_csv(&root.join(format!(
+            "data/zeta/absorption_{label}{}.csv",
+            if xi { "_xi" } else { "" }
+        )))
+    };
+    let cell = |v: f64| {
+        if v.is_finite() {
+            format!("${v:.2}$")
+        } else {
+            "—".to_string()
+        }
+    };
+    let mut log = String::new();
+
+    // 表 1：相対的な吸い込み
+    let mut t1 = String::from(
+        "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
+         \\begin{tabular}{lrrrrrrrrr}\n\\toprule\n\
+         & & \\multicolumn{4}{c}{$\\xi$（辺 [km]）} & \\multicolumn{4}{c}{$\\zeta$（正三角形の辺 [km]）} \\\\\n\
+         模型 & 個数 & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 \\\\\n\\midrule\n",
+    );
+    for (label, name, baseline, files) in &models {
+        absorption(root, label, baseline, files)?;
+        let (z, x) = (read(label, false)?, read(label, true)?);
+        let runs = z.first().map_or(0.0, |r| r["runs"]);
+        let xs: Vec<String> = x.iter().map(|r| cell(r["rel_absorb"])).collect();
+        let zs: Vec<String> = z
+            .iter()
+            .filter(|r| r["k1"] == r["k2"] && r["k2"] == r["k3"])
+            .map(|r| cell(r["rel_absorb"]))
+            .collect();
+        writeln!(
+            t1,
+            "{name} & {runs:.0} & {} & {} \\\\",
+            xs.join(" & "),
+            zs.join(" & ")
+        )?;
+        // 小さい尺度の ζ が吸い込まれないことは、相対値でなく差そのもので見る
+        for r in z
+            .iter()
+            .filter(|r| r["k1"] == r["k2"] && r["k2"] == r["k3"])
+        {
+            writeln!(
+                log,
+                "{label} 正三角形 {:.0} km：正しい基準 {:+.4}±{:.4}、吸い込み {:+.4}±{:.4}、傾き {:.2}±{:.2}",
+                r["r1_km"],
+                r["true_mean"],
+                r["true_sem"],
+                r["absorb_mean"],
+                r["absorb_sem"],
+                r["slope"],
+                r["slope_se"]
+            )?;
+        }
+        let n_sig = z
+            .iter()
+            .filter(|r| r["absorb_mean"].abs() > 2.0 * r["absorb_sem"])
+            .count();
+        writeln!(
+            log,
+            "{label}：吸い込みが 2 SE を超えるビン {n_sig}/{}",
+            z.len()
+        )?;
+    }
+    t1.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_absorption.tex"), &t1)?;
+
+    // 表 2：ガウス場の負の ζ̂
+    let mut t2 = String::from(
+        "% cargo run --release --bin zeta_absorption_tables が書いた表\n\
+         \\begin{tabular}{rrrrrrr}\n\\toprule\n\
+         & 0 で切った点 & $\\xi(3\\,\\mathrm{km})$ & \\multicolumn{3}{c}{店と同じ手順の $\\hat\\zeta$} & 正しい基準 \\\\\n\
+         振幅 & （最大） & & 16 ビンの平均 & 負 & $-2$ SE 未満 & $|t| > 2$ \\\\\n\\midrule\n",
+    );
+    let mut pts = Vec::new();
+    for (label, amp, stem) in gauss {
+        absorption(root, label, "true", &[format!("{stem}.csv")])?;
+        let (z, x) = (read(label, false)?, read(label, true)?);
+        let diag = results::read_numeric_csv(&root.join(format!("{stem}_diagnostics.csv")))?;
+        let clip = diag
+            .iter()
+            .map(|r| r["clipped_fraction"])
+            .fold(0.0, f64::max);
+        let xi3 = x.iter().find(|r| r["k"] == 0.0).ok_or("3 km の ξ がない")?["true_mean"];
+        let n = z.len() as f64;
+        let mean = z.iter().map(|r| r["proc_mean"]).sum::<f64>() / n;
+        let neg = z.iter().filter(|r| r["proc_mean"] < 0.0).count();
+        let sig = z
+            .iter()
+            .filter(|r| r["proc_mean"] < -2.0 * r["proc_sem"])
+            .count();
+        let tsig = z
+            .iter()
+            .filter(|r| r["true_mean"].abs() > 2.0 * r["true_sem"])
+            .count();
+        let (lo, hi) = z
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), r| {
+                (a.min(r["proc_mean"]), b.max(r["proc_mean"]))
+            });
+        writeln!(
+            t2,
+            "${amp}$ & ${:.1}\\%$ & ${xi3:.3}$ & ${mean:+.4}$ & {neg}/16 & {sig}/16 & {tsig}/16 \\\\",
+            100.0 * clip
+        )?;
+        writeln!(
+            log,
+            "振幅 {amp}：ξ(3km) {xi3:.4}、負の ζ̂ の平均 {mean:+.5}、範囲 {lo:+.4}〜{hi:+.4}"
+        )?;
+        pts.push((xi3, mean, lo, hi));
+    }
+    t2.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_gauss_offset.tex"), &t2)?;
+
+    // 何乗で増えるか（両端の振幅から）と、コスモスの ξ に直した大きさ
+    let real_xi3 = results::read_numeric_csv(&root.join(format!("{}_xi.csv", gauss[0].2)))?
+        .into_iter()
+        .find(|r| r["run"] < 0.0 && r["k"] == 0.0)
+        .ok_or("コスモスの ξ がない")?["xi_true"];
+    let slope =
+        |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| (b.1 / a.1).ln() / (b.0 / a.0).ln();
+    let (p0, p1, p2) = (pts[0], pts[1], pts[2]);
+    let scale = (real_xi3 / p2.0).powi(2);
+    writeln!(
+        log,
+        "負の ζ̂ の平均の、3 km の ξ に対する冪：{:.2}（0.15→0.3）、{:.2}（0.3→0.4）、{:.2}（0.15→0.4）\n\
+         振幅 0.4 を ξ² でコスモス（3 km の ξ {real_xi3:.3}）に直すと：平均 {:+.4}、範囲 {:+.4}〜{:+.4}",
+        slope(p0, p1),
+        slope(p1, p2),
+        slope(p0, p2),
+        p2.1 * scale,
+        p2.2 * scale,
+        p2.3 * scale
+    )?;
+
+    // 店を半分に分けた測り方
+    for (label, cols) in [
+        ("split_self", "half_true:half_proc"),
+        ("split_cross", "half_true:half_split"),
+        ("split_self_vs_cross", "half_proc:half_split"),
+    ] {
+        absorption(root, label, cols, std::slice::from_ref(&split))?;
+        let z = read(label, false)?;
+        let n = z.len() as f64;
+        let mean = z.iter().map(|r| r["proc_mean"]).sum::<f64>() / n;
+        let neg = z.iter().filter(|r| r["proc_mean"] < 0.0).count();
+        let sig = z
+            .iter()
+            .filter(|r| r["proc_mean"] < -2.0 * r["proc_sem"])
+            .count();
+        let pos_diff = z.iter().filter(|r| r["absorb_mean"] > 0.0).count();
+        let sig_diff = z
+            .iter()
+            .filter(|r| r["absorb_mean"].abs() > 2.0 * r["absorb_sem"])
+            .count();
+        writeln!(
+            log,
+            "{label}（{cols}）：比べる列の平均 {mean:+.5}、負 {neg}/16、−2 SE 未満 {sig}/16、差が正 {pos_diff}/16、差が 2 SE 超 {sig_diff}/16"
+        )?;
+    }
+    Ok(log)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
