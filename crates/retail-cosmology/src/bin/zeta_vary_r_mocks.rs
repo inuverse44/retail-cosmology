@@ -35,6 +35,16 @@ fn main() {
             "$G_{10}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_w25_swidth",
         ),
+        // R_W = 15 km（--footprint 15 --seed 3 --tag w15_swidth）
+        (
+            "$G_{10}$ (15)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_w15_swidth",
+        ),
+        // 振幅 0.4、R_W = 25 km（--amp 0.4 --footprint 25 --seed 4 --tag w25_swidth）
+        (
+            "$G_{10}^{0.4}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.4_s10_w25_swidth",
+        ),
     ];
     match vary_s_mocks_table(&root, &models) {
         Ok(log) => print!("{log}"),
