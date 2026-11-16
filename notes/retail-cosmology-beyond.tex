@@ -703,7 +703,7 @@ $R \ge 70\,\mathrm{km}$ では、$\zeta > 0$ か $\zeta \approx 0$ の八つの�
 \begin{table}[t]
   \centering
   \caption{式~\eqref{eq:q-bar} の $\bar Q_S$。
-    コスモスと、表~\ref{tab:vary-r-mocks}・\ref{tab:vary-r-mocks-g} と同じ模擬データ（各 20 個、模型の後ろの括弧の中は $R_W$ [km]）。
+    コスモスと、表~\ref{tab:vary-r-mocks}・\ref{tab:vary-r-mocks-g}・\ref{tab:vary-r-mocks-skew} と同じ模擬データ（各 20 個、模型の後ろの括弧の中は $R_W$ [km]）。
     模擬データは一つごとに $\bar Q_S$ を求め、その平均と標準偏差を書いた。
     $R \le 25\,\mathrm{km}$ は分母が小さく値が使えないので、載せていない。}
   \label{tab:vary-r-q}
@@ -797,24 +797,36 @@ $\bar Q_S$ は $R = 50$、$70$、$100\,\mathrm{km}$ で $-0.73 \pm 0.40$、$-0.5
 $R = 150\,\mathrm{km}$ では $-0.45 \pm 0.16$ で、コスモス以下は 1 個、コスモスは $-1.4\sigma$ だった。
 $\overline{\hat\zeta_S}$ の下がり方は $-0.124 \pm 0.110$ で、コスモスの $-0.162$ 以下が 6 個ある。
 一方、$G_{10}^{+}$ の $\overline{\hat\zeta_S}$ は $R = 25\,\mathrm{km}$ 以上で正（$+0.011$ から $+0.056$）で、$\bar Q_S$ はどの $R$ でも 20 個のうちコスモス以下が 0 個だった。
-$\zeta$ の符号だけが違う三つの模型（$G_{10}^{+}$、$G_{10}$、$G_{10}^{-}$）のうち、コスモスに合うのは $\zeta < 0$ の $G_{10}^{-}$ だけである（図~\ref{fig:skewed-results}）。
+$\zeta$ の符号だけが違う三つの模型（$G_{10}^{+}$、$G_{10}$、$G_{10}^{-}$）のうち、コスモスに合うのは $\zeta < 0$ の $G_{10}^{-}$ だけである（図~\ref{fig:skewed-results}(a)(b)）。
+
+$T_-$ の模型が $A$ と $\sigma$ の選び方にどれだけよるかを見るため、$A = 0.5$ にした $G_{10}^{-,0.5}$ と、$\sigma = 15\,\mathrm{km}$ にした $G_{15}^{-}$ も 20 個ずつ作った（$R_W = 25\,\mathrm{km}$、乱数の種はほかと変えた）。
+切った点の割合は 20 個の平均で $5.1\%$ と $7.9\%$ で、$g^2 > 1 + \sqrt{2}/A$ の割合（$A = 0.5$ で約 $5.0\%$、$0.7$ で約 $8.2\%$）に近い。
+$\bar Q_S$ は二つともほぼ $G_{10}^{-}$ と同じ所に来た。
+$R = 150\,\mathrm{km}$ で $-0.43 \pm 0.17$ と $-0.41 \pm 0.20$ で、コスモスは $-1.4\sigma$ と $-1.3\sigma$、$R = 50\,\mathrm{km}$ では $-0.55 \pm 0.52$ と $-0.57 \pm 0.46$ で $-0.7\sigma$ にある。
+この範囲の $A$ と $\sigma$ では、$\bar Q_S$ は $\zeta$ の符号を変えたとき（$R = 150\,\mathrm{km}$ で $G_{10}^{+}$ の $-0.01$ から $G_{10}^{-}$ の $-0.45$）ほどは動かない。
+一方、$\hat\xi_S$ と $\overline{\hat\zeta_S}$ の大きさは $A$ と $\sigma$ で変わる。
+$R = 150\,\mathrm{km}$ の $\hat\xi_S$ は、$3$ から $24\,\mathrm{km}$ で $G_{10}^{-,0.5}$ が $0.240$ から $0.172$ とコスモス（$0.328$ から $0.225$）より低く、$G_{15}^{-}$ は $0.296$、$0.285$、$0.278$、$0.195$ と、コスモスの $24\,\mathrm{km}$ までの平らな形に三つの中で最も近い。
+$\overline{\hat\zeta_S}$ は $R = 150\,\mathrm{km}$ で $-0.071$ と $-0.102$ で、コスモスの $-0.161$ と $G_{10}^{-}$ の $-0.126$ より小さく、下がり方がコスモス以下になるのは 20 個のうち 1 個と 3 個だった。
+$\hat\xi_S$ の形は $G_{15}^{-}$、$\overline{\hat\zeta_S}$ の大きさは $G_{10}^{-}$ の方が合い、三つの量をすべて最もよく合わせる $A$、$\sigma$ はまだ決まらない（図~\ref{fig:skewed-results}(c)(d)）。
 
 \begin{figure}[t]
   \centering
   \includegraphics{skewed_results.pdf}
-  \caption{$\zeta$ の符号だけを変えた三つの模型（各 20 個、$A = 0.7$、$\sigma = 10\,\mathrm{km}$、$R_W = 25\,\mathrm{km}$）とコスモス（白丸）。
-    (a) 式~\eqref{eq:q-bar} の $\bar Q_S$ と $S$ の幅 $R$。線は 20 個の平均、帯は標準偏差。$R \le 25\,\mathrm{km}$ は分母が小さく使えないので描いていない。
-    (b) $R = 150\,\mathrm{km}$ の $\hat\xi_S$。模擬データは 20 個の平均。}
+  \caption{$\zeta$ の符号を変えた模型（各 20 個、$R_W = 25\,\mathrm{km}$）とコスモス（白丸）。
+    上の段は $\zeta$ の符号だけを変えた三つ（$A = 0.7$、$\sigma = 10\,\mathrm{km}$）、下の段は $T_-$ の $A$ と $\sigma$ を変えた三組。
+    (a)(c) 式~\eqref{eq:q-bar} の $\bar Q_S$ と $S$ の幅 $R$。線は 20 個の平均、帯は標準偏差。$R \le 25\,\mathrm{km}$ は分母が小さく使えないので描いていない。
+    (b)(d) $R = 150\,\mathrm{km}$ の $\hat\xi_S$。模擬データは 20 個の平均。}
   \label{fig:skewed-results}
 \end{figure}
 
 \begin{table}[t]
   \centering
-  \caption{表~\ref{tab:vary-r-mocks} と同じ測り方で、$\zeta$ の符号だけを変えた模擬データ（各 20 個、$A = 0.7$、$\sigma = 10\,\mathrm{km}$、$R_W = 25\,\mathrm{km}$）。
-    $G_{10}^{+}$ と $G_{10}^{-}$ は式~\eqref{eq:skew-transform} の $T_+$ と $T_-$ で変換した場、$G_{10}$ は変換しない場。}
+  \caption{表~\ref{tab:vary-r-mocks} と同じ測り方で、$\zeta$ の符号を変えた模擬データ（各 20 個、$R_W = 25\,\mathrm{km}$）。
+    $G_{10}^{+}$ と $G_{10}^{-}$ は式~\eqref{eq:skew-transform} の $T_+$ と $T_-$ で変換した場、$G_{10}$ は変換しない場（$A = 0.7$、$\sigma = 10\,\mathrm{km}$）。
+    $G_{10}^{-,0.5}$ は $A = 0.5$、$G_{15}^{-}$ は $\sigma = 15\,\mathrm{km}$ にした $T_-$ の場。}
   \label{tab:vary-r-mocks-skew}
   \footnotesize
-  \setlength{\tabcolsep}{2.5pt}
+  \setlength{\tabcolsep}{2.2pt}
   \input{../docs/tables/zeta_vary_r_mocks_skew.tex}
 \end{table}
 
@@ -872,6 +884,8 @@ $\zeta$ の符号だけが違う三つの模型（$G_{10}^{+}$、$G_{10}$、$G_{
   \item ガウス場を $T_\pm(g) = \pm(g^2 - 1)/\sqrt{2}$ で変換すると、$\xi$ を変えずに $\zeta$ の符号だけを選べる（式~\eqref{eq:skew-moments}、図~\ref{fig:skewed-field}）。
     $\zeta < 0$ の $G_{10}^{-}$ は、コスモスの $\hat\xi_S$、$\overline{\hat\zeta_S}$ の $R$ による下がり方、$\bar Q_S$ を同時に近く再現した（$R = 50$ から $100\,\mathrm{km}$ でコスモスは $-0.4\sigma$ から $-0.9\sigma$、$150\,\mathrm{km}$ で $-1.4\sigma$）。
     $\zeta > 0$ の $G_{10}^{+}$ と $\zeta \approx 0$ の $G_{10}$ は合わない。
+    $A = 0.5$ や $\sigma = 15\,\mathrm{km}$ にしても $\bar Q_S$ はほとんど変わらず（$R = 150\,\mathrm{km}$ で $-0.41$ から $-0.45$）、コスモスは $-1.3\sigma$ から $-1.4\sigma$ のままだった。
+    $\hat\xi_S$ の形は $\sigma = 15\,\mathrm{km}$、$\overline{\hat\zeta_S}$ の大きさは $\sigma = 10\,\mathrm{km}$ の方が合い、三つをまとめて合わせる $A$、$\sigma$ はまだ決まらない。
     上の項目の「小さな固まりの負の $\zeta$ は要らない」は $\overline{\hat\zeta_S}$ の下がり方だけを見た場合で、$\hat\xi_S$ と合わせて見ると、店の密度の揺らぎが負の $\zeta$ を持つ模型の方がよく合う。
 \end{enumerate}
 
@@ -884,7 +898,7 @@ $\zeta$ の符号だけが違う三つの模型（$G_{10}^{+}$、$G_{10}$、$G_{
 \begin{itemize}
   \item $\zeta_w$ と $\zeta_{N/D}$ を足しても、$\overline{\hat\zeta_S}$ との差が種によって $\pm 0.002$ ほど残る（表~\ref{tab:gauss-budget}）。$f_{\mathrm{clip}}$ や高次の項を見分けるには、点の池とランダムカタログの種を変えた模擬データを増やして、この揺らぎを減らす必要がある。
   \item 実際の店で $w$ がどれだけ効くかは、店の本当の $W$ が幅 $50\,\mathrm{km}$ より細かい構造をどれだけ持つかによる。
-  \item $G_{10}^{-}$ は $A = 0.7$、$\sigma = 10\,\mathrm{km}$、$R_W = 25\,\mathrm{km}$ の一組だけで、合わせ込んではいない。$R = 150\,\mathrm{km}$ では $\bar Q_S$ がまだ浅い（$-0.45$ と $-0.67$）。振幅と幅を変えた $G^{-}$ で、どこまで合うかを確かめる。
+  \item $T_-$ の模型は、$A$ と $\sigma$ を変えた三組（$G_{10}^{-}$、$G_{10}^{-,0.5}$、$G_{15}^{-}$）のどれでも、$R = 150\,\mathrm{km}$ の $\bar Q_S$ がまだ浅い（$-0.41$ から $-0.45$、コスモスは $-0.67$）。式~\eqref{eq:skew-moments} では正しい基準の $|Q|$ は $1/A$ に比例するが、$A = 0.5$ にしても $\bar Q_S$ は深くならなかった。$S$ の吸い込みと切り捨てのどちらによるかは、まだ調べていない。
   \item $G_{10}^{\pm}$ を正しい基準で測った $\hat\zeta$ の大きさが式~\eqref{eq:skew-moments} どおりかは、一つごとの分布が大きく歪んでいるため 20 個では決められない。数を増やすか、中央値のような裾に強い量で比べる。
   \item 負の歪み（濃い所が頭打ちで、薄い所に深い穴がある）を、店どうしの競合、市場の飽和、出店を避ける地域のどれと読むかは、まだ決めていない。店どうしが近づかない模型とも比べる。
   \item 誤差は模擬データのばらつきだけで見ている。jackknife の誤差はまだである。

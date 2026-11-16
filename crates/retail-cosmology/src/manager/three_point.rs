@@ -3537,7 +3537,8 @@ pub fn vary_s_mocks_table(
         let below = drops.iter().filter(|d| **d <= cosmos_drop).count();
         writeln!(
             drop_out,
-            "{name},{lo},{hi},{},{dm:.6},{dsd:.6},{cosmos_drop:.6},{below}",
+            "{},{lo},{hi},{},{dm:.6},{dsd:.6},{cosmos_drop:.6},{below}",
+            csv_field(name),
             drops.len()
         )?;
         writeln!(
@@ -3551,6 +3552,16 @@ pub fn vary_s_mocks_table(
     results::write_text(&root.join(tex_out), &t)?;
     results::write_text(&root.join(drop_csv), &drop_out)?;
     Ok(log)
+}
+
+/// CSV の一つの欄。カンマ・引用符・改行を含むときだけ引用符で囲み、中の引用符は二つに重ねる（RFC 4180）。
+/// 模型の名前（`$G_{10}^{-,0.5}$` など）にカンマが入るため。
+fn csv_field(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\"")).into()
+    } else {
+        s.into()
+    }
 }
 
 /// 16 ビンの和の比 Q̄ = Σ ζ̂ / Σ (ξ̂₁ξ̂₂ + ξ̂₂ξ̂₃ + ξ̂₃ξ̂₁)。ζ̂ が NaN のビンは除く。
@@ -3624,7 +3635,7 @@ pub fn vary_s_mocks_q(
                     .map(|r| r["xi"])
                     .collect();
                 let m = v.iter().sum::<f64>() / v.len() as f64;
-                writeln!(xi_csv, "{name},{s},{k},{r_km:.3},{m:.6}")?;
+                writeln!(xi_csv, "{},{s},{k},{r_km:.3},{m:.6}", csv_field(name))?;
             }
         }
         let mut runs: Vec<f64> = z.iter().map(|r| r["run"]).collect();
@@ -3713,7 +3724,8 @@ pub fn vary_s_mocks_q(
             let sig = (cq - m) / sd;
             writeln!(
                 csv,
-                "{name},{s},{},{m:.6},{sd:.6},{cq:.6},{below},{sig:.4}",
+                "{},{s},{},{m:.6},{sd:.6},{cq:.6},{below},{sig:.4}",
+                csv_field(name),
                 qs.len()
             )?;
             writeln!(
@@ -4626,6 +4638,13 @@ fn fixed_count_shift(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn csv_field_quotes_only_when_needed() {
+        assert_eq!(csv_field("$G_{10}$ (25)"), "$G_{10}$ (25)");
+        assert_eq!(csv_field("$G_{10}^{-,0.5}$ (25)"), "\"$G_{10}^{-,0.5}$ (25)\"");
+        assert_eq!(csv_field("a\"b,c"), "\"a\"\"b,c\"");
+    }
 
     #[test]
     fn paired_stats_recovers_exact_line() {

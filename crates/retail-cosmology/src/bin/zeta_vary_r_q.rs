@@ -57,6 +57,15 @@ fn main() {
             "$G_{10}^{-}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_w25_swidth",
         ),
+        // 負の歪みで振幅を 0.5 にしたもの（--amp 0.5 --seed 9）と、場の幅を 15 km にしたもの（--sigma 15 --seed 10）
+        (
+            "$G_{10}^{-,0.5}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.5_s10_tnegchi_w25_swidth",
+        ),
+        (
+            "$G_{15}^{-}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s15_tnegchi_w25_swidth",
+        ),
     ];
     match vary_s_mocks_q(&root, &models) {
         Ok(log) => print!("{log}"),
