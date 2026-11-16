@@ -48,6 +48,15 @@ fn main() {
             "$G_{25}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s25_w25_swidth",
         ),
+        // 正と負の歪みの変換（ADR 010、--transform chi --seed 7、--transform negchi --seed 8、--tag w25_swidth）
+        (
+            "$G_{10}^{+}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tchi_w25_swidth",
+        ),
+        (
+            "$G_{10}^{-}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_w25_swidth",
+        ),
     ];
     match vary_s_mocks_q(&root, &models) {
         Ok(log) => print!("{log}"),
