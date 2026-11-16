@@ -1384,6 +1384,11 @@ pub struct FieldModel {
     pub counts: bool,
     /// 単位分散の場 g にかける点ごとの変換（ADR 010）。既定の恒等変換なら出力は従来と同じ。
     pub transform: FieldTransform,
+    /// 1 回ごとの店の位置を `<stem>_points.csv`（run,lat,lon）に書く（ADR 011）。乱数列は変わらない。
+    pub save_points: bool,
+    /// ξ̂・ζ̂ の数え上げを飛ばし、`<stem>_points.csv` だけを書く（ADR 011、`save_points` が要る）。
+    /// 店の位置と店と同じ手順のランダムカタログは同じ乱数列から引くので、同じ種なら店の位置は測る実行と同じ。
+    pub skip_measure: bool,
 }
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
@@ -1507,6 +1512,9 @@ pub fn field_mocks(
     {
         return Err("振幅は有限で非負、幅・centers・runs は正であること".into());
     }
+    if model.skip_measure && !model.save_points {
+        return Err("数え上げを飛ばすときは店の位置を書く（--save-points on）".into());
+    }
     let second_tag = model
         .second
         .map_or(String::new(), |(a, s)| format!("_a2{a}_s2{s}"));
@@ -1523,7 +1531,18 @@ pub fn field_mocks(
         p.chain.to_lowercase(),
         p.tag
     );
-    for suffix in [".csv", "_xi.csv", "_diagnostics.csv"] {
+    // 数え上げを飛ばすときは店の位置だけを書くので、測った出力があってもよい（同じ模擬データの位置を後から作る）。
+    let measured: &[&str] = if model.skip_measure {
+        &[]
+    } else {
+        &[".csv", "_xi.csv", "_diagnostics.csv"]
+    };
+    let points_suffix: &[&str] = if model.save_points {
+        &["_points.csv"]
+    } else {
+        &[]
+    };
+    for suffix in measured.iter().chain(points_suffix) {
         if root.join(format!("{stem}{suffix}")).exists() {
             return Err(format!("既存の出力を上書きしない：{stem}{suffix}").into());
         }
@@ -1601,7 +1620,10 @@ pub fn field_mocks(
     let mut sw_z = String::from("run,s_km,k1,k2,k3,r1_km,r2_km,r3_km,zeta\n");
     let mut sw_x = String::from("run,s_km,k,r_km,xi\n");
     let mut rng_legacy = SplitMix64::new(p.seed ^ 0xF1E1_D000_0000_0000);
-    let pool = units(&draw(&sr_real, 20 * p.n_random, &mut rng_legacy));
+    // 池の緯度・経度は、店の位置を書くとき（ADR 011）に、単位ベクトルから戻す丸めを入れずに使う。
+    let pool_ll = draw(&sr_real, 20 * p.n_random, &mut rng_legacy);
+    let pool = units(&pool_ll);
+    let mut points_out = String::from("run,lat,lon\n");
     eprintln!(
         "点の池 {} 点（{:.1} 秒）",
         pool.len(),
@@ -1680,16 +1702,35 @@ pub fn field_mocks(
         let wmax = w.iter().copied().fold(0.0, f64::max);
         let mut taken = vec![false; pool.len()];
         let mut d = Vec::with_capacity(pts.len());
+        let mut d_idx = Vec::with_capacity(pts.len());
         while d.len() < pts.len() {
             let i = (rng_m.next_f64() * pool.len() as f64) as usize;
             if !taken[i] && rng_m.next_f64() < w[i] / wmax {
                 taken[i] = true;
                 d.push(pool[i]);
+                d_idx.push(i);
             }
         }
         let sr_mock = SmoothRatio::new(&d, &refs, r_km);
         let sel_proc = draw_sel(&sr_mock, p.n_random, rng_m);
         let r_proc = units(&sel_proc.points);
+        // ここから先は rng_m を使わない（次の run の店の位置は、ここまでの乱数列だけで決まる）。
+        if model.save_points {
+            for &i in &d_idx {
+                let q = pool_ll[i];
+                // {} は読み戻すと同じ f64 になる最短の表記
+                writeln!(points_out, "{run},{},{}", q.lat, q.lon)?;
+            }
+        }
+        if model.skip_measure {
+            eprintln!(
+                "{} 回目（1 + δ < 0 で切った点 {:.1}%、{:.1} 秒、数え上げは飛ばした）",
+                run + 1,
+                100.0 * clipped as f64 / pool.len() as f64,
+                t0.elapsed().as_secs_f64()
+            );
+            continue;
+        }
 
         // 全体で割る規格化の量（#94、--counts on のときだけ）。
         // 店：池から重み w で店の数だけ選ぶので、店の割合の密度は W(1+δ)/(1+α)、1+α = 池での w の平均。
@@ -1846,6 +1887,12 @@ pub fn field_mocks(
             )?;
         }
         writeln!(diagnostics)?;
+    }
+    if model.save_points {
+        results::write_text(&root.join(format!("{stem}_points.csv")), &points_out)?;
+    }
+    if model.skip_measure {
+        return Ok(format!("{stem}_points.csv"));
     }
     results::write_text(&root.join(format!("{stem}_diagnostics.csv")), &diagnostics)?;
     results::write_text(&root.join(format!("{stem}_xi.csv")), &xi_out)?;

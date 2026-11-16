@@ -2,6 +2,7 @@
 //! Engine どうしは呼び合わない（データの型を共有するだけ）。
 
 pub mod census;
+pub mod counts_in_cells;
 pub mod density_field;
 pub mod estimator;
 pub mod pair_count;

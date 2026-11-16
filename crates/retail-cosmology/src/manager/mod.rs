@@ -9,6 +9,7 @@
 pub mod calibration;
 pub mod census;
 pub mod correlation;
+pub mod counts_in_cells;
 pub mod cost;
 pub mod jk_regions;
 pub mod random_points;

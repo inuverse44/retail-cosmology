@@ -19,6 +19,9 @@
 //! --transform none|chi|negchi：単位分散の場 g にかける点ごとの変換（ADR 010）。δ = A T(g)。
 //!   none は T(g) = g（既定、出力は従来と同じ）。chi は (g² − 1)/√2（ζ > 0）、negchi は (1 − g²)/√2（ζ < 0）。
 //!   none 以外ではファイル名に _t<名前> を足し、expected の列に切る前の ζ の見込み ±2√2 A³ ρ₁₂ρ₂₃ρ₃₁ を書く。
+//! --save-points on：1 回ごとの店の位置を <stem>_points.csv（run,lat,lon）に書く（ADR 011）。乱数列は変わらない。
+//! --skip-measure on：ξ̂・ζ̂ の数え上げを飛ばし、<stem>_points.csv だけを書く（--save-points on が要る）。
+//!   同じ引数・同じ種なら、店の位置は数え上げる実行と同じ。既に測った模擬データの位置を短い時間で作るのに使う。
 //! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
@@ -32,6 +35,7 @@ fn main() {
     let (mut amp, mut sigma, mut centers, mut runs) = (0.5f64, 15.0f64, 20_000usize, 3usize);
     let (mut amp2, mut sigma2, mut start) = (None, None, None);
     let (mut split, mut counts) = (false, false);
+    let (mut save_points, mut skip_measure) = (false, false);
     let mut transform = FieldTransform::Identity;
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
@@ -69,6 +73,14 @@ fn main() {
                 assert!(v == "on" || v == "off", "--counts は on か off");
                 counts = v == "on";
             }
+            "--save-points" => {
+                assert!(v == "on" || v == "off", "--save-points は on か off");
+                save_points = v == "on";
+            }
+            "--skip-measure" => {
+                assert!(v == "on" || v == "off", "--skip-measure は on か off");
+                skip_measure = v == "on";
+            }
             "--transform" => {
                 transform = [
                     FieldTransform::Identity,
@@ -98,6 +110,8 @@ fn main() {
         split,
         counts,
         transform,
+        save_points,
+        skip_measure,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),
