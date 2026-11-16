@@ -25,6 +25,7 @@ fn main() {
         n_ref: 50_000,
         seed: 1,
         lambda_mins: &[1.0],
+        block: 10,
     };
     let keys = [
         "G_d<0.5",

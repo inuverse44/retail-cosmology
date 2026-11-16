@@ -18,6 +18,7 @@
 | [010](010-skewed-density-field.md) | ガウス場を点ごとに変換して、ζ の符号を選べる密度場の模型を作る | Accepted |
 | [011](011-counts-in-cells.md) | 店をマスに数え、期待数からのずれの分布で負の歪みの出どころを調べる | Accepted |
 | [012](012-inhibition-and-pop-power.md) | 密度場の模型に、店どうしが近づかない条件と、人口に比例するより緩い増え方を足す | Accepted |
+| [013](013-cell-size-scan.md) | 店を数えるマスの大きさと期待数の幅を変えて、空のマスの不足が現れる規模を調べる | Accepted |
 
 ## 書き方
 

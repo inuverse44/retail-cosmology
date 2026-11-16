@@ -30,6 +30,8 @@ pub struct CellParams<'a> {
     pub seed: u64,
     /// 統計に使うマスの λ の下限（複数）。表には最初の値を使う
     pub lambda_mins: &'a [f64],
+    /// マスの幅：人口の格子 k×k 個（日本では 3 次メッシュ）。10 なら 2 次メッシュ（ADR 013）
+    pub block: u32,
 }
 
 /// 粗い格子ごとの人口の和と中心。
@@ -38,10 +40,12 @@ struct CoarseCells {
     center: BTreeMap<u64, Unit>,
     /// マスの面積 [km²]
     area: BTreeMap<u64, f64>,
+    /// マスの幅（人口の格子 k×k 個、ADR 013）
+    k: u32,
 }
 
 impl CoarseCells {
-    fn new(grid: &crate::contract::PopulationGrid) -> Self {
+    fn new(grid: &crate::contract::PopulationGrid, k: u32) -> Self {
         let mut pop = BTreeMap::new();
         let mut center = BTreeMap::new();
         let mut area = BTreeMap::new();
@@ -50,15 +54,20 @@ impl CoarseCells {
             if w <= 0.0 {
                 continue;
             }
-            // 人口の格子（3 次メッシュ）は粗い格子（2 次メッシュ）の中にちょうど入るので、中心で決めてよい
-            if let Some((key, c)) = grid.geometry.coarse_cell(&grid.geometry.point(i, 0.5, 0.5)) {
+            // 人口の格子（3 次メッシュ）は粗い格子（k×k 個）の中にちょうど入るので、中心で決めてよい
+            if let Some((key, c)) = grid.geometry.block_cell(&grid.geometry.point(i, 0.5, 0.5), k) {
                 *pop.entry(key).or_insert(0.0) += w;
                 center.entry(key).or_insert_with(|| Unit::from(&c));
                 area.entry(key)
-                    .or_insert_with(|| grid.geometry.coarse_area_km2(&c));
+                    .or_insert_with(|| grid.geometry.block_area_km2(&c, k));
             }
         }
-        Self { pop, center, area }
+        Self {
+            pop,
+            center,
+            area,
+            k,
+        }
     }
 
     /// カタログ `pts` の λ_c。λ_c > 0 のマスだけを、マスの番号の順に返す。
@@ -89,7 +98,7 @@ impl CoarseCells {
         let lam = self.lambdas(pts, refs, r_w_km);
         let mut n: BTreeMap<u64, u64> = BTreeMap::new();
         for q in pts {
-            if let Some((key, _)) = geometry.coarse_cell(q) {
+            if let Some((key, _)) = geometry.block_cell(q, self.k) {
                 *n.entry(key).or_insert(0) += 1;
             }
         }
@@ -126,7 +135,7 @@ impl CoarseCells {
         let mut by_class: Vec<(Vec<f64>, Vec<f64>)> = vec![(Vec::new(), Vec::new()); NN_CLASSES.len()];
         let mut no_lambda = 0usize;
         for (q, &di) in pts.iter().zip(&d) {
-            let Some((key, _)) = geometry.coarse_cell(q) else {
+            let Some((key, _)) = geometry.block_cell(q, self.k) else {
                 no_lambda += 1;
                 continue;
             };
@@ -222,7 +231,7 @@ struct Setup {
 
 fn setup(root: &Path, p: &CellParams) -> Result<Setup, Box<dyn std::error::Error>> {
     let grid = population::read_estat(&root.join("data/estat"))?;
-    let coarse = CoarseCells::new(&grid);
+    let coarse = CoarseCells::new(&grid, p.block);
     let mut rng_ref = SplitMix64::new(p.seed ^ 0xCE11_0000_0000_0000);
     let refs: Vec<Unit> = sample(&grid, p.n_ref, Weight::Population, &mut rng_ref)
         .iter()
@@ -532,5 +541,127 @@ pub fn cells_table(
     t.push_str("\\bottomrule\n\\end{tabular}\n");
     results::write_text(&root.join("docs/tables/cells_stats.tex"), &t)?;
     results::write_text(&root.join("data/zeta/cells_stats.csv"), &csv)?;
+    Ok(log)
+}
+
+/// マスの幅 k と期待数の幅 R_W の組（`settings`）ごとに、コスモスと模擬データの V と κ̂₂ を比べる（ADR 013）。
+/// `p.block` と `p.r_w_km` は使わず、`settings` の値を当てる。模擬データの店の位置は保存したものを使う。
+/// 書くもの：data/zeta/cells_scale.csv（k・R_W・カタログ・run・λ_min ごと、コスモスは model = COSMOS、run = -1）と
+/// docs/tables/cells_scale.tex（最初の λ_min の V。模擬データは平均 ± 標準偏差と、コスモスとの差が標準偏差の何倍か）。
+pub fn scale_table(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+    settings: &[(u32, f64)],
+) -> Result<String, Box<dyn std::error::Error>> {
+    if p.lambda_mins.is_empty() || settings.is_empty() {
+        return Err("λ_min と (k, R_W) の組を一つ以上渡す".into());
+    }
+    let Setup {
+        grid, refs, cosmos, ..
+    } = setup(root, p)?;
+    let catalogs: Vec<(&str, BTreeMap<i64, Vec<LatLon>>)> = models
+        .iter()
+        .map(|(name, stem)| read_points(root, stem).map(|r| (*name, r)))
+        .collect::<Result<_, _>>()?;
+
+    let mut log = String::new();
+    let mut csv = String::from(
+        "k,r_w,model,run,lambda_min,cells,n_sum,lambda_sum,kappa2,empty,empty_poisson\n",
+    );
+    let row = |csv: &mut String, k: u32, rw: f64, name: &str, run: i64, lmin: f64, s: &CellStats| {
+        writeln!(
+            csv,
+            "{k},{rw},{},{run},{lmin},{},{},{:.4},{:.6},{},{:.4}",
+            if name.contains(',') {
+                format!("\"{name}\"")
+            } else {
+                name.to_string()
+            },
+            s.cells,
+            s.n_sum,
+            s.lambda_sum,
+            s.kappa2,
+            s.empty,
+            s.empty_poisson
+        )
+    };
+
+    let lmin0 = p.lambda_mins[0];
+    let mut t = format!(
+        "% cargo run --release --bin cells_scale が書いた表（λ ≥ {lmin0} の V）\n\
+         \\begin{{tabular}}{{rrrr{}}}\n\\toprule\n$k$ & $R_W$ & マス & コスモス & {} \\\\\n\\midrule\n",
+        "r".repeat(models.len()),
+        models.iter().map(|m| m.0).collect::<Vec<_>>().join(" & ")
+    );
+
+    for &(k, rw) in settings {
+        let cc = CoarseCells::new(&grid, k);
+        let c_cells = cc.counts(&grid.geometry, &cosmos, &refs, rw);
+        let c_stats: Vec<CellStats> = p
+            .lambda_mins
+            .iter()
+            .map(|&l| cell_stats(&c_cells, l))
+            .collect();
+        for (&lmin, s) in p.lambda_mins.iter().zip(&c_stats) {
+            row(&mut csv, k, rw, "COSMOS", -1, lmin, s)?;
+            writeln!(
+                log,
+                "k {k}、R_W {rw}、λ ≥ {lmin}：COSMOS マス {}（店 {}、λ の和 {:.1}）、κ̂₂ {:+.4}、V {:.3}（{} / {:.1}）",
+                s.cells,
+                s.n_sum,
+                s.lambda_sum,
+                s.kappa2,
+                s.void_ratio(),
+                s.empty,
+                s.empty_poisson
+            )?;
+        }
+        let mut tex_cells = Vec::new();
+        for (name, runs) in &catalogs {
+            let mut per_lmin: Vec<Vec<CellStats>> = vec![Vec::new(); p.lambda_mins.len()];
+            for (run, pts) in runs {
+                let cells = cc.counts(&grid.geometry, pts, &refs, rw);
+                for (j, &lmin) in p.lambda_mins.iter().enumerate() {
+                    let s = cell_stats(&cells, lmin);
+                    row(&mut csv, k, rw, name, *run, lmin, &s)?;
+                    per_lmin[j].push(s);
+                }
+            }
+            for (j, &lmin) in p.lambda_mins.iter().enumerate() {
+                write!(log, "  {name} λ ≥ {lmin}（{} 回）：", per_lmin[j].len())?;
+                for (key, f) in [
+                    ("kappa2", (|s: &CellStats| s.kappa2) as fn(&CellStats) -> f64),
+                    ("void_ratio", |s: &CellStats| s.void_ratio()),
+                ] {
+                    let v: Vec<f64> = per_lmin[j].iter().map(f).collect();
+                    let (m, sd) = mean_sd(&v);
+                    let c = f(&c_stats[j]);
+                    let below = v.iter().filter(|x| **x <= c).count();
+                    write!(
+                        log,
+                        "{key} {m:+.4} ± {sd:.4}（コスモス {c:+.4}、以下 {below}/{}、{:+.2}σ）　",
+                        v.len(),
+                        (c - m) / sd
+                    )?;
+                    if j == 0 && key == "void_ratio" {
+                        let z = ((c - m) / sd * 10.0).round() / 10.0 + 0.0;
+                        tex_cells.push(format!("${m:.2} \\pm {sd:.2}$ (${z:+.1}$)"));
+                    }
+                }
+                writeln!(log)?;
+            }
+        }
+        writeln!(
+            t,
+            "${k}$ & ${rw}$ & ${}$ & ${:.2}$ & {} \\\\",
+            c_stats[0].cells,
+            c_stats[0].void_ratio(),
+            tex_cells.join(" & ")
+        )?;
+    }
+    t.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/cells_scale.tex"), &t)?;
+    results::write_text(&root.join("data/zeta/cells_scale.csv"), &csv)?;
     Ok(log)
 }
