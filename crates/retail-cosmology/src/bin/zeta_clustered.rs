@@ -11,6 +11,8 @@
 //! --match on：親ごとに子を一つ選ぶ独立の基準を追加。新規の --tag が必要。
 //! --counts on：基準ごとに ζ̂ の分子と分母も書く（num_true,rrr_true,num_proc,rrr_proc[,num_match,rrr_match]）。
 //!   zeta_ratio で比の偏りを切り分ける（#94）。
+//! --s-widths 15,25,…：W は --footprint の幅のまま、店と同じ手順の S の幅だけを変えて同じ模擬データを測る。
+//!   幅と run ごとに別の乱数列を使うので、もとの列は変わらない。<stem>_swidth.csv と _swidth_xi.csv に書く（#94）。
 
 use std::path::PathBuf;
 
@@ -53,6 +55,7 @@ fn main() {
                 );
             }
             "--tag" => p.tag = format!("_{v}"),
+            "--s-widths" => p.s_widths = v.split(',').map(|s| s.parse().unwrap()).collect(),
             _ => panic!("知らない引数：{k}"),
         }
     }
