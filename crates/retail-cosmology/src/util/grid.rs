@@ -141,6 +141,74 @@ impl GridGeometry {
         }
     }
 
+    /// 点が入る、人口の格子 k×k 個をまとめたマスの番号と中心（ADR 013）。
+    /// k = 10 なら `coarse_cell` と同じ番号・中心を返す。メッシュでは 3 次メッシュを、緯度 30 秒・経度 45 秒の
+    /// 通し番号（南緯 0 度・東経 100 度から）で k 個ずつまとめる。平面の格子で範囲の外なら None。
+    pub fn block_cell(&self, p: &LatLon, k: u32) -> Option<(u64, LatLon)> {
+        assert!(k > 0, "マスの幅 k は 1 以上");
+        if k == 10 {
+            return self.coarse_cell(p);
+        }
+        self.block_cell_general(p, k)
+    }
+
+    /// `block_cell` の、k = 10 を特別扱いしない形（番号は 2 次メッシュと違う）。
+    fn block_cell_general(&self, p: &LatLon, k: u32) -> Option<(u64, LatLon)> {
+        let kf = k as f64;
+        match self {
+            GridGeometry::Planar {
+                width,
+                height,
+                x0,
+                y0,
+                dx,
+                dy,
+                proj,
+            } => {
+                let (x, y) = proj.forward(p);
+                let col = ((x - x0) / dx).floor();
+                let row = ((y0 - y) / dy).floor();
+                if col < 0.0 || row < 0.0 || col >= *width as f64 || row >= *height as f64 {
+                    return None;
+                }
+                let (bc, br) = ((col / kf).floor(), (row / kf).floor());
+                let key = br as u64 * 1_000_000 + bc as u64;
+                let center = proj.inverse(
+                    x0 + (bc * kf + kf / 2.0) * dx,
+                    y0 - (br * kf + kf / 2.0) * dy,
+                );
+                Some((key, center))
+            }
+            GridGeometry::Mesh { .. } => {
+                let (ilat, ilon) = mesh_index(code_of(p));
+                let (bi, bj) = (ilat / k as u64, ilon / k as u64);
+                let center = LatLon {
+                    lat: (bi as f64 * kf + kf / 2.0) * DLAT,
+                    lon: 100.0 + (bj as f64 * kf + kf / 2.0) * DLON,
+                };
+                Some((bi * 1_000_000 + bj, center))
+            }
+        }
+    }
+
+    /// `block_cell` が返すマスの面積 [km²]。k = 10 なら `coarse_area_km2` と同じ。
+    pub fn block_area_km2(&self, center: &LatLon, k: u32) -> f64 {
+        if k == 10 {
+            return self.coarse_area_km2(center);
+        }
+        let kf = k as f64;
+        match self {
+            GridGeometry::Planar { dx, dy, .. } => kf * kf * dx * dy / 1e6,
+            GridGeometry::Mesh { .. } => {
+                let r = crate::util::geo::EARTH_RADIUS_KM;
+                r * r
+                    * (kf * DLAT).to_radians()
+                    * (kf * DLON).to_radians()
+                    * center.lat.to_radians().cos()
+            }
+        }
+    }
+
     /// 点が入る格子の番号。格子の外（メッシュでは載っていない格子）なら None。
     pub fn cell_of(&self, p: &LatLon) -> Option<usize> {
         match self {
@@ -190,6 +258,17 @@ pub fn code_to_sw(code: u64) -> (f64, f64) {
         pq / 1.5 + t * 5.0 / 60.0 + v * DLAT,
         rs + 100.0 + u * 7.5 / 60.0 + w * DLON,
     )
+}
+
+/// 3 次メッシュの番号 → 緯度方向・経度方向の通し番号（南緯 0 度・東経 100 度から、緯度 30 秒・経度 45 秒ごと）。
+fn mesh_index(code: u64) -> (u64, u64) {
+    let pq = code / 1_000_000;
+    let rs = (code / 10_000) % 100;
+    let t = (code / 1000) % 10;
+    let u = (code / 100) % 10;
+    let v = (code / 10) % 10;
+    let w = code % 10;
+    (pq * 80 + t * 10 + v, rs * 80 + u * 10 + w)
 }
 
 /// 緯度・経度 → それが入る 3 次メッシュの番号。
@@ -246,6 +325,57 @@ mod tests {
         let (lat0, lon0) = code_to_sw(key * 100);
         assert!((c.lat - (lat0 + 2.5 / 60.0)).abs() < 1e-12);
         assert!((c.lon - (lon0 + 3.75 / 60.0)).abs() < 1e-12);
+    }
+
+    /// 一般の形で k = 10 にしたマスは 2 次メッシュと同じ分け方で、中心も同じ。
+    /// k = 5 のマスは 2 次メッシュの中にちょうど入り、面積は 4 分の 1。
+    #[test]
+    fn blocks_of_ten_are_second_level_meshes() {
+        let g = GridGeometry::Mesh {
+            sw: Vec::new(),
+            index: HashMap::new(),
+        };
+        let mut pairs = std::collections::BTreeMap::new();
+        for i in 0..400 {
+            // 3 次メッシュの中心を、九州から北海道までの範囲で決まった順にたどる
+            let p = LatLon {
+                lat: 31.0 + (i as f64 * 0.0371) % 14.0,
+                lon: 129.5 + (i as f64 * 0.0573) % 15.0,
+            };
+            let (k2, c2) = g.coarse_cell(&p).unwrap();
+            let (kg, cg) = g.block_cell_general(&p, 10).unwrap();
+            assert!((c2.lat - cg.lat).abs() < 1e-12 && (c2.lon - cg.lon).abs() < 1e-12);
+            assert_eq!(*pairs.entry(k2).or_insert(kg), kg);
+            let (_, c5) = g.block_cell(&p, 5).unwrap();
+            assert_eq!(code_of(&c5) / 100, k2);
+            let ratio = g.block_area_km2(&c5, 5) / g.block_area_km2(&c2, 10);
+            assert!((ratio - 0.25).abs() < 0.01, "面積の比 {ratio}");
+        }
+        // 2 次メッシュの番号と一般の番号が一対一
+        let general: std::collections::BTreeSet<u64> = pairs.values().copied().collect();
+        assert_eq!(general.len(), pairs.len());
+    }
+
+    #[test]
+    fn planar_blocks_scale_with_k() {
+        let g = GridGeometry::Planar {
+            width: 40,
+            height: 40,
+            x0: 0.0,
+            y0: -3_000_000.0,
+            dx: 1000.0,
+            dy: 1000.0,
+            proj: Projection::Albers(Albers::epsg3577()),
+        };
+        let p = g.point(40 * 13 + 27, 0.5, 0.5);
+        let (k10, _) = g.block_cell(&p, 10).unwrap();
+        let (kg, _) = g.block_cell_general(&p, 10).unwrap();
+        assert_eq!(k10, kg);
+        let (k5, c5) = g.block_cell(&p, 5).unwrap();
+        // 行 13 → 2、列 27 → 5
+        assert_eq!(k5, 2 * 1_000_000 + 5);
+        assert_eq!(g.block_cell(&c5, 5).unwrap().0, k5);
+        assert!((g.block_area_km2(&c5, 5) - 25.0).abs() < 1e-9);
     }
 
     #[test]

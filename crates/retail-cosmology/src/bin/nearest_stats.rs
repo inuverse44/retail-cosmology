@@ -20,6 +20,7 @@ fn main() {
         n_ref: 50_000,
         seed: 1,
         lambda_mins: &[],
+        block: 10,
     };
     let models = [
         (
