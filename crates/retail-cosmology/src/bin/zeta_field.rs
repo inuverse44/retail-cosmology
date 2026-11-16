@@ -16,12 +16,15 @@
 //!   true・proc それぞれ書く列（num_true,rrr_true,num_proc,rrr_proc）を足す（#94）。もとの列は変わらない。
 //! --s-widths 15,25,…：W は --footprint の幅のまま、店と同じ手順の S の幅だけを変えて同じ模擬データを測る。
 //!   幅と run ごとに別の乱数列を使うので、もとの列は変わらない。<stem>_swidth.csv と _swidth_xi.csv に書く（#94）。
-//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_名前].csv と _xi.csv
+//! --transform none|chi|negchi：単位分散の場 g にかける点ごとの変換（ADR 010）。δ = A T(g)。
+//!   none は T(g) = g（既定、出力は従来と同じ）。chi は (g² − 1)/√2（ζ > 0）、negchi は (1 − g²)/√2（ζ < 0）。
+//!   none 以外ではファイル名に _t<名前> を足し、expected の列に切る前の ζ の見込み ±2√2 A³ ρ₁₂ρ₂₃ρ₃₁ を書く。
+//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
 use std::path::PathBuf;
 
-use retail_cosmology::manager::three_point::{FieldModel, Params, field_mocks};
+use retail_cosmology::manager::three_point::{FieldModel, FieldTransform, Params, field_mocks};
 
 fn main() {
     let mut it = std::env::args().skip(1);
@@ -29,6 +32,7 @@ fn main() {
     let (mut amp, mut sigma, mut centers, mut runs) = (0.5f64, 15.0f64, 20_000usize, 3usize);
     let (mut amp2, mut sigma2, mut start) = (None, None, None);
     let (mut split, mut counts) = (false, false);
+    let mut transform = FieldTransform::Identity;
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -65,6 +69,16 @@ fn main() {
                 assert!(v == "on" || v == "off", "--counts は on か off");
                 counts = v == "on";
             }
+            "--transform" => {
+                transform = [
+                    FieldTransform::Identity,
+                    FieldTransform::Chi,
+                    FieldTransform::NegChi,
+                ]
+                .into_iter()
+                .find(|t| t.name() == v)
+                .unwrap_or_else(|| panic!("--transform は none・chi・negchi のどれか：{v}"));
+            }
             _ => panic!("知らない引数：{k}"),
         }
     }
@@ -83,6 +97,7 @@ fn main() {
         start,
         split,
         counts,
+        transform,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),

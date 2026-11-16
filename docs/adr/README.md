@@ -15,6 +15,7 @@
 | [007](007-three-point-counting-engine.md) | 三つ組の数え上げは新しい Engine として足し、二点の数え上げには手を入れない | Accepted |
 | [008](008-regional-selection-function.md) | 地方の店舗数と人口から区分一定の選択関数を作る | Accepted |
 | [009](009-matched-mock-density.md) | 親ごとの子の抽出で一点密度を調べる基準を作る | Accepted |
+| [010](010-skewed-density-field.md) | ガウス場を点ごとに変換して、ζ の符号を選べる密度場の模型を作る | Accepted |
 
 ## 書き方
 
