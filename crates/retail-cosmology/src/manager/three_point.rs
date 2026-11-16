@@ -3412,6 +3412,154 @@ pub fn vary_s_mocks_table(
     Ok(log)
 }
 
+/// 16 ビンの和の比 Q̄ = Σ ζ̂ / Σ (ξ̂₁ξ̂₂ + ξ̂₂ξ̂₃ + ξ̂₃ξ̂₁)。ζ̂ が NaN のビンは除く。
+/// `xi` は辺のビン k の ξ̂、`zeta` は（k1, k2, k3, ζ̂）。
+fn q_ratio(xi: &[f64], zeta: &[(usize, usize, usize, f64)]) -> (f64, f64) {
+    let (mut num, mut den) = (0.0, 0.0);
+    for &(a, b, c, z) in zeta.iter().filter(|t| t.3.is_finite()) {
+        num += z;
+        den += xi[a] * xi[b] + xi[b] * xi[c] + xi[c] * xi[a];
+    }
+    (num, den)
+}
+
+/// コスモスの幅 R の ζ̂_S と ξ̂_S のファイル（[`vary_r_table`] と同じもの）。
+fn cosmos_paths(r: u32) -> (String, String) {
+    const P: &str = "data/zeta/zeta_jp_2026-11-12_cosmos";
+    if r == 50 {
+        (
+            format!("{P}_fp50_t8000.csv"),
+            format!("{P}_fp50_t8000_xi_xi.csv"),
+        )
+    } else {
+        (
+            format!("{P}_fp{r}_t8000.csv"),
+            format!("{P}_fp{r}_t8000_xi.csv"),
+        )
+    }
+}
+
+/// 三点の大きさを二点の二乗で割った Q̄ を、コスモスと模擬データで R ごとに比べる（#94）。
+///
+/// Q̄ = Σ ζ̂_S / Σ (ξ̂₁ξ̂₂ + ξ̂₂ξ̂₃ + ξ̂₃ξ̂₁)（16 ビンの和の比、[`q_ratio`]）。ビンごとの比の平均は、
+/// ξ̂_S が 0 に近いビンで暴れるので使わない。模擬データは run ごとに Q̄ を出し、平均と標準偏差、
+/// コスモス以下の run の数を数える（コスモスは一回きりなので標準偏差で比べる）。
+/// `models` は [`vary_s_mocks_table`] と同じ。
+/// 書くもの：docs/tables/zeta_vary_r_q.tex、data/zeta/vary_r_mocks_q.csv
+pub fn vary_s_mocks_q(
+    root: &Path,
+    models: &[(&str, &str)],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let key = |r: &std::collections::HashMap<String, f64>| {
+        (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize)
+    };
+    let mut log = String::new();
+    let mut csv =
+        String::from("model,s_km,runs,q_mean,q_sd,cosmos_q,runs_at_or_below_cosmos,cosmos_sigma\n");
+    // 模型ごとに、R → run ごとの Q̄
+    let mut per_model: Vec<Vec<(f64, Vec<f64>)>> = Vec::new();
+    let mut widths_all: Vec<f64> = Vec::new();
+    for (_, stem) in models {
+        let z = results::read_numeric_csv(&root.join(format!("{stem}_swidth.csv")))?;
+        let x = results::read_numeric_csv(&root.join(format!("{stem}_swidth_xi.csv")))?;
+        let mut widths: Vec<f64> = z.iter().map(|r| r["s_km"]).collect();
+        widths.sort_by(f64::total_cmp);
+        widths.dedup();
+        let mut runs: Vec<f64> = z.iter().map(|r| r["run"]).collect();
+        runs.sort_by(f64::total_cmp);
+        runs.dedup();
+        let mut rows = Vec::new();
+        for &s in &widths {
+            let qs: Vec<f64> = runs
+                .iter()
+                .map(|&run| {
+                    let mut xs: Vec<(usize, f64)> = x
+                        .iter()
+                        .filter(|r| r["run"] == run && r["s_km"] == s)
+                        .map(|r| (r["k"] as usize, r["xi"]))
+                        .collect();
+                    xs.sort_by_key(|t| t.0);
+                    let xi: Vec<f64> = xs.into_iter().map(|t| t.1).collect();
+                    let zs: Vec<_> = z
+                        .iter()
+                        .filter(|r| r["run"] == run && r["s_km"] == s)
+                        .map(|r| {
+                            let (a, b, c) = key(r);
+                            (a, b, c, r["zeta"])
+                        })
+                        .collect();
+                    let (num, den) = q_ratio(&xi, &zs);
+                    num / den
+                })
+                .collect();
+            rows.push((s, qs));
+        }
+        widths_all.extend(&widths);
+        per_model.push(rows);
+    }
+    widths_all.sort_by(f64::total_cmp);
+    widths_all.dedup();
+
+    let mut t = format!(
+        "% cargo run --release --bin zeta_vary_r_q が書いた表\n\
+         \\begin{{tabular}}{{rr{}}}\n\\toprule\n\
+         & & \\multicolumn{{{}}}{{c}}{{模擬データの $\\bar Q_S$（平均 $\\pm$ 標準偏差）}} \\\\\n\
+         $R$ [km] & コスモス & {} \\\\\n\\midrule\n",
+        "r".repeat(models.len()),
+        models.len(),
+        models.iter().map(|m| m.0).collect::<Vec<_>>().join(" & ")
+    );
+    for &s in &widths_all {
+        let (zp, xp) = cosmos_paths(s as u32);
+        let cz: Vec<_> = results::read_numeric_csv(&root.join(&zp))?
+            .iter()
+            .map(|r| {
+                let (a, b, c) = key(r);
+                (a, b, c, r["zeta"])
+            })
+            .collect();
+        let cx: Vec<f64> = results::read_numeric_csv(&root.join(&xp))?
+            .iter()
+            .map(|r| r["xi"])
+            .collect();
+        let (num, den) = q_ratio(&cx, &cz);
+        let cq = num / den;
+        writeln!(
+            log,
+            "R = {s:.0} km：コスモス Q̄ = {cq:+.4}（Σζ̂ = {num:+.4}、Σ分母 = {den:.4}）"
+        )?;
+        let mut cells = Vec::new();
+        for ((name, _), rows) in models.iter().zip(&per_model) {
+            let Some((_, qs)) = rows.iter().find(|r| r.0 == s) else {
+                cells.push(String::from("--"));
+                continue;
+            };
+            let n = qs.len() as f64;
+            let m = qs.iter().sum::<f64>() / n;
+            let sd = (qs.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+            let below = qs.iter().filter(|q| **q <= cq).count();
+            let sig = (cq - m) / sd;
+            writeln!(
+                csv,
+                "{name},{s},{},{m:.6},{sd:.6},{cq:.6},{below},{sig:.4}",
+                qs.len()
+            )?;
+            writeln!(
+                log,
+                "  {name}：Q̄ {m:+.4} ± {sd:.4}（標準偏差、{} 回）、コスモス以下 {below}/{}、（コスモス − 平均）/ 標準偏差 {sig:+.2}",
+                qs.len(),
+                qs.len()
+            )?;
+            cells.push(format!("${m:+.2} \\pm {sd:.2}$"));
+        }
+        writeln!(t, "{s:.0} & ${cq:+.2}$ & {} \\\\", cells.join(" & "))?;
+    }
+    t.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/zeta_vary_r_q.tex"), &t)?;
+    results::write_text(&root.join("data/zeta/vary_r_mocks_q.csv"), &csv)?;
+    Ok(log)
+}
+
 /// コスモスの幅 R の ζ̂_S の、16 ビンの平均（[`vary_r_table`] と同じファイルを読む）。
 fn cosmos_zeta_mean(root: &Path, r: u32) -> Result<f64, Box<dyn std::error::Error>> {
     const P: &str = "data/zeta/zeta_jp_2026-11-12_cosmos";
