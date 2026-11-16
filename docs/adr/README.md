@@ -16,6 +16,7 @@
 | [008](008-regional-selection-function.md) | 地方の店舗数と人口から区分一定の選択関数を作る | Accepted |
 | [009](009-matched-mock-density.md) | 親ごとの子の抽出で一点密度を調べる基準を作る | Accepted |
 | [010](010-skewed-density-field.md) | ガウス場を点ごとに変換して、ζ の符号を選べる密度場の模型を作る | Accepted |
+| [011](011-counts-in-cells.md) | 店をマスに数え、期待数からのずれの分布で負の歪みの出どころを調べる | Accepted |
 
 ## 書き方
 
