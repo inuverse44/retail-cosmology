@@ -1397,6 +1397,9 @@ pub struct FieldModel {
     /// 近くに店のない所を先に埋める条件 (R_c [km], β)（ADR 014）。重みで受け入れた候補（`inhibit` の後）を、
     /// すでに選んだ店が R_c 以内に一つでもあれば確率 β で受け入れる。None なら従来どおり（乱数列も同じ）。
     pub cover: Option<(f64, f64)>,
+    /// 店のまわりの人口に対する反応 [R_p [km], P_0, m, P_1, s]（ADR 015）。重みに
+    /// h(P) = [1 + (P_0/P)^m]^{−1} [1 + (P/P_1)^s]^{−1} をかける（P は池の点から R_p 以内の人口）。None なら従来どおり。
+    pub pop_response: Option<[f64; 5]>,
 }
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
@@ -1536,6 +1539,15 @@ pub fn field_mocks(
     {
         return Err("--cover は R_c > 0 と 0 < β ≤ 1".into());
     }
+    if model
+        .pop_response
+        .is_some_and(|v| v.iter().any(|x| !x.is_finite() || *x <= 0.0))
+    {
+        return Err("--pop-response の R_p・P_0・m・P_1・s は正の有限な数".into());
+    }
+    if model.counts && model.pop_response.is_some() {
+        return Err("--counts は --pop-response と一緒に使わない".into());
+    }
     // --counts の規格化（1+α = 池での w の平均）は重み w = max(0, 1+δ) を前提にするので、ADR 012・014 の選び方とは混ぜない
     if model.counts && (model.inhibit.is_some() || model.pop_power != 1.0 || model.cover.is_some())
     {
@@ -1564,7 +1576,9 @@ pub fn field_mocks(
         model
             .cover
             .map_or(String::new(), |(r, b)| format!("_cov{r}x{b}"))
-    );
+    ) + &model.pop_response.map_or(String::new(), |[r, p0, m, p1, s]| {
+        format!("_pr{r}x{p0}x{m}x{p1}x{s}")
+    });
     let stem = format!(
         "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
         if p.country == "jp" { "jp_" } else { "us_" },
@@ -1689,6 +1703,35 @@ pub fn field_mocks(
                 .collect(),
         )
     };
+    // ADR 015：池の点ごとの、まわりの人口に対する反応 h(P)。使わないなら作らない。
+    let response: Option<Vec<f64>> = model.pop_response.map(|[r, p0, m, p1, s]| {
+        let mut centres = Vec::new();
+        let mut pops = Vec::new();
+        for (i, &v) in grid.values.iter().enumerate() {
+            let w = Weight::Population.of(v as f64);
+            if w > 0.0 {
+                centres.push(Unit::from(&grid.geometry.point(i, 0.5, 0.5)));
+                pops.push(w);
+            }
+        }
+        let rc2 = km_to_chord2(r);
+        let g = crate::util::spatial::UnitGrid::build(&centres, rc2.sqrt());
+        pool.iter()
+            .map(|q| {
+                let mut p = 0.0;
+                g.for_each_near(q, rc2.sqrt(), |j| {
+                    if chord2(q, &centres[j]) < rc2 {
+                        p += pops[j];
+                    }
+                });
+                if p > 0.0 {
+                    1.0 / (1.0 + (p0 / p).powf(m)) / (1.0 + (p / p1).powf(s))
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    });
     // ADR 012：近づかない条件の近傍を探す、池の点の格子
     let inhibit_grid = model.inhibit.map(|(r, g)| {
         let rc2 = km_to_chord2(r);
@@ -1782,6 +1825,11 @@ pub fn field_mocks(
         if let Some(f) = &pop_factor {
             for (wi, fi) in w.iter_mut().zip(f) {
                 *wi *= fi;
+            }
+        }
+        if let Some(h) = &response {
+            for (wi, hi) in w.iter_mut().zip(h) {
+                *wi *= hi;
             }
         }
         if w.iter().filter(|w| **w > 0.0).count() < pts.len() {
