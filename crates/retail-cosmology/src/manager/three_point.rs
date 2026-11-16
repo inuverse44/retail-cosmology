@@ -3730,6 +3730,102 @@ fn cosmos_paths(r: u32) -> (String, String) {
 /// `models` は [`vary_s_mocks_table`] と同じ。
 /// 書くもの：docs/tables/zeta_vary_r_q.tex、data/zeta/vary_r_mocks_q.csv、
 /// data/zeta/vary_r_mocks_xi.csv（図のための ξ̂_S。模擬データは run の平均、コスモスは model = COSMOS）
+/// `--s-widths` の出力（ζ̂ の行 `z`、ξ̂ の行 `x`）から、run と R の Q̄_S と、ξ̂_S（k の順）。
+fn run_q(
+    z: &[std::collections::HashMap<String, f64>],
+    x: &[std::collections::HashMap<String, f64>],
+    run: f64,
+    s: f64,
+) -> (f64, Vec<f64>) {
+    let mut xs: Vec<(usize, f64)> = x
+        .iter()
+        .filter(|r| r["run"] == run && r["s_km"] == s)
+        .map(|r| (r["k"] as usize, r["xi"]))
+        .collect();
+    xs.sort_by_key(|t| t.0);
+    let xi: Vec<f64> = xs.into_iter().map(|t| t.1).collect();
+    let zs: Vec<_> = z
+        .iter()
+        .filter(|r| r["run"] == run && r["s_km"] == s)
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize, r["zeta"]))
+        .collect();
+    let (num, den) = q_ratio(&xi, &zs);
+    (num / den, xi)
+}
+
+/// 同じ場で条件だけが違う二つの模擬データ（`a` が元、`b` が条件を足したもの。run ごとの乱数で作り、run の番号で対にする）を、
+/// R ごとに Q̄_S と ξ̂_S の run ごとの差 b − a で比べる（ADR 012）。差の平均と、その標準誤差（差の標準偏差 / √回数）を出す。
+/// 対にした差なので、場の形による揺らぎは打ち消し合い、平均の誤差で条件の効果を読める。ログだけを返す。
+pub fn paired_q(
+    root: &Path,
+    a: (&str, &str),
+    b: (&str, &str),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let read = |stem: &str| -> Result<_, Box<dyn std::error::Error>> {
+        Ok((
+            results::read_numeric_csv(&root.join(format!("{stem}_swidth.csv")))?,
+            results::read_numeric_csv(&root.join(format!("{stem}_swidth_xi.csv")))?,
+        ))
+    };
+    let (za, xa) = read(a.1)?;
+    let (zb, xb) = read(b.1)?;
+    let ids = |z: &[std::collections::HashMap<String, f64>]| {
+        let mut v: Vec<f64> = z.iter().map(|r| r["run"]).collect();
+        v.sort_by(f64::total_cmp);
+        v.dedup();
+        v
+    };
+    let runs = ids(&za);
+    if runs != ids(&zb) {
+        return Err("二つの模擬データの run の番号が違う".into());
+    }
+    let mut widths: Vec<f64> = za.iter().map(|r| r["s_km"]).collect();
+    widths.sort_by(f64::total_cmp);
+    widths.dedup();
+    let n = runs.len() as f64;
+    let stats = |v: &[f64]| {
+        let m = v.iter().sum::<f64>() / v.len() as f64;
+        let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0)).sqrt();
+        (m, sd)
+    };
+    let mut log = format!("{}（a）と {}（b）、{} 回を run で対にする\n", a.0, b.0, runs.len());
+    for &s in &widths {
+        let pa: Vec<(f64, Vec<f64>)> = runs.iter().map(|&r| run_q(&za, &xa, r, s)).collect();
+        let pb: Vec<(f64, Vec<f64>)> = runs.iter().map(|&r| run_q(&zb, &xb, r, s)).collect();
+        let qa: Vec<f64> = pa.iter().map(|p| p.0).collect();
+        let qb: Vec<f64> = pb.iter().map(|p| p.0).collect();
+        let dq: Vec<f64> = qa.iter().zip(&qb).map(|(x, y)| y - x).collect();
+        let ((ma, sa), (mb, sb), (md, sd)) = (stats(&qa), stats(&qb), stats(&dq));
+        // コスモスの Q̄_S（一つしかないので、模擬データ一つごとの標準偏差で比べる）
+        let (zp, xp) = cosmos_paths(s as u32);
+        let cz: Vec<_> = results::read_numeric_csv(&root.join(&zp))?
+            .iter()
+            .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize, r["zeta"]))
+            .collect();
+        let cx: Vec<f64> = results::read_numeric_csv(&root.join(&xp))?
+            .iter()
+            .map(|r| r["xi"])
+            .collect();
+        let (cn, cd) = q_ratio(&cx, &cz);
+        let cq = cn / cd;
+        write!(
+            log,
+            "R = {s:.0} km：コスモス {cq:+.4}、Q̄ a {ma:+.4} ± {sa:.4}（{:+.2}σ）、b {mb:+.4} ± {sb:.4}（{:+.2}σ）、差 b − a {md:+.4} ± {:.4}（標準誤差、{:+.1} 倍）　ξ̂ の差",
+            (cq - ma) / sa,
+            (cq - mb) / sb,
+            sd / n.sqrt(),
+            md / (sd / n.sqrt())
+        )?;
+        for k in 0..pa[0].1.len() {
+            let d: Vec<f64> = pa.iter().zip(&pb).map(|(x, y)| y.1[k] - x.1[k]).collect();
+            let (m, sdk) = stats(&d);
+            write!(log, " k{k} {m:+.4} ± {:.4}", sdk / n.sqrt())?;
+        }
+        writeln!(log)?;
+    }
+    Ok(log)
+}
+
 pub fn vary_s_mocks_q(
     root: &Path,
     models: &[(&str, &str)],
@@ -3774,28 +3870,7 @@ pub fn vary_s_mocks_q(
         runs.dedup();
         let mut rows = Vec::new();
         for &s in &widths {
-            let qs: Vec<f64> = runs
-                .iter()
-                .map(|&run| {
-                    let mut xs: Vec<(usize, f64)> = x
-                        .iter()
-                        .filter(|r| r["run"] == run && r["s_km"] == s)
-                        .map(|r| (r["k"] as usize, r["xi"]))
-                        .collect();
-                    xs.sort_by_key(|t| t.0);
-                    let xi: Vec<f64> = xs.into_iter().map(|t| t.1).collect();
-                    let zs: Vec<_> = z
-                        .iter()
-                        .filter(|r| r["run"] == run && r["s_km"] == s)
-                        .map(|r| {
-                            let (a, b, c) = key(r);
-                            (a, b, c, r["zeta"])
-                        })
-                        .collect();
-                    let (num, den) = q_ratio(&xi, &zs);
-                    num / den
-                })
-                .collect();
+            let qs: Vec<f64> = runs.iter().map(|&run| run_q(&z, &x, run, s).0).collect();
             rows.push((s, qs));
         }
         widths_all.extend(&widths);
