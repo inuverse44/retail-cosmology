@@ -11,7 +11,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::access::{boundary, population, results, stores};
+pub use crate::contract::FieldTransform;
 use crate::contract::{Bins, Chain, PairCounts, PopulationGrid, TripleCounts};
+use crate::engine::density_field;
 use crate::engine::estimator::{density_ratio_summary, mock_summary};
 use crate::engine::random_catalog::{
     Weight, count_coarse_cells, sample, sample_conditional_children, sample_reweighted,
@@ -1380,6 +1382,103 @@ pub struct FieldModel {
     pub split: bool,
     /// ζ の分子と分母（組の数で割ったもの）を true・proc それぞれ書く列を足す（#94）。もとの列は変わらない。
     pub counts: bool,
+    /// 単位分散の場 g にかける点ごとの変換（ADR 010）。既定の恒等変換なら出力は従来と同じ。
+    pub transform: FieldTransform,
+}
+
+/// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
+///
+/// 1. 長さ 300 km の線の上に、[`field_mocks`] で変換を使うときと同じ作り方（標準正規の重みをつけた幅 `sigma_km` の
+///    ガウス関数を一様な中心に足し、√ΣK² で割る）で単位分散の場 g を一つ作り、三つの変換の δ = A T(g) を
+///    0.5 km おきに書く。
+/// 2. δ の確率密度（切る前）を、三つの変換について書く。
+/// 3. 距離 r ごとの ξ と、三辺が r の正三角形の ζ の見込み（切る前）を書く。
+///
+/// 書くもの：data/zeta/field_transform_line.csv、_pdf.csv、_expect.csv
+pub fn field_transform_demo(
+    root: &Path,
+    amp: f64,
+    sigma_km: f64,
+    seed: u64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    const TS: [FieldTransform; 3] = [
+        FieldTransform::Identity,
+        FieldTransform::Chi,
+        FieldTransform::NegChi,
+    ];
+    let (len, step) = (300.0, 0.5);
+    let margin = 3.0 * sigma_km;
+    // 中心の線密度は、幅 σ の中に 50 個ほど入る程度（g がガウスに近くなる数）
+    let n_centers = ((len + 2.0 * margin) / sigma_km * 50.0) as usize;
+    let mut rng = SplitMix64::new(seed);
+    let centers: Vec<(f64, f64)> = (0..n_centers)
+        .map(|_| {
+            let x = -margin + rng.next_f64() * (len + 2.0 * margin);
+            (x, rng.next_normal())
+        })
+        .collect();
+    let mut line = String::from("x_km,g,delta_none,delta_chi,delta_negchi\n");
+    let mut i = 0usize;
+    loop {
+        let x = i as f64 * step;
+        if x > len {
+            break;
+        }
+        let (mut s, mut s2) = (0.0, 0.0);
+        for (c, sign) in &centers {
+            let d = x - c;
+            if d.abs() < margin {
+                let k = (-d * d / (2.0 * sigma_km * sigma_km)).exp();
+                s += sign * k;
+                s2 += k * k;
+            }
+        }
+        let g = s / s2.sqrt();
+        write!(line, "{x:.1},{g:.6}")?;
+        for t in TS {
+            write!(line, ",{:.6}", amp * density_field::transform(t, g))?;
+        }
+        writeln!(line)?;
+        i += 1;
+    }
+    let mut pdf = String::from("delta,p_none,p_chi,p_negchi\n");
+    for j in 0..=1200 {
+        let d = -3.0 + j as f64 * 0.005;
+        write!(pdf, "{d:.3}")?;
+        for t in TS {
+            write!(pdf, ",{:.6}", density_field::pdf_delta(t, amp, d))?;
+        }
+        writeln!(pdf)?;
+    }
+    let mut expect =
+        String::from("r_km,rho,xi_none,xi_skew,zeta_eq_none,zeta_eq_chi,zeta_eq_negchi\n");
+    for j in 1..=80 {
+        let r = j as f64 * 0.5;
+        let rho = density_field::gaussian_rho(r, sigma_km);
+        write!(
+            expect,
+            "{r:.1},{rho:.6},{:.6},{:.6}",
+            density_field::expected_xi(FieldTransform::Identity, amp, rho),
+            density_field::expected_xi(FieldTransform::Chi, amp, rho)
+        )?;
+        for t in TS {
+            write!(
+                expect,
+                ",{:.6}",
+                density_field::expected_zeta(t, amp, rho, rho, rho)
+            )?;
+        }
+        writeln!(expect)?;
+    }
+    for (name, text) in [("line", &line), ("pdf", &pdf), ("expect", &expect)] {
+        results::write_text(
+            &root.join(format!("data/zeta/field_transform_{name}.csv")),
+            text,
+        )?;
+    }
+    Ok(format!(
+        "A = {amp}、σ = {sigma_km} km、中心 {n_centers} 個、種 {seed}：data/zeta/field_transform_{{line,pdf,expect}}.csv を書いた\n"
+    ))
 }
 
 /// [`FieldModel`] の密度場を生成し、true/proc の ξ、ζ と切り捨て割合を書く。
@@ -1411,8 +1510,14 @@ pub fn field_mocks(
     let second_tag = model
         .second
         .map_or(String::new(), |(a, s)| format!("_a2{a}_s2{s}"));
+    // 変換の名前は恒等変換以外のときだけ足す（従来のファイル名を変えない、ADR 010）。
+    let transform_tag = if model.transform == FieldTransform::Identity {
+        String::new()
+    } else {
+        format!("_t{}", model.transform.name())
+    };
     let stem = format!(
-        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{}",
+        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{}",
         if p.country == "jp" { "jp_" } else { "us_" },
         p.date,
         p.chain.to_lowercase(),
@@ -1529,11 +1634,22 @@ pub fn field_mocks(
             }
             let cut = km_to_chord2(3.0 * width);
             let two_s2 = 2.0 * km_to_chord2(width);
-            // 中心と符号を選び、池の各点で δ を求める
+            // 中心と重みを選び、池の各点で δ を求める。
+            // 恒等変換は従来どおり ±1 の符号（乱数列も同じ）。変換を使うときは標準正規の重みにする。
+            // ±1 だと中心の少ない所で g ≈ ±1 となり g² − 1 ≈ 0 に潰れるが、標準正規なら中心の位置を決めたうえで
+            // g が正確にガウスになり、ADR 010 の Wick の式が成り立つ。
+            let gaussian_weights = model.transform != FieldTransform::Identity;
             let centers: Vec<(Unit, f64)> = (0..n_centers)
                 .map(|_| {
                     let q = pool[(rng_m.next_f64() * pool.len() as f64) as usize];
-                    (q, if rng_m.next_f64() < 0.5 { 1.0 } else { -1.0 })
+                    let a = if gaussian_weights {
+                        rng_m.next_normal()
+                    } else if rng_m.next_f64() < 0.5 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    (q, a)
                 })
                 .collect();
             let cu: Vec<Unit> = centers.iter().map(|x| x.0).collect();
@@ -1549,7 +1665,9 @@ pub fn field_mocks(
                     }
                 });
                 if s2 > 0.0 {
-                    delta[i] += amplitude * s / s2.sqrt();
+                    // s / √s2 は単位分散の場 g。恒等変換なら従来と同じ値（ADR 010）。
+                    delta[i] +=
+                        amplitude * density_field::transform(model.transform, s / s2.sqrt());
                 }
             }
         }
@@ -1663,9 +1781,29 @@ pub fn field_mocks(
             let (x, y, z) = bins.unflatten(b);
             write!(
                 z_out,
-                "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},0",
+                "{run},{x},{y},{z},{:.3},{:.3},{:.3},{:.6},{:.6},",
                 c[x], c[y], c[z], zt[b], zp[b]
             )?;
+            // expected：恒等変換は 0（従来どおり）。変換があるときは ADR 010 の式（切る前、辺はビンの中心）。
+            // 独立な成分の三次のキュムラントは足し算になる。
+            if model.transform == FieldTransform::Identity {
+                write!(z_out, "0")?;
+            } else {
+                let e: f64 = std::iter::once((amp, sigma_km))
+                    .chain(model.second)
+                    .map(|(a, s)| {
+                        let rho = |r: f64| density_field::gaussian_rho(r, s);
+                        density_field::expected_zeta(
+                            model.transform,
+                            a,
+                            rho(c[x]),
+                            rho(c[y]),
+                            rho(c[z]),
+                        )
+                    })
+                    .sum();
+                write!(z_out, "{e:.6}")?;
+            }
             if let (Some(zh), Some((_, ts))) = (&zh, &halves) {
                 // 半分の点では空のビンがありうる。そのときは NaN を書く
                 for (j, t) in ts.iter().enumerate() {

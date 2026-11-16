@@ -28,6 +28,29 @@ impl Chain {
     }
 }
 
+/// 密度場の模型で、単位分散の場 g にかける点ごとの変換（ADR 010）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FieldTransform {
+    /// T(g) = g（ζ ≈ 0 の G）。
+    #[default]
+    Identity,
+    /// T(g) = (g² − 1)/√2（正の歪み、ζ > 0）。
+    Chi,
+    /// T(g) = (1 − g²)/√2（負の歪み、ζ < 0）。
+    NegChi,
+}
+
+impl FieldTransform {
+    /// 引数と出力のファイル名に使う名前。
+    pub fn name(self) -> &'static str {
+        match self {
+            FieldTransform::Identity => "none",
+            FieldTransform::Chi => "chi",
+            FieldTransform::NegChi => "negchi",
+        }
+    }
+}
+
 /// OSM の要素（店舗の候補）。`state` は ISO 3166-2 のコード（AU-NSW、JP-40、US-TX など）。
 #[derive(Clone, Debug)]
 pub struct OsmElement {
