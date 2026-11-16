@@ -126,6 +126,21 @@ impl GridGeometry {
         }
     }
 
+    /// `coarse_cell` が返す粗い格子の面積 [km²]。`center` はその中心。
+    /// 平面の格子（正積図法）では 100 dx dy、メッシュでは緯度 5 分・経度 7.5 分の球面上の長方形を中心の緯度で近似する。
+    pub fn coarse_area_km2(&self, center: &LatLon) -> f64 {
+        match self {
+            GridGeometry::Planar { dx, dy, .. } => 100.0 * dx * dy / 1e6,
+            GridGeometry::Mesh { .. } => {
+                let r = crate::util::geo::EARTH_RADIUS_KM;
+                r * r
+                    * (5.0f64 / 60.0).to_radians()
+                    * (7.5f64 / 60.0).to_radians()
+                    * center.lat.to_radians().cos()
+            }
+        }
+    }
+
     /// 点が入る格子の番号。格子の外（メッシュでは載っていない格子）なら None。
     pub fn cell_of(&self, p: &LatLon) -> Option<usize> {
         match self {

@@ -22,7 +22,11 @@
 //! --save-points on：1 回ごとの店の位置を <stem>_points.csv（run,lat,lon）に書く（ADR 011）。乱数列は変わらない。
 //! --skip-measure on：ξ̂・ζ̂ の数え上げを飛ばし、<stem>_points.csv だけを書く（--save-points on が要る）。
 //!   同じ引数・同じ種なら、店の位置は数え上げる実行と同じ。既に測った模擬データの位置を短い時間で作るのに使う。
-//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_名前].csv と _xi.csv
+//! --inhibit r:γ：店どうしが近づかない条件（ADR 012）。重みで受け入れた候補を、すでに選んだ店のうち r [km] 以内に
+//!   あるものの数 k について確率 γ^k で受け入れる（γ = 0 なら r 以内に置かない）。ファイル名に _inh<r>x<γ> を足す。
+//! --pop-power α：重みに (2 次メッシュの人口)^{α−1} をかける（ADR 012）。α < 1 で人口の多いマスの店が人口の比より少なくなる。
+//!   1 以外ではファイル名に _pp<α> を足す。どちらも --counts とは一緒に使わない。expected の列は場だけの見込みのまま。
+//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
 use std::path::PathBuf;
@@ -37,6 +41,7 @@ fn main() {
     let (mut split, mut counts) = (false, false);
     let (mut save_points, mut skip_measure) = (false, false);
     let mut transform = FieldTransform::Identity;
+    let (mut inhibit, mut pop_power) = (None, 1.0f64);
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -81,6 +86,12 @@ fn main() {
                 assert!(v == "on" || v == "off", "--skip-measure は on か off");
                 skip_measure = v == "on";
             }
+            "--inhibit" => {
+                let s: Vec<&str> = v.split(':').collect();
+                assert_eq!(s.len(), 2, "--inhibit r:γ");
+                inhibit = Some((s[0].parse().unwrap(), s[1].parse().unwrap()));
+            }
+            "--pop-power" => pop_power = v.parse().unwrap(),
             "--transform" => {
                 transform = [
                     FieldTransform::Identity,
@@ -112,6 +123,8 @@ fn main() {
         transform,
         save_points,
         skip_measure,
+        inhibit,
+        pop_power,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),

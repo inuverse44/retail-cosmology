@@ -1389,6 +1389,11 @@ pub struct FieldModel {
     /// ξ̂・ζ̂ の数え上げを飛ばし、`<stem>_points.csv` だけを書く（ADR 011、`save_points` が要る）。
     /// 店の位置と店と同じ手順のランダムカタログは同じ乱数列から引くので、同じ種なら店の位置は測る実行と同じ。
     pub skip_measure: bool,
+    /// 店どうしが近づかない条件 (r [km], γ)（ADR 012）。重みで受け入れた候補を、すでに選んだ店のうち
+    /// r 以内にあるものの数 k について確率 γ^k で受け入れる。None なら従来どおり（乱数列も同じ）。
+    pub inhibit: Option<(f64, f64)>,
+    /// 重みにかける (粗い格子の人口)^{α−1} の α（ADR 012）。1 なら従来どおり（計算もしない）。
+    pub pop_power: f64,
 }
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
@@ -1515,6 +1520,17 @@ pub fn field_mocks(
     if model.skip_measure && !model.save_points {
         return Err("数え上げを飛ばすときは店の位置を書く（--save-points on）".into());
     }
+    if model
+        .inhibit
+        .is_some_and(|(r, g)| !r.is_finite() || r <= 0.0 || !(0.0..=1.0).contains(&g))
+        || !model.pop_power.is_finite()
+    {
+        return Err("--inhibit は r > 0 と 0 ≤ γ ≤ 1、--pop-power は有限であること".into());
+    }
+    // --counts の規格化（1+α = 池での w の平均）は重み w = max(0, 1+δ) を前提にするので、ADR 012 の選び方とは混ぜない
+    if model.counts && (model.inhibit.is_some() || model.pop_power != 1.0) {
+        return Err("--counts は --inhibit・--pop-power と一緒に使わない".into());
+    }
     let second_tag = model
         .second
         .map_or(String::new(), |(a, s)| format!("_a2{a}_s2{s}"));
@@ -1524,8 +1540,20 @@ pub fn field_mocks(
     } else {
         format!("_t{}", model.transform.name())
     };
+    // ADR 012 の選び方も、使うときだけ名前に足す
+    let select_tag = format!(
+        "{}{}",
+        model
+            .inhibit
+            .map_or(String::new(), |(r, g)| format!("_inh{r}x{g}")),
+        if model.pop_power == 1.0 {
+            String::new()
+        } else {
+            format!("_pp{}", model.pop_power)
+        }
+    );
     let stem = format!(
-        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{}",
+        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
         if p.country == "jp" { "jp_" } else { "us_" },
         p.date,
         p.chain.to_lowercase(),
@@ -1623,6 +1651,40 @@ pub fn field_mocks(
     // 池の緯度・経度は、店の位置を書くとき（ADR 011）に、単位ベクトルから戻す丸めを入れずに使う。
     let pool_ll = draw(&sr_real, 20 * p.n_random, &mut rng_legacy);
     let pool = units(&pool_ll);
+    // ADR 012：池の点ごとの (粗い格子の人口)^{α−1}。α = 1 なら作らない。
+    let pop_factor: Option<Vec<f64>> = if model.pop_power == 1.0 {
+        None
+    } else {
+        let mut pop_c: std::collections::HashMap<u64, f64> = std::collections::HashMap::new();
+        for (i, &v) in grid.values.iter().enumerate() {
+            let w = Weight::Population.of(v as f64);
+            if w > 0.0
+                && let Some((key, _)) = grid.geometry.coarse_cell(&grid.geometry.point(i, 0.5, 0.5))
+            {
+                *pop_c.entry(key).or_insert(0.0) += w;
+            }
+        }
+        Some(
+            pool_ll
+                .iter()
+                .map(|q| {
+                    grid.geometry
+                        .coarse_cell(q)
+                        .and_then(|(k, _)| pop_c.get(&k))
+                        .map_or(0.0, |pc| pc.powf(model.pop_power - 1.0))
+                })
+                .collect(),
+        )
+    };
+    // ADR 012：近づかない条件の近傍を探す、池の点の格子
+    let inhibit_grid = model.inhibit.map(|(r, g)| {
+        let rc2 = km_to_chord2(r);
+        (
+            rc2,
+            g,
+            crate::util::spatial::UnitGrid::build(&pool, rc2.sqrt()),
+        )
+    });
     let mut points_out = String::from("run,lat,lon\n");
     eprintln!(
         "点の池 {} 点（{:.1} 秒）",
@@ -1694,7 +1756,12 @@ pub fn field_mocks(
             }
         }
         let clipped = delta.iter().filter(|d| 1.0 + **d < 0.0).count();
-        let w: Vec<f64> = delta.iter().map(|d| (1.0 + d).max(0.0)).collect();
+        let mut w: Vec<f64> = delta.iter().map(|d| (1.0 + d).max(0.0)).collect();
+        if let Some(f) = &pop_factor {
+            for (wi, fi) in w.iter_mut().zip(f) {
+                *wi *= fi;
+            }
+        }
         if w.iter().filter(|w| **w > 0.0).count() < pts.len() {
             return Err("正の重みを持つ池の点が店の数より少ない".into());
         }
@@ -1703,9 +1770,26 @@ pub fn field_mocks(
         let mut taken = vec![false; pool.len()];
         let mut d = Vec::with_capacity(pts.len());
         let mut d_idx = Vec::with_capacity(pts.len());
+        let mut tries: u64 = 0;
         while d.len() < pts.len() {
+            tries += 1;
+            if tries > 1_000_000_000 {
+                return Err(format!("店を選べない（{} 点で止まった）", d.len()).into());
+            }
             let i = (rng_m.next_f64() * pool.len() as f64) as usize;
             if !taken[i] && rng_m.next_f64() < w[i] / wmax {
+                // ADR 012：すでに選んだ店のうち r 以内にあるものの数 k について、確率 γ^k で受け入れる
+                if let Some((rc2, gamma, gp)) = &inhibit_grid {
+                    let mut k = 0i32;
+                    gp.for_each_near(&pool[i], rc2.sqrt(), |j| {
+                        if taken[j] && chord2(&pool[i], &pool[j]) < *rc2 {
+                            k += 1;
+                        }
+                    });
+                    if k > 0 && rng_m.next_f64() >= gamma.powi(k) {
+                        continue;
+                    }
+                }
                 taken[i] = true;
                 d.push(pool[i]);
                 d_idx.push(i);
@@ -3646,6 +3730,102 @@ fn cosmos_paths(r: u32) -> (String, String) {
 /// `models` は [`vary_s_mocks_table`] と同じ。
 /// 書くもの：docs/tables/zeta_vary_r_q.tex、data/zeta/vary_r_mocks_q.csv、
 /// data/zeta/vary_r_mocks_xi.csv（図のための ξ̂_S。模擬データは run の平均、コスモスは model = COSMOS）
+/// `--s-widths` の出力（ζ̂ の行 `z`、ξ̂ の行 `x`）から、run と R の Q̄_S と、ξ̂_S（k の順）。
+fn run_q(
+    z: &[std::collections::HashMap<String, f64>],
+    x: &[std::collections::HashMap<String, f64>],
+    run: f64,
+    s: f64,
+) -> (f64, Vec<f64>) {
+    let mut xs: Vec<(usize, f64)> = x
+        .iter()
+        .filter(|r| r["run"] == run && r["s_km"] == s)
+        .map(|r| (r["k"] as usize, r["xi"]))
+        .collect();
+    xs.sort_by_key(|t| t.0);
+    let xi: Vec<f64> = xs.into_iter().map(|t| t.1).collect();
+    let zs: Vec<_> = z
+        .iter()
+        .filter(|r| r["run"] == run && r["s_km"] == s)
+        .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize, r["zeta"]))
+        .collect();
+    let (num, den) = q_ratio(&xi, &zs);
+    (num / den, xi)
+}
+
+/// 同じ場で条件だけが違う二つの模擬データ（`a` が元、`b` が条件を足したもの。run ごとの乱数で作り、run の番号で対にする）を、
+/// R ごとに Q̄_S と ξ̂_S の run ごとの差 b − a で比べる（ADR 012）。差の平均と、その標準誤差（差の標準偏差 / √回数）を出す。
+/// 対にした差なので、場の形による揺らぎは打ち消し合い、平均の誤差で条件の効果を読める。ログだけを返す。
+pub fn paired_q(
+    root: &Path,
+    a: (&str, &str),
+    b: (&str, &str),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let read = |stem: &str| -> Result<_, Box<dyn std::error::Error>> {
+        Ok((
+            results::read_numeric_csv(&root.join(format!("{stem}_swidth.csv")))?,
+            results::read_numeric_csv(&root.join(format!("{stem}_swidth_xi.csv")))?,
+        ))
+    };
+    let (za, xa) = read(a.1)?;
+    let (zb, xb) = read(b.1)?;
+    let ids = |z: &[std::collections::HashMap<String, f64>]| {
+        let mut v: Vec<f64> = z.iter().map(|r| r["run"]).collect();
+        v.sort_by(f64::total_cmp);
+        v.dedup();
+        v
+    };
+    let runs = ids(&za);
+    if runs != ids(&zb) {
+        return Err("二つの模擬データの run の番号が違う".into());
+    }
+    let mut widths: Vec<f64> = za.iter().map(|r| r["s_km"]).collect();
+    widths.sort_by(f64::total_cmp);
+    widths.dedup();
+    let n = runs.len() as f64;
+    let stats = |v: &[f64]| {
+        let m = v.iter().sum::<f64>() / v.len() as f64;
+        let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0)).sqrt();
+        (m, sd)
+    };
+    let mut log = format!("{}（a）と {}（b）、{} 回を run で対にする\n", a.0, b.0, runs.len());
+    for &s in &widths {
+        let pa: Vec<(f64, Vec<f64>)> = runs.iter().map(|&r| run_q(&za, &xa, r, s)).collect();
+        let pb: Vec<(f64, Vec<f64>)> = runs.iter().map(|&r| run_q(&zb, &xb, r, s)).collect();
+        let qa: Vec<f64> = pa.iter().map(|p| p.0).collect();
+        let qb: Vec<f64> = pb.iter().map(|p| p.0).collect();
+        let dq: Vec<f64> = qa.iter().zip(&qb).map(|(x, y)| y - x).collect();
+        let ((ma, sa), (mb, sb), (md, sd)) = (stats(&qa), stats(&qb), stats(&dq));
+        // コスモスの Q̄_S（一つしかないので、模擬データ一つごとの標準偏差で比べる）
+        let (zp, xp) = cosmos_paths(s as u32);
+        let cz: Vec<_> = results::read_numeric_csv(&root.join(&zp))?
+            .iter()
+            .map(|r| (r["k1"] as usize, r["k2"] as usize, r["k3"] as usize, r["zeta"]))
+            .collect();
+        let cx: Vec<f64> = results::read_numeric_csv(&root.join(&xp))?
+            .iter()
+            .map(|r| r["xi"])
+            .collect();
+        let (cn, cd) = q_ratio(&cx, &cz);
+        let cq = cn / cd;
+        write!(
+            log,
+            "R = {s:.0} km：コスモス {cq:+.4}、Q̄ a {ma:+.4} ± {sa:.4}（{:+.2}σ）、b {mb:+.4} ± {sb:.4}（{:+.2}σ）、差 b − a {md:+.4} ± {:.4}（標準誤差、{:+.1} 倍）　ξ̂ の差",
+            (cq - ma) / sa,
+            (cq - mb) / sb,
+            sd / n.sqrt(),
+            md / (sd / n.sqrt())
+        )?;
+        for k in 0..pa[0].1.len() {
+            let d: Vec<f64> = pa.iter().zip(&pb).map(|(x, y)| y.1[k] - x.1[k]).collect();
+            let (m, sdk) = stats(&d);
+            write!(log, " k{k} {m:+.4} ± {:.4}", sdk / n.sqrt())?;
+        }
+        writeln!(log)?;
+    }
+    Ok(log)
+}
+
 pub fn vary_s_mocks_q(
     root: &Path,
     models: &[(&str, &str)],
@@ -3690,28 +3870,7 @@ pub fn vary_s_mocks_q(
         runs.dedup();
         let mut rows = Vec::new();
         for &s in &widths {
-            let qs: Vec<f64> = runs
-                .iter()
-                .map(|&run| {
-                    let mut xs: Vec<(usize, f64)> = x
-                        .iter()
-                        .filter(|r| r["run"] == run && r["s_km"] == s)
-                        .map(|r| (r["k"] as usize, r["xi"]))
-                        .collect();
-                    xs.sort_by_key(|t| t.0);
-                    let xi: Vec<f64> = xs.into_iter().map(|t| t.1).collect();
-                    let zs: Vec<_> = z
-                        .iter()
-                        .filter(|r| r["run"] == run && r["s_km"] == s)
-                        .map(|r| {
-                            let (a, b, c) = key(r);
-                            (a, b, c, r["zeta"])
-                        })
-                        .collect();
-                    let (num, den) = q_ratio(&xi, &zs);
-                    num / den
-                })
-                .collect();
+            let qs: Vec<f64> = runs.iter().map(|&run| run_q(&z, &x, run, s).0).collect();
             rows.push((s, qs));
         }
         widths_all.extend(&widths);
