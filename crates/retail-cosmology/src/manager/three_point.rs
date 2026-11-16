@@ -3261,10 +3261,13 @@ pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std
 /// 16 ビンの run の平均をさらにビンで平均した値 $\overline{\hat\zeta_S}$ とその平均の誤差（run ごとの 16 ビンの平均のばらつきから）、
 /// run の平均が負のビンの数を並べる。
 /// 模型ごとに、R の両端での 16 ビンの平均の差（下がり方）を run ごとに求め、コスモスの同じ差と比べる。
-/// 書くもの：docs/tables/zeta_vary_r_mocks.tex、data/zeta/vary_r_mocks_drop.csv
+/// 書くもの：`tex_out`（docs/tables/ の表）と `drop_csv`（data/zeta/ の下がり方の統計）。
+/// 一つの表に入れる模型が多いとページに収まらないので、模型の組ごとに呼ぶ。
 pub fn vary_s_mocks_table(
     root: &Path,
     models: &[(&str, &str)],
+    tex_out: &str,
+    drop_csv: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut t = String::from(
         "% cargo run --release --bin zeta_vary_r_mocks が書いた表\n\
@@ -3407,8 +3410,8 @@ pub fn vary_s_mocks_table(
         )?;
     }
     t.push_str("\\bottomrule\n\\end{tabular}\n");
-    results::write_text(&root.join("docs/tables/zeta_vary_r_mocks.tex"), &t)?;
-    results::write_text(&root.join("data/zeta/vary_r_mocks_drop.csv"), &drop_out)?;
+    results::write_text(&root.join(tex_out), &t)?;
+    results::write_text(&root.join(drop_csv), &drop_out)?;
     Ok(log)
 }
 
@@ -3500,15 +3503,15 @@ pub fn vary_s_mocks_q(
     widths_all.sort_by(f64::total_cmp);
     widths_all.dedup();
 
-    let mut t = format!(
-        "% cargo run --release --bin zeta_vary_r_q が書いた表\n\
-         \\begin{{tabular}}{{rr{}}}\n\\toprule\n\
-         & & \\multicolumn{{{}}}{{c}}{{模擬データの $\\bar Q_S$（平均 $\\pm$ 標準偏差）}} \\\\\n\
-         $R$ [km] & コスモス & {} \\\\\n\\midrule\n",
-        "r".repeat(models.len()),
-        models.len(),
-        models.iter().map(|m| m.0).collect::<Vec<_>>().join(" & ")
-    );
+    // 表は行が模型、列が R。分母が小さく値の使えない R（< Q_TABLE_MIN_KM）は表に載せない（CSV とログには全部書く）。
+    const Q_TABLE_MIN_KM: f64 = 35.0;
+    let table_widths: Vec<f64> = widths_all
+        .iter()
+        .copied()
+        .filter(|s| *s >= Q_TABLE_MIN_KM)
+        .collect();
+    let mut cosmos_cells: Vec<String> = Vec::new();
+    let mut model_cells: Vec<Vec<String>> = vec![Vec::new(); models.len()];
     for &s in &widths_all {
         let (zp, xp) = cosmos_paths(s as u32);
         let cz: Vec<_> = results::read_numeric_csv(&root.join(&zp))?
@@ -3528,10 +3531,15 @@ pub fn vary_s_mocks_q(
             log,
             "R = {s:.0} km：コスモス Q̄ = {cq:+.4}（Σζ̂ = {num:+.4}、Σ分母 = {den:.4}）"
         )?;
-        let mut cells = Vec::new();
-        for ((name, _), rows) in models.iter().zip(&per_model) {
+        let in_table = s >= Q_TABLE_MIN_KM;
+        if in_table {
+            cosmos_cells.push(format!("${cq:+.2}$"));
+        }
+        for (mi, ((name, _), rows)) in models.iter().zip(&per_model).enumerate() {
             let Some((_, qs)) = rows.iter().find(|r| r.0 == s) else {
-                cells.push(String::from("--"));
+                if in_table {
+                    model_cells[mi].push(String::from("--"));
+                }
                 continue;
             };
             let n = qs.len() as f64;
@@ -3550,9 +3558,27 @@ pub fn vary_s_mocks_q(
                 qs.len(),
                 qs.len()
             )?;
-            cells.push(format!("${m:+.2} \\pm {sd:.2}$"));
+            if in_table {
+                model_cells[mi].push(format!("${m:+.2} \\pm {sd:.2}$"));
+            }
         }
-        writeln!(t, "{s:.0} & ${cq:+.2}$ & {} \\\\", cells.join(" & "))?;
+    }
+    let mut t = format!(
+        "% cargo run --release --bin zeta_vary_r_q が書いた表\n\
+         \\begin{{tabular}}{{l{}}}\n\\toprule\n\
+         & \\multicolumn{{{}}}{{c}}{{$R$ [km]}} \\\\\n\
+         & {} \\\\\n\\midrule\n",
+        "r".repeat(table_widths.len()),
+        table_widths.len(),
+        table_widths
+            .iter()
+            .map(|s| format!("{s:.0}"))
+            .collect::<Vec<_>>()
+            .join(" & ")
+    );
+    writeln!(t, "コスモス & {} \\\\\n\\midrule", cosmos_cells.join(" & "))?;
+    for ((name, _), cells) in models.iter().zip(&model_cells) {
+        writeln!(t, "{name} & {} \\\\", cells.join(" & "))?;
     }
     t.push_str("\\bottomrule\n\\end{tabular}\n");
     results::write_text(&root.join("docs/tables/zeta_vary_r_q.tex"), &t)?;

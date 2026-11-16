@@ -39,6 +39,15 @@ fn main() {
             "$G_{10}^{0.4}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.4_s10_w25_swidth",
         ),
+        // 場の幅 5 km・25 km、R_W = 25 km（--sigma 5 --seed 5、--sigma 25 --seed 6、--tag w25_swidth）
+        (
+            "$G_{5}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s5_w25_swidth",
+        ),
+        (
+            "$G_{25}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s25_w25_swidth",
+        ),
     ];
     match vary_s_mocks_q(&root, &models) {
         Ok(log) => print!("{log}"),
