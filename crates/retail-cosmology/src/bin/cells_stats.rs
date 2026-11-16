@@ -51,6 +51,12 @@ fn main() {
             "$G_{15}^{-}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s15_tnegchi_w25_swidth",
         ),
+        // G10− に店どうしが近づかない条件（r = 1 km、γ = 0.5）を足したもの（ADR 012、--inhibit 1:0.5 --seed 12、
+        // 測る実行に --save-points on をつけたので、店の位置は作り直していない）
+        (
+            "$G_{10}^{-}I_{1}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
+        ),
     ];
     match cells_table(&root, &p, &models) {
         Ok(log) => print!("{log}"),

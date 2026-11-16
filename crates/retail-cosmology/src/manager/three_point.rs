@@ -1389,6 +1389,11 @@ pub struct FieldModel {
     /// ξ̂・ζ̂ の数え上げを飛ばし、`<stem>_points.csv` だけを書く（ADR 011、`save_points` が要る）。
     /// 店の位置と店と同じ手順のランダムカタログは同じ乱数列から引くので、同じ種なら店の位置は測る実行と同じ。
     pub skip_measure: bool,
+    /// 店どうしが近づかない条件 (r [km], γ)（ADR 012）。重みで受け入れた候補を、すでに選んだ店のうち
+    /// r 以内にあるものの数 k について確率 γ^k で受け入れる。None なら従来どおり（乱数列も同じ）。
+    pub inhibit: Option<(f64, f64)>,
+    /// 重みにかける (粗い格子の人口)^{α−1} の α（ADR 012）。1 なら従来どおり（計算もしない）。
+    pub pop_power: f64,
 }
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
@@ -1515,6 +1520,17 @@ pub fn field_mocks(
     if model.skip_measure && !model.save_points {
         return Err("数え上げを飛ばすときは店の位置を書く（--save-points on）".into());
     }
+    if model
+        .inhibit
+        .is_some_and(|(r, g)| !r.is_finite() || r <= 0.0 || !(0.0..=1.0).contains(&g))
+        || !model.pop_power.is_finite()
+    {
+        return Err("--inhibit は r > 0 と 0 ≤ γ ≤ 1、--pop-power は有限であること".into());
+    }
+    // --counts の規格化（1+α = 池での w の平均）は重み w = max(0, 1+δ) を前提にするので、ADR 012 の選び方とは混ぜない
+    if model.counts && (model.inhibit.is_some() || model.pop_power != 1.0) {
+        return Err("--counts は --inhibit・--pop-power と一緒に使わない".into());
+    }
     let second_tag = model
         .second
         .map_or(String::new(), |(a, s)| format!("_a2{a}_s2{s}"));
@@ -1524,8 +1540,20 @@ pub fn field_mocks(
     } else {
         format!("_t{}", model.transform.name())
     };
+    // ADR 012 の選び方も、使うときだけ名前に足す
+    let select_tag = format!(
+        "{}{}",
+        model
+            .inhibit
+            .map_or(String::new(), |(r, g)| format!("_inh{r}x{g}")),
+        if model.pop_power == 1.0 {
+            String::new()
+        } else {
+            format!("_pp{}", model.pop_power)
+        }
+    );
     let stem = format!(
-        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{}",
+        "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
         if p.country == "jp" { "jp_" } else { "us_" },
         p.date,
         p.chain.to_lowercase(),
@@ -1623,6 +1651,40 @@ pub fn field_mocks(
     // 池の緯度・経度は、店の位置を書くとき（ADR 011）に、単位ベクトルから戻す丸めを入れずに使う。
     let pool_ll = draw(&sr_real, 20 * p.n_random, &mut rng_legacy);
     let pool = units(&pool_ll);
+    // ADR 012：池の点ごとの (粗い格子の人口)^{α−1}。α = 1 なら作らない。
+    let pop_factor: Option<Vec<f64>> = if model.pop_power == 1.0 {
+        None
+    } else {
+        let mut pop_c: std::collections::HashMap<u64, f64> = std::collections::HashMap::new();
+        for (i, &v) in grid.values.iter().enumerate() {
+            let w = Weight::Population.of(v as f64);
+            if w > 0.0
+                && let Some((key, _)) = grid.geometry.coarse_cell(&grid.geometry.point(i, 0.5, 0.5))
+            {
+                *pop_c.entry(key).or_insert(0.0) += w;
+            }
+        }
+        Some(
+            pool_ll
+                .iter()
+                .map(|q| {
+                    grid.geometry
+                        .coarse_cell(q)
+                        .and_then(|(k, _)| pop_c.get(&k))
+                        .map_or(0.0, |pc| pc.powf(model.pop_power - 1.0))
+                })
+                .collect(),
+        )
+    };
+    // ADR 012：近づかない条件の近傍を探す、池の点の格子
+    let inhibit_grid = model.inhibit.map(|(r, g)| {
+        let rc2 = km_to_chord2(r);
+        (
+            rc2,
+            g,
+            crate::util::spatial::UnitGrid::build(&pool, rc2.sqrt()),
+        )
+    });
     let mut points_out = String::from("run,lat,lon\n");
     eprintln!(
         "点の池 {} 点（{:.1} 秒）",
@@ -1694,7 +1756,12 @@ pub fn field_mocks(
             }
         }
         let clipped = delta.iter().filter(|d| 1.0 + **d < 0.0).count();
-        let w: Vec<f64> = delta.iter().map(|d| (1.0 + d).max(0.0)).collect();
+        let mut w: Vec<f64> = delta.iter().map(|d| (1.0 + d).max(0.0)).collect();
+        if let Some(f) = &pop_factor {
+            for (wi, fi) in w.iter_mut().zip(f) {
+                *wi *= fi;
+            }
+        }
         if w.iter().filter(|w| **w > 0.0).count() < pts.len() {
             return Err("正の重みを持つ池の点が店の数より少ない".into());
         }
@@ -1703,9 +1770,26 @@ pub fn field_mocks(
         let mut taken = vec![false; pool.len()];
         let mut d = Vec::with_capacity(pts.len());
         let mut d_idx = Vec::with_capacity(pts.len());
+        let mut tries: u64 = 0;
         while d.len() < pts.len() {
+            tries += 1;
+            if tries > 1_000_000_000 {
+                return Err(format!("店を選べない（{} 点で止まった）", d.len()).into());
+            }
             let i = (rng_m.next_f64() * pool.len() as f64) as usize;
             if !taken[i] && rng_m.next_f64() < w[i] / wmax {
+                // ADR 012：すでに選んだ店のうち r 以内にあるものの数 k について、確率 γ^k で受け入れる
+                if let Some((rc2, gamma, gp)) = &inhibit_grid {
+                    let mut k = 0i32;
+                    gp.for_each_near(&pool[i], rc2.sqrt(), |j| {
+                        if taken[j] && chord2(&pool[i], &pool[j]) < *rc2 {
+                            k += 1;
+                        }
+                    });
+                    if k > 0 && rng_m.next_f64() >= gamma.powi(k) {
+                        continue;
+                    }
+                }
                 taken[i] = true;
                 d.push(pool[i]);
                 d_idx.push(i);

@@ -4,7 +4,7 @@
 //!
 //! 模擬データの店の位置は cells_stats と同じもの（zeta_field --save-points on --skip-measure on、作り方は cells_stats.rs）。
 //! cargo run --release --bin nearest_stats
-//! 書くもの：data/zeta/nearest_stats.csv
+//! 書くもの：data/zeta/nearest_stats.csv と docs/tables/nearest_stats.tex
 
 use std::path::PathBuf;
 
@@ -22,23 +22,34 @@ fn main() {
         lambda_mins: &[],
     };
     let models = [
-        ("A=0", "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_w25_swidth"),
-        ("G10", "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_w25_swidth"),
         (
-            "G10+",
+            "$A = 0$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_w25_swidth",
+        ),
+        (
+            "$G_{10}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_w25_swidth",
+        ),
+        (
+            "$G_{10}^{+}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tchi_w25_swidth",
         ),
         (
-            "G10-",
+            "$G_{10}^{-}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_w25_swidth",
         ),
         (
-            "G10-(0.5)",
+            "$G_{10}^{-,0.5}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.5_s10_tnegchi_w25_swidth",
         ),
         (
-            "G15-",
+            "$G_{15}^{-}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s15_tnegchi_w25_swidth",
+        ),
+        // ADR 012：G10− に r = 1 km、γ = 0.5 の近づかない条件（--inhibit 1:0.5 --seed 12）
+        (
+            "$G_{10}^{-}I_{1}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
         ),
     ];
     match nearest_table(&root, &p, &models) {

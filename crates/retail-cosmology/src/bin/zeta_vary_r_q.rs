@@ -66,6 +66,11 @@ fn main() {
             "$G_{15}^{-}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s15_tnegchi_w25_swidth",
         ),
+        // G10− に店どうしが近づかない条件（r = 1 km、γ = 0.5）を足したもの（ADR 012、--inhibit 1:0.5 --seed 12）
+        (
+            "$G_{10}^{-}I_{1}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
+        ),
     ];
     match vary_s_mocks_q(&root, &models) {
         Ok(log) => print!("{log}"),

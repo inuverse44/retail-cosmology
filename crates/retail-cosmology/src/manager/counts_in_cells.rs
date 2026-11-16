@@ -170,6 +170,13 @@ impl CoarseCells {
     }
 }
 
+/// 最近接距離の表に入れる統計（`nearest_stats` の名前、表の見出し）
+const NN_TABLE: [(&str, &str); 4] = [
+    ("G_d<0.5", "$G(0.5)$"),
+    ("G_d<1", "$G(1)$"),
+    ("d_q90", "$d_{90}$"),
+    ("lam>=3_F_u<0.1", "$F_{\\ge 3}(0.1)$"),
+];
 /// 最近接距離 d の分位点
 const NN_QUANTILES: [f64; 5] = [0.1, 0.25, 0.5, 0.75, 0.9];
 /// d がこれより短い店の割合 G を求める距離 [km]
@@ -240,7 +247,8 @@ fn setup(root: &Path, p: &CellParams) -> Result<Setup, Box<dyn std::error::Error
 
 /// コスモスと模擬データ（`models` は（ログの名前、`_points.csv` の前の stem））の最近接距離の分布を比べる。
 /// 統計は `CoarseCells::nearest_stats`。`p.lambda_mins` は使わない。
-/// 書くもの：data/zeta/nearest_stats.csv（model,run,stat,value、コスモスは model = COSMOS、run = -1）。
+/// 書くもの：data/zeta/nearest_stats.csv（model,run,stat,value、コスモスは model = COSMOS、run = -1）と
+/// docs/tables/nearest_stats.tex（`NN_TABLE` の統計）。
 /// ログには統計ごとに、コスモスの値と、模型ごとの平均 ± 標準偏差・コスモス以下の数・標準偏差の何倍か。
 pub fn nearest_table(
     root: &Path,
@@ -283,6 +291,41 @@ pub fn nearest_table(
         }
         per_model.push((name.to_string(), vals));
     }
+    // 表：行は模型、列は NN_TABLE の統計（模擬データは平均 ± 標準偏差、括弧はコスモスとの差が標準偏差の何倍か）
+    let col = |k: &str| c.iter().position(|(n, _)| n == k);
+    let cols: Vec<(usize, &str)> = NN_TABLE
+        .iter()
+        .map(|(k, h)| col(k).map(|j| (j, *h)).ok_or(format!("統計 {k} がない")))
+        .collect::<Result<_, _>>()?;
+    let mut t = format!(
+        "% cargo run --release --bin nearest_stats が書いた表\n\
+         \\begin{{tabular}}{{l{}}}\n\\toprule\n& {} \\\\\n\\midrule\n",
+        "r".repeat(cols.len()),
+        cols.iter().map(|c| c.1).collect::<Vec<_>>().join(" & ")
+    );
+    writeln!(
+        t,
+        "コスモス & {} \\\\\n\\midrule",
+        cols.iter()
+            .map(|(j, _)| format!("${:.3}$", c[*j].1))
+            .collect::<Vec<_>>()
+            .join(" & ")
+    )?;
+    for (name, vals) in &per_model {
+        let cells: Vec<String> = cols
+            .iter()
+            .map(|(j, _)| {
+                let (m, sd) = mean_sd(&vals[*j]);
+                // 小数 1 桁に丸めてから 0.0 を足し、−0.0 を +0.0 にする（cells_table と同じ）
+                let z = ((c[*j].1 - m) / sd * 10.0).round() / 10.0 + 0.0;
+                format!("${m:.3} \\pm {sd:.3}$ (${z:+.1}$)")
+            })
+            .collect();
+        writeln!(t, "{name} & {} \\\\", cells.join(" & "))?;
+    }
+    t.push_str("\\bottomrule\n\\end{tabular}\n");
+    results::write_text(&root.join("docs/tables/nearest_stats.tex"), &t)?;
+
     let mut log = format!("COSMOS の店 {}\n", cosmos.len());
     for (j, (k, cv)) in c.iter().enumerate() {
         write!(log, "{k:<14} COSMOS {cv:>8.4}")?;
@@ -299,6 +342,56 @@ pub fn nearest_table(
         writeln!(log)?;
     }
     results::write_text(&root.join("data/zeta/nearest_stats.csv"), &csv)?;
+    Ok(log)
+}
+
+/// ADR 012 の値を選ぶための短い比べ方。何も書かず、ログだけを返す。
+/// 統計は λ_c ≥ `p.lambda_mins[0]` の V・κ̂₂（`cells_table` と同じ）と、`nearest_stats` のうち `keys` に挙げたもの。
+pub fn local_scan(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+    keys: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let lmin = *p.lambda_mins.first().ok_or("λ_min を一つ以上渡す")?;
+    let Setup {
+        grid,
+        coarse,
+        refs,
+        cosmos,
+    } = setup(root, p)?;
+    // カタログ一つの（名前、値）
+    let one = |pts: &[LatLon]| -> Vec<(String, f64)> {
+        let s = cell_stats(&coarse.counts(&grid.geometry, pts, &refs, p.r_w_km), lmin);
+        let mut v = vec![
+            ("V".to_string(), s.void_ratio()),
+            ("kappa2".to_string(), s.kappa2),
+        ];
+        v.extend(
+            coarse
+                .nearest_stats(&grid.geometry, pts, &refs, p.r_w_km)
+                .into_iter()
+                .filter(|(k, _)| keys.contains(&k.as_str())),
+        );
+        v
+    };
+    let c = one(&cosmos);
+    let mut log = String::from("COSMOS");
+    for (k, v) in &c {
+        write!(log, "  {k} {v:.4}")?;
+    }
+    writeln!(log)?;
+    for (name, stem) in models {
+        let runs = read_points(root, stem)?;
+        let per_run: Vec<Vec<(String, f64)>> = runs.values().map(|pts| one(pts)).collect();
+        write!(log, "{name}（{} 回）", per_run.len())?;
+        for (j, (k, cv)) in c.iter().enumerate() {
+            let v: Vec<f64> = per_run.iter().map(|r| r[j].1).collect();
+            let (m, sd) = mean_sd(&v);
+            write!(log, "  {k} {m:.4} ± {sd:.4}（{:+.1}σ）", (cv - m) / sd)?;
+        }
+        writeln!(log)?;
+    }
     Ok(log)
 }
 
