@@ -3254,13 +3254,14 @@ pub fn selection_mismatch(root: &Path, p: &Params) -> Result<String, Box<dyn std
     Ok(log)
 }
 
-/// 模擬データを、W の幅は 50 km のまま S の幅 R だけを変えて測った ξ̂_S と ζ̂_S を並べる（#94）。
+/// 模擬データを、W を作る幅は決めたまま S の幅 R だけを変えて測った ξ̂_S と ζ̂_S を並べる（#94）。
 ///
 /// `models` は（表に書く模型の名前、`--s-widths` をつけた zeta_clustered・zeta_field の出力の前置き）。
 /// R ごとに、run の平均の ξ̂_S（辺のビンごと）、三辺の等しいビンの run の平均の ζ̂_S、
 /// 16 ビンの run の平均をさらにビンで平均した値 $\overline{\hat\zeta_S}$ とその平均の誤差（run ごとの 16 ビンの平均のばらつきから）、
 /// run の平均が負のビンの数を並べる。
-/// 書くもの：docs/tables/zeta_vary_r_mocks.tex
+/// 模型ごとに、R の両端での 16 ビンの平均の差（下がり方）を run ごとに求め、コスモスの同じ差と比べる。
+/// 書くもの：docs/tables/zeta_vary_r_mocks.tex、data/zeta/vary_r_mocks_drop.csv
 pub fn vary_s_mocks_table(
     root: &Path,
     models: &[(&str, &str)],
@@ -3272,6 +3273,9 @@ pub fn vary_s_mocks_table(
          模型 & $R$ [km] & 3 & 6 & 12 & 24 & 3 & 6 & 12 & 24 & $\\overline{\\hat\\zeta_S}$ & $< 0$ \\\\\n\\midrule\n",
     );
     let mut log = String::new();
+    let mut drop_out = String::from(
+        "model,r_lo_km,r_hi_km,runs,drop_mean,drop_sd,cosmos_drop,runs_at_or_below_cosmos\n",
+    );
     for (mi, (name, stem)) in models.iter().enumerate() {
         if mi > 0 {
             t.push_str("\\midrule\n");
@@ -3361,10 +3365,67 @@ pub fn vary_s_mocks_table(
                 keys.len()
             )?;
         }
+
+        // 下がり方：run ごとに、いちばん大きい R といちばん小さい R の 16 ビンの平均の差をとり、
+        // コスモスの同じ差と比べる。コスモスは一回きりなので、平均の誤差ではなく run のばらつき（標準偏差）で測る。
+        let (lo, hi) = (
+            z.iter().map(|r| r["s_km"]).fold(f64::INFINITY, f64::min),
+            z.iter()
+                .map(|r| r["s_km"])
+                .fold(f64::NEG_INFINITY, f64::max),
+        );
+        let per_run_mean = |run: f64, s: f64| {
+            let v: Vec<f64> = z
+                .iter()
+                .filter(|r| r["run"] == run && r["s_km"] == s)
+                .map(|r| r["zeta"])
+                .collect();
+            v.iter().sum::<f64>() / v.len() as f64
+        };
+        let mut runs: Vec<f64> = z.iter().map(|r| r["run"]).collect();
+        runs.sort_by(f64::total_cmp);
+        runs.dedup();
+        let drops: Vec<f64> = runs
+            .iter()
+            .map(|&run| per_run_mean(run, hi) - per_run_mean(run, lo))
+            .collect();
+        let n = drops.len() as f64;
+        let dm = drops.iter().sum::<f64>() / n;
+        let dsd = (drops.iter().map(|v| (v - dm).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        let cosmos_drop = cosmos_zeta_mean(root, hi as u32)? - cosmos_zeta_mean(root, lo as u32)?;
+        let below = drops.iter().filter(|d| **d <= cosmos_drop).count();
+        writeln!(
+            drop_out,
+            "{name},{lo},{hi},{},{dm:.6},{dsd:.6},{cosmos_drop:.6},{below}",
+            drops.len()
+        )?;
+        writeln!(
+            log,
+            "{name}：下がり方（R = {hi:.0} − {lo:.0} km）の run の平均 {dm:+.4}、標準偏差 {dsd:.4}。コスモス {cosmos_drop:+.4} 以下の run {below}/{}、（コスモス − 平均）/ 標準偏差 {:+.2}",
+            drops.len(),
+            (cosmos_drop - dm) / dsd
+        )?;
     }
     t.push_str("\\bottomrule\n\\end{tabular}\n");
     results::write_text(&root.join("docs/tables/zeta_vary_r_mocks.tex"), &t)?;
+    results::write_text(&root.join("data/zeta/vary_r_mocks_drop.csv"), &drop_out)?;
     Ok(log)
+}
+
+/// コスモスの幅 R の ζ̂_S の、16 ビンの平均（[`vary_r_table`] と同じファイルを読む）。
+fn cosmos_zeta_mean(root: &Path, r: u32) -> Result<f64, Box<dyn std::error::Error>> {
+    const P: &str = "data/zeta/zeta_jp_2026-11-12_cosmos";
+    let path = if r == 50 {
+        format!("{P}_fp50_t8000.csv")
+    } else {
+        format!("{P}_fp{r}_t8000.csv")
+    };
+    let v: Vec<f64> = results::read_numeric_csv(&root.join(&path))?
+        .into_iter()
+        .map(|r| r["zeta"])
+        .filter(|z| z.is_finite())
+        .collect();
+    Ok(v.iter().sum::<f64>() / v.len() as f64)
 }
 
 /// 選択関数の幅 R を変えたコスモスの ξ̂ と ζ̂ を並べる（#94）。
