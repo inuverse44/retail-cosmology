@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::access::{population, results, stores};
+use crate::engine::census::{nearest_other_km, quantile};
 use crate::engine::counts_in_cells::{CellStats, cell_stats};
 use crate::engine::random_catalog::{Weight, sample};
 use crate::engine::selection_function::SmoothRatio;
@@ -35,12 +36,15 @@ pub struct CellParams<'a> {
 struct CoarseCells {
     pop: BTreeMap<u64, f64>,
     center: BTreeMap<u64, Unit>,
+    /// マスの面積 [km²]
+    area: BTreeMap<u64, f64>,
 }
 
 impl CoarseCells {
     fn new(grid: &crate::contract::PopulationGrid) -> Self {
         let mut pop = BTreeMap::new();
         let mut center = BTreeMap::new();
+        let mut area = BTreeMap::new();
         for (i, &v) in grid.values.iter().enumerate() {
             let w = Weight::Population.of(v as f64);
             if w <= 0.0 {
@@ -50,9 +54,28 @@ impl CoarseCells {
             if let Some((key, c)) = grid.geometry.coarse_cell(&grid.geometry.point(i, 0.5, 0.5)) {
                 *pop.entry(key).or_insert(0.0) += w;
                 center.entry(key).or_insert_with(|| Unit::from(&c));
+                area.entry(key)
+                    .or_insert_with(|| grid.geometry.coarse_area_km2(&c));
             }
         }
-        Self { pop, center }
+        Self { pop, center, area }
+    }
+
+    /// カタログ `pts` の λ_c。λ_c > 0 のマスだけを、マスの番号の順に返す。
+    fn lambdas(&self, pts: &[LatLon], refs: &[Unit], r_w_km: f64) -> BTreeMap<u64, f64> {
+        let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
+        let sr = SmoothRatio::new(&units, refs, r_w_km);
+        let w: BTreeMap<u64, f64> = self
+            .pop
+            .iter()
+            .map(|(k, p)| (*k, p * sr.eval(&self.center[k])))
+            .collect();
+        let total: f64 = w.values().sum();
+        let scale = pts.len() as f64 / total;
+        w.into_iter()
+            .filter(|(_, wc)| *wc > 0.0)
+            .map(|(k, wc)| (k, wc * scale))
+            .collect()
     }
 
     /// カタログ `pts` の（N_c, λ_c）。λ_c > 0 のマスをすべて返す。
@@ -63,27 +86,102 @@ impl CoarseCells {
         refs: &[Unit],
         r_w_km: f64,
     ) -> Vec<(u64, f64)> {
-        let units: Vec<Unit> = pts.iter().map(Unit::from).collect();
-        let sr = SmoothRatio::new(&units, refs, r_w_km);
-        let w: BTreeMap<u64, f64> = self
-            .pop
-            .iter()
-            .map(|(k, p)| (*k, p * sr.eval(&self.center[k])))
-            .collect();
-        let total: f64 = w.values().sum();
+        let lam = self.lambdas(pts, refs, r_w_km);
         let mut n: BTreeMap<u64, u64> = BTreeMap::new();
         for q in pts {
             if let Some((key, _)) = geometry.coarse_cell(q) {
                 *n.entry(key).or_insert(0) += 1;
             }
         }
-        let scale = pts.len() as f64 / total;
-        w.iter()
-            .filter(|(_, wc)| **wc > 0.0)
-            .map(|(k, wc)| (n.get(k).copied().unwrap_or(0), wc * scale))
+        lam.iter()
+            .map(|(k, l)| (n.get(k).copied().unwrap_or(0), *l))
             .collect()
     }
+
+    /// 最近接距離の統計（名前、値）。d は自分以外で最も近い店までの距離 [km]、
+    /// u = π n_c d²（n_c = λ_c / マスの面積、店のいるマスの期待密度）。期待密度のとおりのポアソン点なら
+    /// u は平均 1 の指数分布に従う。λ_c のないマス（人口 0 か S = 0）にいる店は u と層から外し、その数を no_lambda に書く。
+    fn nearest_stats(
+        &self,
+        geometry: &GridGeometry,
+        pts: &[LatLon],
+        refs: &[Unit],
+        r_w_km: f64,
+    ) -> Vec<(String, f64)> {
+        let lam = self.lambdas(pts, refs, r_w_km);
+        let d = nearest_other_km(pts);
+        let mut out: Vec<(String, f64)> = Vec::new();
+        let frac = |v: &[f64], x: f64| v.iter().filter(|y| **y < x).count() as f64 / v.len() as f64;
+
+        let mut dv = d.clone();
+        for q in NN_QUANTILES {
+            out.push((format!("d_q{:02}", (q * 100.0).round()), quantile(&mut dv, q)));
+        }
+        for x in NN_D_KM {
+            out.push((format!("G_d<{x}"), frac(&d, x)));
+        }
+
+        // 店ごとの λ_c と u
+        let mut u_all = Vec::new();
+        let mut by_class: Vec<(Vec<f64>, Vec<f64>)> = vec![(Vec::new(), Vec::new()); NN_CLASSES.len()];
+        let mut no_lambda = 0usize;
+        for (q, &di) in pts.iter().zip(&d) {
+            let Some((key, _)) = geometry.coarse_cell(q) else {
+                no_lambda += 1;
+                continue;
+            };
+            let (Some(&l), Some(&a)) = (lam.get(&key), self.area.get(&key)) else {
+                no_lambda += 1;
+                continue;
+            };
+            let u = std::f64::consts::PI * l / a * di * di;
+            u_all.push(u);
+            if let Some(j) = NN_CLASSES.iter().position(|(lo, hi, _)| l >= *lo && l < *hi) {
+                by_class[j].0.push(di);
+                by_class[j].1.push(u);
+            }
+        }
+        out.push(("no_lambda".into(), no_lambda as f64));
+        let mut uv = u_all.clone();
+        out.push(("u_q50".into(), quantile(&mut uv, 0.5)));
+        for x in NN_U {
+            out.push((format!("F_u<{x}"), frac(&u_all, x)));
+        }
+        for (&(lo, hi, name), (mut dc, mut uc)) in NN_CLASSES.iter().zip(by_class) {
+            out.push((format!("{name}_n"), dc.len() as f64));
+            // 層に入るマスの λ_c の和（店の数 n がこれと比べて多いか少ないか）
+            let lam_sum: f64 = lam.values().filter(|l| **l >= lo && **l < hi).sum();
+            out.push((format!("{name}_lam_sum"), lam_sum));
+            // 層の中で、d < 1 km の割合と u < 0.1 の割合（避け合う距離が km で一定か、密度で縮むかを見る）
+            out.push((format!("{name}_G_d<1"), frac(&dc, 1.0)));
+            out.push((format!("{name}_F_u<0.1"), frac(&uc, 0.1)));
+            // 層に店がなければ NaN
+            let med = |v: &mut Vec<f64>| {
+                if v.is_empty() {
+                    f64::NAN
+                } else {
+                    quantile(v, 0.5)
+                }
+            };
+            out.push((format!("{name}_d_q50"), med(&mut dc)));
+            out.push((format!("{name}_u_q50"), med(&mut uc)));
+        }
+        out
+    }
 }
+
+/// 最近接距離 d の分位点
+const NN_QUANTILES: [f64; 5] = [0.1, 0.25, 0.5, 0.75, 0.9];
+/// d がこれより短い店の割合 G を求める距離 [km]
+const NN_D_KM: [f64; 5] = [0.5, 1.0, 2.0, 3.0, 5.0];
+/// u がこれより小さい店の割合 F を求める値（ポアソンなら 1 − e^{−x}）
+const NN_U: [f64; 4] = [0.1, 0.25, 0.5, 1.0];
+/// 店のいるマスの λ_c で分ける層（下限、上限、名前）
+const NN_CLASSES: [(f64, f64, &str); 3] = [
+    (0.0, 1.0, "lam<1"),
+    (1.0, 3.0, "lam1-3"),
+    (3.0, f64::INFINITY, "lam>=3"),
+];
 
 /// `{stem}_points.csv`（run,lat,lon）を run ごとに読む。
 fn read_points(root: &Path, stem: &str) -> Result<BTreeMap<i64, Vec<LatLon>>, String> {
@@ -105,6 +203,103 @@ fn mean_sd(v: &[f64]) -> (f64, f64) {
     let m = v.iter().sum::<f64>() / n;
     let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
     (m, sd)
+}
+
+/// どの比べ方にも共通の準備：人口の格子、粗い格子、参照の点、コスモスの店。
+struct Setup {
+    grid: crate::contract::PopulationGrid,
+    coarse: CoarseCells,
+    refs: Vec<Unit>,
+    cosmos: Vec<LatLon>,
+}
+
+fn setup(root: &Path, p: &CellParams) -> Result<Setup, Box<dyn std::error::Error>> {
+    let grid = population::read_estat(&root.join("data/estat"))?;
+    let coarse = CoarseCells::new(&grid);
+    let mut rng_ref = SplitMix64::new(p.seed ^ 0xCE11_0000_0000_0000);
+    let refs: Vec<Unit> = sample(&grid, p.n_ref, Weight::Population, &mut rng_ref)
+        .iter()
+        .map(Unit::from)
+        .collect();
+    let cosmos: Vec<LatLon> = stores::read_selected(&root.join(p.stores))
+        .map_err(|e| format!("{} がない：{e}", p.stores))?
+        .into_iter()
+        .filter(|(c, _)| c == p.chain)
+        .map(|(_, q)| q)
+        .collect();
+    if cosmos.is_empty() {
+        return Err(format!("{} に {} の店がない", p.stores, p.chain).into());
+    }
+    Ok(Setup {
+        grid,
+        coarse,
+        refs,
+        cosmos,
+    })
+}
+
+/// コスモスと模擬データ（`models` は（ログの名前、`_points.csv` の前の stem））の最近接距離の分布を比べる。
+/// 統計は `CoarseCells::nearest_stats`。`p.lambda_mins` は使わない。
+/// 書くもの：data/zeta/nearest_stats.csv（model,run,stat,value、コスモスは model = COSMOS、run = -1）。
+/// ログには統計ごとに、コスモスの値と、模型ごとの平均 ± 標準偏差・コスモス以下の数・標準偏差の何倍か。
+pub fn nearest_table(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let Setup {
+        grid,
+        coarse,
+        refs,
+        cosmos,
+    } = setup(root, p)?;
+    let mut csv = String::from("model,run,stat,value\n");
+    let c = coarse.nearest_stats(&grid.geometry, &cosmos, &refs, p.r_w_km);
+    for (k, v) in &c {
+        writeln!(csv, "COSMOS,-1,{k},{v}")?;
+    }
+    // 模型ごとに、統計ごとの値の並び
+    let mut per_model: Vec<(String, Vec<Vec<f64>>)> = Vec::new();
+    for (name, stem) in models {
+        let runs = read_points(root, stem)?;
+        let mut vals: Vec<Vec<f64>> = vec![Vec::new(); c.len()];
+        for (run, pts) in &runs {
+            let s = coarse.nearest_stats(&grid.geometry, pts, &refs, p.r_w_km);
+            for (j, (k, v)) in s.iter().enumerate() {
+                if *k != c[j].0 {
+                    return Err(format!("統計の並びが違う：{k} と {}", c[j].0).into());
+                }
+                writeln!(
+                    csv,
+                    "{},{run},{k},{v}",
+                    if name.contains(',') {
+                        format!("\"{name}\"")
+                    } else {
+                        name.to_string()
+                    }
+                )?;
+                vals[j].push(*v);
+            }
+        }
+        per_model.push((name.to_string(), vals));
+    }
+    let mut log = format!("COSMOS の店 {}\n", cosmos.len());
+    for (j, (k, cv)) in c.iter().enumerate() {
+        write!(log, "{k:<14} COSMOS {cv:>8.4}")?;
+        for (name, vals) in &per_model {
+            let (m, sd) = mean_sd(&vals[j]);
+            let below = vals[j].iter().filter(|x| **x <= *cv).count();
+            write!(
+                log,
+                " | {name} {m:.4} ± {sd:.4}（以下 {below}/{}、{:+.1}σ）",
+                vals[j].len(),
+                (cv - m) / sd
+            )?;
+        }
+        writeln!(log)?;
+    }
+    results::write_text(&root.join("data/zeta/nearest_stats.csv"), &csv)?;
+    Ok(log)
 }
 
 /// 統計の名前（ログ）、表の見出し、取り出し方。
@@ -129,22 +324,12 @@ pub fn cells_table(
     if p.lambda_mins.is_empty() {
         return Err("λ_min を一つ以上渡す".into());
     }
-    let grid = population::read_estat(&root.join("data/estat"))?;
-    let coarse = CoarseCells::new(&grid);
-    let mut rng_ref = SplitMix64::new(p.seed ^ 0xCE11_0000_0000_0000);
-    let refs: Vec<Unit> = sample(&grid, p.n_ref, Weight::Population, &mut rng_ref)
-        .iter()
-        .map(Unit::from)
-        .collect();
-    let cosmos: Vec<LatLon> = stores::read_selected(&root.join(p.stores))
-        .map_err(|e| format!("{} がない：{e}", p.stores))?
-        .into_iter()
-        .filter(|(c, _)| c == p.chain)
-        .map(|(_, q)| q)
-        .collect();
-    if cosmos.is_empty() {
-        return Err(format!("{} に {} の店がない", p.stores, p.chain).into());
-    }
+    let Setup {
+        grid,
+        coarse,
+        refs,
+        cosmos,
+    } = setup(root, p)?;
 
     let mut log = String::new();
     let mut csv = String::from(
