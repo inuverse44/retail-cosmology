@@ -1404,7 +1404,13 @@ pub struct FieldModel {
     /// r(P) = r_max min(1, (P_*/P)^ν) とし（P は `pop_response` の R_p 以内の人口）、重みで受け入れた候補を、
     /// すでに選んだ店のうち r(P) 以内にあるものの数 k について確率 γ^k で受け入れる。None なら従来どおり。
     pub catchment: Option<[f64; 4]>,
+    /// 町の中心を選びやすくする重み [c, D [km], κ]（ADR 017）。池の点の δ_c（まわり R_p の人口が c 倍以上の
+    /// 場所までの距離、上限 [`TOWN_CAP_KM`]）に対して、重みに q = [1 + (D/δ_c)^κ]^{−1} をかける。None なら従来どおり。
+    pub town: Option<[f64; 3]>,
 }
+
+/// ADR 017 の δ_c の上限 [km]
+pub const TOWN_CAP_KM: f64 = 50.0;
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
 ///
@@ -1558,6 +1564,15 @@ pub fn field_mocks(
             return Err("--catchment は --pop-response と一緒に使う（P を使う）".into());
         }
     }
+    if let Some([c, d, kappa]) = model.town {
+        if !(c.is_finite() && c >= 1.0 && d.is_finite() && d > 0.0 && kappa.is_finite() && kappa > 0.0)
+        {
+            return Err("--town は c ≥ 1、D > 0、κ > 0 の有限な数".into());
+        }
+        if model.pop_response.is_none() {
+            return Err("--town は --pop-response と一緒に使う（P を使う）".into());
+        }
+    }
     if model.counts && model.pop_response.is_some() {
         return Err("--counts は --pop-response と一緒に使わない".into());
     }
@@ -1593,6 +1608,8 @@ pub fn field_mocks(
         format!("_pr{r}x{p0}x{m}x{p1}x{s}")
     }) + &model.catchment.map_or(String::new(), |[r, p, nu, g]| {
         format!("_cat{r}x{p}x{nu}x{g}")
+    }) + &model.town.map_or(String::new(), |[c, d, k]| {
+        format!("_town{c}x{d}x{k}")
     });
     let stem = format!(
         "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
@@ -1718,8 +1735,8 @@ pub fn field_mocks(
                 .collect(),
         )
     };
-    // ADR 015：池の点ごとの、まわりの人口 P（半径 R_p 以内）。使わないなら作らない。
-    let pool_pop: Option<Vec<f64>> = model.pop_response.map(|[r, ..]| {
+    // ADR 015：人口の格子のまわり R_p の人口を求める仕組み。使わないなら作らない。
+    let pop_field = model.pop_response.map(|[r, ..]| {
         let mut centres = Vec::new();
         let mut pops = Vec::new();
         for (i, &v) in grid.values.iter().enumerate() {
@@ -1729,17 +1746,25 @@ pub fn field_mocks(
                 pops.push(w);
             }
         }
-        let rc2 = km_to_chord2(r);
-        let g = crate::util::spatial::UnitGrid::build(&centres, rc2.sqrt());
+        crate::engine::catchment::PopField::new(centres, pops, r)
+    });
+    // 池の点ごとの、まわりの人口 P（半径 R_p 以内）
+    let pool_pop: Option<Vec<f64>> = pop_field
+        .as_ref()
+        .map(|f| pool.iter().map(|q| f.around(q)).collect());
+    // ADR 017：池の点ごとの、町の中心を選びやすくする因子 q(δ_c) = [1 + (D/δ_c)^κ]^{−1}
+    let town: Option<Vec<f64>> = model.town.map(|[c, d, kappa]| {
+        let f = pop_field
+            .as_ref()
+            .expect("--town は --pop-response と一緒に使う");
+        let p_centre = f.at_centres();
+        let td = crate::engine::catchment::TownDistance::new(f.centres(), &p_centre, TOWN_CAP_KM);
+        let pp = pool_pop.as_ref().expect("--pop-response のときは P を作る");
         pool.iter()
-            .map(|q| {
-                let mut p = 0.0;
-                g.for_each_near(q, rc2.sqrt(), |j| {
-                    if chord2(q, &centres[j]) < rc2 {
-                        p += pops[j];
-                    }
-                });
-                p
+            .zip(pp)
+            .map(|(q, &p)| {
+                let delta = td.to_at_least(q, c * p);
+                1.0 / (1.0 + (d / delta).powf(kappa))
             })
             .collect()
     });
@@ -1874,6 +1899,11 @@ pub fn field_mocks(
         if let Some(h) = &response {
             for (wi, hi) in w.iter_mut().zip(h) {
                 *wi *= hi;
+            }
+        }
+        if let Some(t) = &town {
+            for (wi, ti) in w.iter_mut().zip(t) {
+                *wi *= ti;
             }
         }
         if w.iter().filter(|w| **w > 0.0).count() < pts.len() {
