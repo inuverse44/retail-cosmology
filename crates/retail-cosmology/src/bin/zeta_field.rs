@@ -38,7 +38,9 @@
 //! --towns R:D_t：人口の格子を、まわり R [km] の人口の山で町に分ける（ADR 018、町の中心どうしは D_t [km] 以上）。_towns<R>x<D_t>。
 //! --town-cap T_c：人口が T_c より小さい町には店を一軒までしか置かない（--towns が要る）。_tcap<T_c>。
 //! --town-response T_0:m:T_1:s：重みに町の人口 T の反応 [1 + (T_0/T)^m]^{−1} [1 + (T/T_1)^s]^{−1} をかける（--towns が要る）。_tresp..。
-//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_cov..][_pr..][_cat..][_town..][_towns..][_tcap..][_tresp..][_名前].csv と _xi.csv
+//! --two-stage on：町を選ぶ重み h_T(T_t) Σ_t b と、町の中の割合 b h_P(P) / Σ_t b h_P を分ける（ADR 019、--towns・--town-response・
+//!   --pop-response が要る）。ファイル名に _2st を足す。
+//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_cov..][_pr..][_cat..][_town..][_towns..][_tcap..][_tresp..][_2st][_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
 use std::path::PathBuf;
@@ -56,6 +58,7 @@ fn main() {
     let (mut inhibit, mut pop_power, mut cover) = (None, 1.0f64, None);
     let (mut pop_response, mut catchment, mut town) = (None, None, None);
     let (mut towns, mut town_cap, mut town_response) = (None, None, None);
+    let mut two_stage = false;
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -132,6 +135,10 @@ fn main() {
                 towns = Some([s[0], s[1]]);
             }
             "--town-cap" => town_cap = Some(v.parse().unwrap()),
+            "--two-stage" => {
+                assert!(v == "on" || v == "off", "--two-stage は on か off");
+                two_stage = v == "on";
+            }
             "--town-response" => {
                 let s: Vec<f64> = v.split(':').map(|x| x.parse().unwrap()).collect();
                 assert_eq!(s.len(), 4, "--town-response T_0:m:T_1:s");
@@ -177,6 +184,7 @@ fn main() {
         towns,
         town_cap,
         town_response,
+        two_stage,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),
