@@ -26,7 +26,9 @@
 //!   あるものの数 k について確率 γ^k で受け入れる（γ = 0 なら r 以内に置かない）。ファイル名に _inh<r>x<γ> を足す。
 //! --pop-power α：重みに (2 次メッシュの人口)^{α−1} をかける（ADR 012）。α < 1 で人口の多いマスの店が人口の比より少なくなる。
 //!   1 以外ではファイル名に _pp<α> を足す。どちらも --counts とは一緒に使わない。expected の列は場だけの見込みのまま。
-//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_名前].csv と _xi.csv
+//! --cover R_c:β：近くに店のない所を先に埋める条件（ADR 014）。重みで受け入れた候補（--inhibit の後）を、すでに選んだ店が
+//!   R_c [km] 以内に一つでもあれば確率 β で受け入れる（0 < β ≤ 1）。ファイル名に _cov<R_c>x<β> を足す。--counts とは一緒に使わない。
+//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_cov..][_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
 use std::path::PathBuf;
@@ -41,7 +43,7 @@ fn main() {
     let (mut split, mut counts) = (false, false);
     let (mut save_points, mut skip_measure) = (false, false);
     let mut transform = FieldTransform::Identity;
-    let (mut inhibit, mut pop_power) = (None, 1.0f64);
+    let (mut inhibit, mut pop_power, mut cover) = (None, 1.0f64, None);
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -92,6 +94,11 @@ fn main() {
                 inhibit = Some((s[0].parse().unwrap(), s[1].parse().unwrap()));
             }
             "--pop-power" => pop_power = v.parse().unwrap(),
+            "--cover" => {
+                let s: Vec<&str> = v.split(':').collect();
+                assert_eq!(s.len(), 2, "--cover R_c:β");
+                cover = Some((s[0].parse().unwrap(), s[1].parse().unwrap()));
+            }
             "--transform" => {
                 transform = [
                     FieldTransform::Identity,
@@ -125,6 +132,7 @@ fn main() {
         skip_measure,
         inhibit,
         pop_power,
+        cover,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),

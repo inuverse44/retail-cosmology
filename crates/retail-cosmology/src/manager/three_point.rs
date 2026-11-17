@@ -1394,6 +1394,9 @@ pub struct FieldModel {
     pub inhibit: Option<(f64, f64)>,
     /// 重みにかける (粗い格子の人口)^{α−1} の α（ADR 012）。1 なら従来どおり（計算もしない）。
     pub pop_power: f64,
+    /// 近くに店のない所を先に埋める条件 (R_c [km], β)（ADR 014）。重みで受け入れた候補（`inhibit` の後）を、
+    /// すでに選んだ店が R_c 以内に一つでもあれば確率 β で受け入れる。None なら従来どおり（乱数列も同じ）。
+    pub cover: Option<(f64, f64)>,
 }
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
@@ -1527,9 +1530,16 @@ pub fn field_mocks(
     {
         return Err("--inhibit は r > 0 と 0 ≤ γ ≤ 1、--pop-power は有限であること".into());
     }
-    // --counts の規格化（1+α = 池での w の平均）は重み w = max(0, 1+δ) を前提にするので、ADR 012 の選び方とは混ぜない
-    if model.counts && (model.inhibit.is_some() || model.pop_power != 1.0) {
-        return Err("--counts は --inhibit・--pop-power と一緒に使わない".into());
+    if model
+        .cover
+        .is_some_and(|(r, b)| !r.is_finite() || r <= 0.0 || !(b > 0.0 && b <= 1.0))
+    {
+        return Err("--cover は R_c > 0 と 0 < β ≤ 1".into());
+    }
+    // --counts の規格化（1+α = 池での w の平均）は重み w = max(0, 1+δ) を前提にするので、ADR 012・014 の選び方とは混ぜない
+    if model.counts && (model.inhibit.is_some() || model.pop_power != 1.0 || model.cover.is_some())
+    {
+        return Err("--counts は --inhibit・--pop-power・--cover と一緒に使わない".into());
     }
     let second_tag = model
         .second
@@ -1540,9 +1550,9 @@ pub fn field_mocks(
     } else {
         format!("_t{}", model.transform.name())
     };
-    // ADR 012 の選び方も、使うときだけ名前に足す
+    // ADR 012・014 の選び方も、使うときだけ名前に足す
     let select_tag = format!(
-        "{}{}",
+        "{}{}{}",
         model
             .inhibit
             .map_or(String::new(), |(r, g)| format!("_inh{r}x{g}")),
@@ -1550,7 +1560,10 @@ pub fn field_mocks(
             String::new()
         } else {
             format!("_pp{}", model.pop_power)
-        }
+        },
+        model
+            .cover
+            .map_or(String::new(), |(r, b)| format!("_cov{r}x{b}"))
     );
     let stem = format!(
         "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
@@ -1685,6 +1698,15 @@ pub fn field_mocks(
             crate::util::spatial::UnitGrid::build(&pool, rc2.sqrt()),
         )
     });
+    // ADR 014：近くに店のない所を先に埋める条件の近傍を探す、池の点の格子
+    let cover_grid = model.cover.map(|(r, b)| {
+        let rc2 = km_to_chord2(r);
+        (
+            rc2,
+            b,
+            crate::util::spatial::UnitGrid::build(&pool, rc2.sqrt()),
+        )
+    });
     let mut points_out = String::from("run,lat,lon\n");
     eprintln!(
         "点の池 {} 点（{:.1} 秒）",
@@ -1787,6 +1809,18 @@ pub fn field_mocks(
                         }
                     });
                     if k > 0 && rng_m.next_f64() >= gamma.powi(k) {
+                        continue;
+                    }
+                }
+                // ADR 014：すでに選んだ店が R_c 以内に一つでもあれば、確率 β で受け入れる
+                if let Some((rc2, beta, gp)) = &cover_grid {
+                    let mut near = false;
+                    gp.for_each_near(&pool[i], rc2.sqrt(), |j| {
+                        if !near && taken[j] && chord2(&pool[i], &pool[j]) < *rc2 {
+                            near = true;
+                        }
+                    });
+                    if near && rng_m.next_f64() >= *beta {
                         continue;
                     }
                 }
