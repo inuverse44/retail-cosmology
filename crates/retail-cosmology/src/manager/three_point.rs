@@ -1414,6 +1414,8 @@ pub struct FieldModel {
     pub town_cap: Option<f64>,
     /// 重みに町の人口 T の反応 [1 + (T_0/T)^m]^{−1} [1 + (T/T_1)^s]^{−1} をかける [T_0, m, T_1, s]（ADR 018）。
     pub town_response: Option<[f64; 4]>,
+    /// 町を選ぶ重みと町の中の場所を選ぶ割合を分ける（ADR 019）。`towns`・`town_response`・`pop_response` が要る。
+    pub two_stage: bool,
 }
 
 /// ADR 017 の δ_c の上限 [km]
@@ -1590,6 +1592,11 @@ pub fn field_mocks(
     if model.towns.is_none() && (model.town_cap.is_some() || model.town_response.is_some()) {
         return Err("--town-cap・--town-response は --towns と一緒に使う".into());
     }
+    if model.two_stage
+        && (model.towns.is_none() || model.town_response.is_none() || model.pop_response.is_none())
+    {
+        return Err("--two-stage は --towns・--town-response・--pop-response と一緒に使う".into());
+    }
     if model.counts && model.towns.is_some() {
         return Err("--counts は --towns と一緒に使わない".into());
     }
@@ -1638,7 +1645,8 @@ pub fn field_mocks(
             .map_or(String::new(), |t| format!("_tcap{t}"))
         + &model.town_response.map_or(String::new(), |[t0, m, t1, s]| {
             format!("_tresp{t0}x{m}x{t1}x{s}")
-        });
+        })
+        + if model.two_stage { "_2st" } else { "" };
     let stem = format!(
         "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
         if p.country == "jp" { "jp_" } else { "us_" },
@@ -1959,19 +1967,47 @@ pub fn field_mocks(
                 *wi *= fi;
             }
         }
-        if let Some(h) = &response {
-            for (wi, hi) in w.iter_mut().zip(h) {
-                *wi *= hi;
+        if model.two_stage {
+            // ADR 019：b（反応をかける前の重み）から、町を選ぶ重み h_T Σ_t b と、町の中の割合 b h_P / Σ_t b h_P を作る
+            if let Some(t) = &town {
+                for (wi, ti) in w.iter_mut().zip(t) {
+                    *wi *= ti;
+                }
             }
-        }
-        if let Some(t) = &town {
-            for (wi, ti) in w.iter_mut().zip(t) {
-                *wi *= ti;
+            let (of_pool, t_pop) = pool_town.as_ref().expect("--two-stage は --towns と一緒に使う");
+            let h_p = response.as_ref().expect("--two-stage は --pop-response と一緒に使う");
+            let h_t = town_resp.as_ref().expect("--two-stage は --town-response と一緒に使う");
+            let mut sum_b = vec![0.0; t_pop.len()];
+            let mut sum_bh = vec![0.0; t_pop.len()];
+            for (i, t) in of_pool.iter().enumerate() {
+                if let Some(t) = t {
+                    sum_b[*t] += w[i];
+                    sum_bh[*t] += w[i] * h_p[i];
+                }
             }
-        }
-        if let Some(t) = &town_resp {
-            for (wi, ti) in w.iter_mut().zip(t) {
-                *wi *= ti;
+            for (i, t) in of_pool.iter().enumerate() {
+                w[i] = match t {
+                    Some(t) if sum_bh[*t] > 0.0 => {
+                        h_t[i] * sum_b[*t] * w[i] * h_p[i] / sum_bh[*t]
+                    }
+                    _ => 0.0,
+                };
+            }
+        } else {
+            if let Some(h) = &response {
+                for (wi, hi) in w.iter_mut().zip(h) {
+                    *wi *= hi;
+                }
+            }
+            if let Some(t) = &town {
+                for (wi, ti) in w.iter_mut().zip(t) {
+                    *wi *= ti;
+                }
+            }
+            if let Some(t) = &town_resp {
+                for (wi, ti) in w.iter_mut().zip(t) {
+                    *wi *= ti;
+                }
             }
         }
         // ADR 018：町ごとの、すでに選んだ店の数
