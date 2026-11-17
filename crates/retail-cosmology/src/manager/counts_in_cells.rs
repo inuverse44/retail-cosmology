@@ -404,6 +404,130 @@ pub fn local_scan(
     Ok(log)
 }
 
+/// マスの人口（`edges` で区切った区間）ごとに、店の数と期待数の和の比 ΣN/Σλ と、空のマスの比
+/// #(N = 0)/Σe^{−λ} を、コスモスと模擬データで比べる（#115）。λ_c > 0 のマスをすべて使う。
+/// 人口は `CoarseCells` の和（`Weight::Population`）。`table` が Some なら、ΣN/Σλ の表（模擬データは平均 ± 標準偏差と、
+/// コスモスとの差が標準偏差の何倍か）をそのパスに書く。None ならログだけ。
+pub fn pop_response(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+    edges: &[f64],
+    table: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let Setup {
+        grid,
+        coarse,
+        refs,
+        cosmos,
+    } = setup(root, p)?;
+    let nb = edges.len() + 1;
+    let bin_of = |pop: f64| edges.iter().filter(|e| pop >= **e).count();
+    // カタログ一つの、区間ごとの（マスの数、ΣN、Σλ、空のマス、Σe^{−λ}）
+    let one = |pts: &[LatLon]| -> Vec<(usize, f64, f64, f64, f64)> {
+        let lam = coarse.lambdas(pts, &refs, p.r_w_km);
+        let mut n: BTreeMap<u64, u64> = BTreeMap::new();
+        for q in pts {
+            if let Some((key, _)) = grid.geometry.block_cell(q, coarse.k) {
+                *n.entry(key).or_insert(0) += 1;
+            }
+        }
+        let mut out = vec![(0usize, 0.0, 0.0, 0.0, 0.0); nb];
+        for (k, l) in &lam {
+            let b = &mut out[bin_of(coarse.pop[k])];
+            let nk = n.get(k).copied().unwrap_or(0);
+            b.0 += 1;
+            b.1 += nk as f64;
+            b.2 += l;
+            if nk == 0 {
+                b.3 += 1.0;
+            }
+            b.4 += (-l).exp();
+        }
+        out
+    };
+    let label = |b: usize| -> String {
+        let lo = if b == 0 { 0.0 } else { edges[b - 1] };
+        if b + 1 < nb {
+            format!("{lo}–{}", edges[b])
+        } else {
+            format!("≥{lo}")
+        }
+    };
+    let c = one(&cosmos);
+    let mut log = String::from("人口の区間  マス  COSMOS：ΣN / Σλ = 比、空 / Σe^{−λ} = 比\n");
+    for (b, s) in c.iter().enumerate() {
+        writeln!(
+            log,
+            "{:>16}  {:4}  {:.0} / {:.1} = {:.3}、{:.0} / {:.1} = {:.3}",
+            label(b),
+            s.0,
+            s.1,
+            s.2,
+            s.1 / s.2,
+            s.3,
+            s.4,
+            s.3 / s.4
+        )?;
+    }
+    // 表の行（人口の区間）ごとの、模型の列
+    let mut tex_rows: Vec<Vec<String>> = vec![Vec::new(); nb];
+    for (name, stem) in models {
+        let runs = read_points(root, stem)?;
+        let per_run: Vec<_> = runs.values().map(|pts| one(pts)).collect();
+        writeln!(log, "{name}（{} 回）：ΣN/Σλ、空の比（平均 ± 標準偏差、コスモスとの差 / 標準偏差）", per_run.len())?;
+        for (b, cs) in c.iter().enumerate() {
+            let r: Vec<f64> = per_run.iter().map(|x| x[b].1 / x[b].2).collect();
+            let v: Vec<f64> = per_run.iter().map(|x| x[b].3 / x[b].4).collect();
+            let (rm, rsd) = mean_sd(&r);
+            let (vm, vsd) = mean_sd(&v);
+            // 小数 1 桁に丸めてから 0.0 を足し、−0.0 を +0.0 にする
+            let z = ((cs.1 / cs.2 - rm) / rsd * 10.0).round() / 10.0 + 0.0;
+            tex_rows[b].push(format!("${rm:.2} \\pm {rsd:.2}$ (${z:+.1}$)"));
+            writeln!(
+                log,
+                "{:>16}  {:.3} ± {:.3}（{:+.1}σ）、{:.3} ± {:.3}（{:+.1}σ）",
+                label(b),
+                rm,
+                rsd,
+                (cs.1 / cs.2 - rm) / rsd,
+                vm,
+                vsd,
+                (cs.3 / cs.4 - vm) / vsd
+            )?;
+        }
+    }
+    if let Some(path) = table {
+        let tex_label = |b: usize| -> String {
+            let lo = if b == 0 { 0.0 } else { edges[b - 1] };
+            if b + 1 < nb {
+                format!("${lo:.0}$--${:.0}$", edges[b])
+            } else {
+                format!("$\\ge {lo:.0}$")
+            }
+        };
+        let mut t = format!(
+            "% cargo run --release --bin pop_response が書いた表（ΣN/Σλ）\n\
+             \\begin{{tabular}}{{lrr{}}}\n\\toprule\n$P_c$ & マス & コスモス & {} \\\\\n\\midrule\n",
+            "r".repeat(models.len()),
+            models.iter().map(|m| m.0).collect::<Vec<_>>().join(" & ")
+        );
+        for (b, s) in c.iter().enumerate() {
+            writeln!(
+                t,
+                "{} & ${}$ & ${:.2}$ & {} \\\\",
+                tex_label(b),
+                s.0,
+                s.1 / s.2,
+                tex_rows[b].join(" & ")
+            )?;
+        }
+        t.push_str("\\bottomrule\n\\end{tabular}\n");
+        results::write_text(&root.join(path), &t)?;
+    }
+    Ok(log)
+}
+
 /// 統計の名前（ログ）、表の見出し、取り出し方。
 type Stat = (&'static str, &'static str, fn(&CellStats) -> f64);
 

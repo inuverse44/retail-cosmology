@@ -52,6 +52,11 @@ fn main() {
             "$G_{10}^{-}I_{1}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
         ),
+        // ADR 015：場を持たず、人口への反応と近づかない条件だけの模型（種 13）
+        (
+            "$hI_{1}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_inh1x0.5_pr5x12000x3x500000x1_w25_swidth",
+        ),
     ];
     match nearest_table(&root, &p, &models) {
         Ok(log) => print!("{log}"),
