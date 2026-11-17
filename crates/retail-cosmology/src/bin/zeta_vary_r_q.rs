@@ -77,6 +77,11 @@ fn main() {
             "$hI_{1}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_inh1x0.5_pr5x12000x3x500000x1_w25_swidth",
         ),
+        // 同じ模型を別の種で作り直したもの（--seed 17 --tag w25_swidth_seed17）
+        (
+            "$hI_{1}'$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_inh1x0.5_pr5x12000x3x500000x1_w25_swidth_seed17",
+        ),
     ];
     match vary_s_mocks_q(&root, &models) {
         Ok(log) => print!("{log}"),

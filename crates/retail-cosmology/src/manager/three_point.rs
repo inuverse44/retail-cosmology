@@ -1400,6 +1400,10 @@ pub struct FieldModel {
     /// 店のまわりの人口に対する反応 [R_p [km], P_0, m, P_1, s]（ADR 015）。重みに
     /// h(P) = [1 + (P_0/P)^m]^{−1} [1 + (P/P_1)^s]^{−1} をかける（P は池の点から R_p 以内の人口）。None なら従来どおり。
     pub pop_response: Option<[f64; 5]>,
+    /// まわりの人口が少ない所ほど店どうしを離す条件 [r_max [km], P_*, ν, γ]（ADR 016）。池の点の距離を
+    /// r(P) = r_max min(1, (P_*/P)^ν) とし（P は `pop_response` の R_p 以内の人口）、重みで受け入れた候補を、
+    /// すでに選んだ店のうち r(P) 以内にあるものの数 k について確率 γ^k で受け入れる。None なら従来どおり。
+    pub catchment: Option<[f64; 4]>,
 }
 
 /// ADR 010 の変換を説明する図の数を書く（ノートの図 fig:skewed-field）。
@@ -1545,6 +1549,15 @@ pub fn field_mocks(
     {
         return Err("--pop-response の R_p・P_0・m・P_1・s は正の有限な数".into());
     }
+    if let Some([r_max, p_star, nu, gamma]) = model.catchment {
+        let pos = |x: f64| x.is_finite() && x > 0.0;
+        if !(pos(r_max) && pos(p_star) && pos(nu) && (0.0..=1.0).contains(&gamma)) {
+            return Err("--catchment は r_max・P_*・ν が正の有限な数、0 ≤ γ ≤ 1".into());
+        }
+        if model.pop_response.is_none() {
+            return Err("--catchment は --pop-response と一緒に使う（P を使う）".into());
+        }
+    }
     if model.counts && model.pop_response.is_some() {
         return Err("--counts は --pop-response と一緒に使わない".into());
     }
@@ -1578,6 +1591,8 @@ pub fn field_mocks(
             .map_or(String::new(), |(r, b)| format!("_cov{r}x{b}"))
     ) + &model.pop_response.map_or(String::new(), |[r, p0, m, p1, s]| {
         format!("_pr{r}x{p0}x{m}x{p1}x{s}")
+    }) + &model.catchment.map_or(String::new(), |[r, p, nu, g]| {
+        format!("_cat{r}x{p}x{nu}x{g}")
     });
     let stem = format!(
         "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
@@ -1703,8 +1718,8 @@ pub fn field_mocks(
                 .collect(),
         )
     };
-    // ADR 015：池の点ごとの、まわりの人口に対する反応 h(P)。使わないなら作らない。
-    let response: Option<Vec<f64>> = model.pop_response.map(|[r, p0, m, p1, s]| {
+    // ADR 015：池の点ごとの、まわりの人口 P（半径 R_p 以内）。使わないなら作らない。
+    let pool_pop: Option<Vec<f64>> = model.pop_response.map(|[r, ..]| {
         let mut centres = Vec::new();
         let mut pops = Vec::new();
         for (i, &v) in grid.values.iter().enumerate() {
@@ -1724,6 +1739,17 @@ pub fn field_mocks(
                         p += pops[j];
                     }
                 });
+                p
+            })
+            .collect()
+    });
+    // ADR 015：池の点ごとの、まわりの人口に対する反応 h(P)
+    let response: Option<Vec<f64>> = model.pop_response.map(|[_, p0, m, p1, s]| {
+        pool_pop
+            .as_ref()
+            .expect("--pop-response のときは P を作る")
+            .iter()
+            .map(|&p| {
                 if p > 0.0 {
                     1.0 / (1.0 + (p0 / p).powf(m)) / (1.0 + (p / p1).powf(s))
                 } else {
@@ -1731,6 +1757,24 @@ pub fn field_mocks(
                 }
             })
             .collect()
+    });
+    // ADR 016：池の点ごとの近づかない距離 r(P) = r_max min(1, (P_*/P)^ν) の弦の二乗と、近傍を探す格子
+    let catchment = model.catchment.map(|[r_max, p_star, nu, gamma]| {
+        let rc2: Vec<f64> = pool_pop
+            .as_ref()
+            .expect("--catchment は --pop-response と一緒に使う")
+            .iter()
+            .map(|&p| {
+                let f = if p > 0.0 { (p_star / p).powf(nu).min(1.0) } else { 1.0 };
+                km_to_chord2(r_max * f)
+            })
+            .collect();
+        let rmax = km_to_chord2(r_max).sqrt();
+        (
+            rc2,
+            gamma,
+            crate::util::spatial::UnitGrid::build(&pool, rmax),
+        )
     });
     // ADR 012：近づかない条件の近傍を探す、池の点の格子
     let inhibit_grid = model.inhibit.map(|(r, g)| {
@@ -1869,6 +1913,19 @@ pub fn field_mocks(
                         }
                     });
                     if near && rng_m.next_f64() >= *beta {
+                        continue;
+                    }
+                }
+                // ADR 016：すでに選んだ店のうち、候補の r(P) 以内にあるものの数 k について、確率 γ^k で受け入れる
+                if let Some((rc2, gamma, gp)) = &catchment {
+                    let ri2 = rc2[i];
+                    let mut k = 0i32;
+                    gp.for_each_near(&pool[i], ri2.sqrt(), |j| {
+                        if taken[j] && chord2(&pool[i], &pool[j]) < ri2 {
+                            k += 1;
+                        }
+                    });
+                    if k > 0 && rng_m.next_f64() >= gamma.powi(k) {
                         continue;
                     }
                 }
