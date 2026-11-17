@@ -22,6 +22,7 @@
 | [014](014-coverage-condition.md) | 密度場の模型に、近くに店のない所を先に埋める条件を足す | Accepted |
 | [015](015-catchment-response.md) | 密度場の模型に、店のまわりの人口に対する置き方の反応を足す | Accepted |
 | [016](016-catchment-spacing.md) | 密度場の模型に、まわりの人口が少ない所ほど店どうしを離す条件を足す | Accepted |
+| [017](017-town-centre-preference.md) | 密度場の模型に、より大きな町から離れた所（町の中心）を選びやすくする重みを足す | Accepted |
 
 ## 書き方
 

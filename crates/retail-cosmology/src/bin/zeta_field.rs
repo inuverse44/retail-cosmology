@@ -33,7 +33,9 @@
 //! --catchment r_max:P_*:ν:γ：まわりの人口が少ない所ほど店どうしを離す条件（ADR 016、--pop-response が要る）。池の点の距離を
 //!   r(P) = r_max min(1, (P_*/P)^ν) [km] とし、重みで受け入れた候補を、すでに選んだ店のうち r(P) 以内の数 k について確率 γ^k で
 //!   受け入れる。ファイル名に _cat<r_max>x<P_*>x<ν>x<γ> を足す。
-//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_cov..][_pr..][_cat..][_名前].csv と _xi.csv
+//! --town c:D:κ：町の中心を選びやすくする重み（ADR 017、--pop-response が要る）。池の点の δ_c（まわり R_p の人口が c 倍以上の
+//!   場所までの距離 [km]、上限 50 km）に対して、重みに [1 + (D/δ_c)^κ]^{−1} をかける。ファイル名に _town<c>x<D>x<κ> を足す。
+//! 書くもの：data/zeta/field_<jp_|us_><日付>_<チェーン>_a<A>_s<σ>[_t<変換>][_inh..][_pp..][_cov..][_pr..][_cat..][_town..][_名前].csv と _xi.csv
 //! まとめは zeta_clustered_summary で作る（形は同じ）。
 
 use std::path::PathBuf;
@@ -49,7 +51,7 @@ fn main() {
     let (mut save_points, mut skip_measure) = (false, false);
     let mut transform = FieldTransform::Identity;
     let (mut inhibit, mut pop_power, mut cover) = (None, 1.0f64, None);
-    let (mut pop_response, mut catchment) = (None, None);
+    let (mut pop_response, mut catchment, mut town) = (None, None, None);
     while let Some(k) = it.next() {
         let v = it.next().expect("引数の値がない");
         match k.as_str() {
@@ -115,6 +117,11 @@ fn main() {
                 assert_eq!(s.len(), 4, "--catchment r_max:P_*:ν:γ");
                 catchment = Some([s[0], s[1], s[2], s[3]]);
             }
+            "--town" => {
+                let s: Vec<f64> = v.split(':').map(|x| x.parse().unwrap()).collect();
+                assert_eq!(s.len(), 3, "--town c:D:κ");
+                town = Some([s[0], s[1], s[2]]);
+            }
             "--transform" => {
                 transform = [
                     FieldTransform::Identity,
@@ -151,6 +158,7 @@ fn main() {
         cover,
         pop_response,
         catchment,
+        town,
     };
     match field_mocks(&root, &p, &model) {
         Ok(path) => eprintln!("{path} を書いた"),

@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::access::{population, results, stores};
+use crate::engine::catchment::{PopField, TownDistance};
 use crate::engine::census::{nearest_other_km, quantile};
 use crate::engine::counts_in_cells::{CellStats, cell_stats};
 use crate::engine::random_catalog::{Weight, sample};
@@ -606,6 +607,120 @@ pub fn nearest_by_pop(
                 }
                 let (m, sd) = mean_sd(&v);
                 write!(log, "  {m:.2} ± {sd:.2}（{:+.1}σ）", (cv - m) / sd)?;
+            }
+            writeln!(log)?;
+        }
+    }
+    Ok(log)
+}
+
+/// 店のいるマスの人口（`edges` で区切った区間）ごとに、店のまわり `r_km` の人口 P と、
+/// P が c P 以上の場所までの距離 δ_c（`factors` の c ごと、上限 `cap_km`）を、コスモスと模擬データで比べる（#115、ADR 017）。
+/// ログには区間ごとに、P の中央値、δ_c の中央値と δ_c > `far_km` の割合。何も書かない。
+pub fn town_distance_by_pop(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+    edges: &[f64],
+    r_km: f64,
+    factors: &[f64],
+    cap_km: f64,
+    far_km: f64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let Setup {
+        grid,
+        coarse,
+        cosmos,
+        ..
+    } = setup(root, p)?;
+    let mut centres = Vec::new();
+    let mut pops = Vec::new();
+    for (i, &v) in grid.values.iter().enumerate() {
+        let w = Weight::Population.of(v as f64);
+        if w > 0.0 {
+            centres.push(Unit::from(&grid.geometry.point(i, 0.5, 0.5)));
+            pops.push(w);
+        }
+    }
+    let field = PopField::new(centres, pops, r_km);
+    let p_centre = field.at_centres();
+    let td = TownDistance::new(field.centres(), &p_centre, cap_km);
+    let nb = edges.len() + 1;
+    let bin_of = |pop: f64| edges.iter().filter(|e| pop >= **e).count();
+    // カタログ一つの、区間ごとの統計の並び：[P の中央値, (δ_c の中央値, δ_c > far の割合) × factors]
+    let one = |pts: &[LatLon]| -> Vec<Vec<f64>> {
+        let mut by: Vec<Vec<(f64, Vec<f64>)>> = vec![Vec::new(); nb];
+        for q in pts {
+            let pop_c = grid
+                .geometry
+                .block_cell(q, coarse.k)
+                .and_then(|(key, _)| coarse.pop.get(&key).copied())
+                .unwrap_or(0.0);
+            let u = Unit::from(q);
+            let pq = field.around(&u);
+            let ds = factors.iter().map(|c| td.to_at_least(&u, c * pq)).collect();
+            by[bin_of(pop_c)].push((pq, ds));
+        }
+        by.into_iter()
+            .map(|v| {
+                if v.is_empty() {
+                    return vec![f64::NAN; 1 + 2 * factors.len()];
+                }
+                let mut ps: Vec<f64> = v.iter().map(|x| x.0).collect();
+                let mut out = vec![quantile(&mut ps, 0.5)];
+                for j in 0..factors.len() {
+                    let mut d: Vec<f64> = v.iter().map(|x| x.1[j]).collect();
+                    let far = d.iter().filter(|x| **x > far_km).count() as f64 / d.len() as f64;
+                    out.push(quantile(&mut d, 0.5));
+                    out.push(far);
+                }
+                out
+            })
+            .collect()
+    };
+    let label = |b: usize| -> String {
+        let lo = if b == 0 { 0.0 } else { edges[b - 1] };
+        if b + 1 < nb {
+            format!("{lo}–{}", edges[b])
+        } else {
+            format!("≥{lo}")
+        }
+    };
+    let mut head = format!("P（{r_km} km）の中央値");
+    for c in factors {
+        write!(head, "、δ_{c} の中央値 [km]、δ_{c} > {far_km} km の割合")?;
+    }
+    let c = one(&cosmos);
+    let mut log = format!("人口の区間  COSMOS：{head}\n");
+    for (b, s) in c.iter().enumerate() {
+        write!(log, "{:>16}", label(b))?;
+        for v in s {
+            write!(log, "  {v:.3}")?;
+        }
+        writeln!(log)?;
+    }
+    for (name, stem) in models {
+        let runs = read_points(root, stem)?;
+        let per_run: Vec<_> = runs.values().map(|pts| one(pts)).collect();
+        writeln!(
+            log,
+            "{name}（{} 回）：{head}（平均 ± 標準偏差、コスモスとの差 / 標準偏差）",
+            per_run.len()
+        )?;
+        for (b, cs) in c.iter().enumerate() {
+            write!(log, "{:>16}", label(b))?;
+            for (j, cv) in cs.iter().enumerate() {
+                let v: Vec<f64> = per_run
+                    .iter()
+                    .map(|r| r[b][j])
+                    .filter(|x| x.is_finite())
+                    .collect();
+                if v.len() < 2 {
+                    write!(log, "  —")?;
+                    continue;
+                }
+                let (m, sd) = mean_sd(&v);
+                write!(log, "  {m:.3} ± {sd:.3}（{:+.1}σ）", (cv - m) / sd)?;
             }
             writeln!(log)?;
         }
