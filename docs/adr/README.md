@@ -21,6 +21,7 @@
 | [013](013-cell-size-scan.md) | 店を数えるマスの大きさと期待数の幅を変えて、空のマスの不足が現れる規模を調べる | Accepted |
 | [014](014-coverage-condition.md) | 密度場の模型に、近くに店のない所を先に埋める条件を足す | Accepted |
 | [015](015-catchment-response.md) | 密度場の模型に、店のまわりの人口に対する置き方の反応を足す | Accepted |
+| [016](016-catchment-spacing.md) | 密度場の模型に、まわりの人口が少ない所ほど店どうしを離す条件を足す | Accepted |
 
 ## 書き方
 

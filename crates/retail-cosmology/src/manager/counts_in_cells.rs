@@ -528,6 +528,91 @@ pub fn pop_response(
     Ok(log)
 }
 
+/// 店のいるマスの人口（`edges` で区切った区間）ごとに、店の数と、自分以外で最も近い店までの距離 d [km] の
+/// 中央値・90% 点を、コスモスと模擬データで比べる（#115、d_90 の差がどの人口の所から来るかを見る）。
+/// 人口のないマスにいる店は最初の区間に入れる。ログだけを返し、何も書かない。
+pub fn nearest_by_pop(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+    edges: &[f64],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let Setup {
+        grid,
+        coarse,
+        cosmos,
+        ..
+    } = setup(root, p)?;
+    let nb = edges.len() + 1;
+    let bin_of = |pop: f64| edges.iter().filter(|e| pop >= **e).count();
+    // カタログ一つの、区間ごとの（店の数、d の中央値、d の 90% 点、d > 5 km の店の数）
+    let one = |pts: &[LatLon]| -> Vec<(f64, f64, f64, f64)> {
+        let d = nearest_other_km(pts);
+        let mut by: Vec<Vec<f64>> = vec![Vec::new(); nb];
+        for (q, &di) in pts.iter().zip(&d) {
+            let pop = grid
+                .geometry
+                .block_cell(q, coarse.k)
+                .and_then(|(key, _)| coarse.pop.get(&key).copied())
+                .unwrap_or(0.0);
+            by[bin_of(pop)].push(di);
+        }
+        by.into_iter()
+            .map(|mut v| {
+                let n = v.len() as f64;
+                let far = v.iter().filter(|x| **x > 5.0).count() as f64;
+                if v.is_empty() {
+                    (0.0, f64::NAN, f64::NAN, 0.0)
+                } else {
+                    (n, quantile(&mut v, 0.5), quantile(&mut v, 0.9), far)
+                }
+            })
+            .collect()
+    };
+    let label = |b: usize| -> String {
+        let lo = if b == 0 { 0.0 } else { edges[b - 1] };
+        if b + 1 < nb {
+            format!("{lo}–{}", edges[b])
+        } else {
+            format!("≥{lo}")
+        }
+    };
+    let c = one(&cosmos);
+    let mut log = String::from("人口の区間  COSMOS：店、d の中央値、d_90、d > 5 km の店\n");
+    for (b, s) in c.iter().enumerate() {
+        writeln!(log, "{:>16}  {:.0}  {:.2}  {:.2}  {:.0}", label(b), s.0, s.1, s.2, s.3)?;
+    }
+    for (name, stem) in models {
+        let runs = read_points(root, stem)?;
+        let per_run: Vec<_> = runs.values().map(|pts| one(pts)).collect();
+        writeln!(
+            log,
+            "{name}（{} 回）：店、d の中央値、d_90、d > 5 km の店（平均 ± 標準偏差、コスモスとの差 / 標準偏差）",
+            per_run.len()
+        )?;
+        for (b, cs) in c.iter().enumerate() {
+            write!(log, "{:>16}", label(b))?;
+            let parts: [(fn(&(f64, f64, f64, f64)) -> f64, f64); 4] = [
+                (|x| x.0, cs.0),
+                (|x| x.1, cs.1),
+                (|x| x.2, cs.2),
+                (|x| x.3, cs.3),
+            ];
+            for (get, cv) in parts {
+                let v: Vec<f64> = per_run.iter().map(|r| get(&r[b])).filter(|x| x.is_finite()).collect();
+                if v.len() < 2 {
+                    write!(log, "  —")?;
+                    continue;
+                }
+                let (m, sd) = mean_sd(&v);
+                write!(log, "  {m:.2} ± {sd:.2}（{:+.1}σ）", (cv - m) / sd)?;
+            }
+            writeln!(log)?;
+        }
+    }
+    Ok(log)
+}
+
 /// 統計の名前（ログ）、表の見出し、取り出し方。
 type Stat = (&'static str, &'static str, fn(&CellStats) -> f64);
 
