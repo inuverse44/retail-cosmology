@@ -23,6 +23,7 @@
 | [015](015-catchment-response.md) | 密度場の模型に、店のまわりの人口に対する置き方の反応を足す | Accepted |
 | [016](016-catchment-spacing.md) | 密度場の模型に、まわりの人口が少ない所ほど店どうしを離す条件を足す | Accepted |
 | [017](017-town-centre-preference.md) | 密度場の模型に、より大きな町から離れた所（町の中心）を選びやすくする重みを足す | Accepted |
+| [018](018-one-store-per-small-town.md) | 密度場の模型で、人口を町に分け、小さな町には店を一軒だけ置き、町の人口で置き方を決める | Accepted |
 
 ## 書き方
 

@@ -1407,6 +1407,13 @@ pub struct FieldModel {
     /// 町の中心を選びやすくする重み [c, D [km], κ]（ADR 017）。池の点の δ_c（まわり R_p の人口が c 倍以上の
     /// 場所までの距離、上限 [`TOWN_CAP_KM`]）に対して、重みに q = [1 + (D/δ_c)^κ]^{−1} をかける。None なら従来どおり。
     pub town: Option<[f64; 3]>,
+    /// 人口の格子を町に分ける [R [km], D_t [km]]（ADR 018）。まわり R の人口の山で分け、町の中心どうしは D_t 以上離す。
+    /// 池の点は R 以内で最も近い格子の町に入れる。`town_cap`・`town_response` が使う。None なら作らない。
+    pub towns: Option<[f64; 2]>,
+    /// 人口が T_c より小さい町には店を一軒までしか置かない（ADR 018）。
+    pub town_cap: Option<f64>,
+    /// 重みに町の人口 T の反応 [1 + (T_0/T)^m]^{−1} [1 + (T/T_1)^s]^{−1} をかける [T_0, m, T_1, s]（ADR 018）。
+    pub town_response: Option<[f64; 4]>,
 }
 
 /// ADR 017 の δ_c の上限 [km]
@@ -1573,6 +1580,19 @@ pub fn field_mocks(
             return Err("--town は --pop-response と一緒に使う（P を使う）".into());
         }
     }
+    let pos = |x: f64| x.is_finite() && x > 0.0;
+    if model.towns.is_some_and(|[r, d]| !(pos(r) && pos(d)))
+        || model.town_cap.is_some_and(|t| !pos(t))
+        || model.town_response.is_some_and(|v| !v.iter().all(|x| pos(*x)))
+    {
+        return Err("--towns・--town-cap・--town-response の値は正の有限な数".into());
+    }
+    if model.towns.is_none() && (model.town_cap.is_some() || model.town_response.is_some()) {
+        return Err("--town-cap・--town-response は --towns と一緒に使う".into());
+    }
+    if model.counts && model.towns.is_some() {
+        return Err("--counts は --towns と一緒に使わない".into());
+    }
     if model.counts && model.pop_response.is_some() {
         return Err("--counts は --pop-response と一緒に使わない".into());
     }
@@ -1610,7 +1630,15 @@ pub fn field_mocks(
         format!("_cat{r}x{p}x{nu}x{g}")
     }) + &model.town.map_or(String::new(), |[c, d, k]| {
         format!("_town{c}x{d}x{k}")
-    });
+    }) + &model
+        .towns
+        .map_or(String::new(), |[r, d]| format!("_towns{r}x{d}"))
+        + &model
+            .town_cap
+            .map_or(String::new(), |t| format!("_tcap{t}"))
+        + &model.town_response.map_or(String::new(), |[t0, m, t1, s]| {
+            format!("_tresp{t0}x{m}x{t1}x{s}")
+        });
     let stem = format!(
         "data/zeta/field_{}{}_{}_a{amp}_s{sigma_km}{second_tag}{transform_tag}{select_tag}{}",
         if p.country == "jp" { "jp_" } else { "us_" },
@@ -1783,6 +1811,41 @@ pub fn field_mocks(
             })
             .collect()
     });
+    // ADR 018：池の点ごとの町の番号（どの町にも入らなければ None）と、町ごとの人口
+    let pool_town: Option<(Vec<Option<usize>>, Vec<f64>)> = model.towns.map(|[r, d]| {
+        let mut centres = Vec::new();
+        let mut pops = Vec::new();
+        for (i, &v) in grid.values.iter().enumerate() {
+            let w = Weight::Population.of(v as f64);
+            if w > 0.0 {
+                centres.push(Unit::from(&grid.geometry.point(i, 0.5, 0.5)));
+                pops.push(w);
+            }
+        }
+        let f = crate::engine::catchment::PopField::new(centres, pops, r);
+        let label = crate::engine::catchment::towns(f.centres(), &f.at_centres(), d);
+        let n_towns = label.iter().copied().max().map_or(0, |m| m + 1);
+        let mut t_pop = vec![0.0; n_towns];
+        for (i, &t) in label.iter().enumerate() {
+            t_pop[t] += f.pops()[i];
+        }
+        let of_pool = pool.iter().map(|q| f.nearest(q).map(|j| label[j])).collect();
+        (of_pool, t_pop)
+    });
+    // ADR 018：池の点ごとの、町の人口 T に対する反応 h(T)（町に入らない点は 0）
+    let town_resp: Option<Vec<f64>> = model.town_response.map(|[t0, m, t1, s]| {
+        let (of_pool, t_pop) = pool_town.as_ref().expect("--town-response は --towns と一緒に使う");
+        of_pool
+            .iter()
+            .map(|t| match t {
+                Some(t) if t_pop[*t] > 0.0 => {
+                    let p = t_pop[*t];
+                    1.0 / (1.0 + (t0 / p).powf(m)) / (1.0 + (p / t1).powf(s))
+                }
+                _ => 0.0,
+            })
+            .collect()
+    });
     // ADR 016：池の点ごとの近づかない距離 r(P) = r_max min(1, (P_*/P)^ν) の弦の二乗と、近傍を探す格子
     let catchment = model.catchment.map(|[r_max, p_star, nu, gamma]| {
         let rc2: Vec<f64> = pool_pop
@@ -1906,6 +1969,15 @@ pub fn field_mocks(
                 *wi *= ti;
             }
         }
+        if let Some(t) = &town_resp {
+            for (wi, ti) in w.iter_mut().zip(t) {
+                *wi *= ti;
+            }
+        }
+        // ADR 018：町ごとの、すでに選んだ店の数
+        let mut town_count: Vec<u32> = pool_town
+            .as_ref()
+            .map_or(Vec::new(), |(_, t_pop)| vec![0; t_pop.len()]);
         if w.iter().filter(|w| **w > 0.0).count() < pts.len() {
             return Err("正の重みを持つ池の点が店の数より少ない".into());
         }
@@ -1958,6 +2030,17 @@ pub fn field_mocks(
                     if k > 0 && rng_m.next_f64() >= gamma.powi(k) {
                         continue;
                     }
+                }
+                // ADR 018：人口が T_c より小さい町に、すでに店があれば退ける（乱数は使わない）
+                let town_i = pool_town.as_ref().and_then(|(of_pool, _)| of_pool[i]);
+                if let (Some(tc), Some(t), Some((_, t_pop))) = (model.town_cap, town_i, &pool_town)
+                    && t_pop[t] < tc
+                    && town_count[t] >= 1
+                {
+                    continue;
+                }
+                if let Some(t) = town_i {
+                    town_count[t] += 1;
                 }
                 taken[i] = true;
                 d.push(pool[i]);
