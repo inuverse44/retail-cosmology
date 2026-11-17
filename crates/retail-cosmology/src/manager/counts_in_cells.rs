@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::access::{population, results, stores};
-use crate::engine::catchment::{PopField, TownDistance};
+use crate::engine::catchment::{PopField, TownDistance, towns};
 use crate::engine::census::{nearest_other_km, quantile};
 use crate::engine::counts_in_cells::{CellStats, cell_stats};
 use crate::engine::random_catalog::{Weight, sample};
@@ -721,6 +721,113 @@ pub fn town_distance_by_pop(
                 }
                 let (m, sd) = mean_sd(&v);
                 write!(log, "  {m:.3} ± {sd:.3}（{:+.1}σ）", (cv - m) / sd)?;
+            }
+            writeln!(log)?;
+        }
+    }
+    Ok(log)
+}
+
+/// 人口の格子を、まわり `r_km` の人口 P の山で町に分け（`engine::catchment::towns`、中心どうしの最小距離 `d_peak_km`）、
+/// 町の期待数 E_t = N T_t / ΣT（T_t は町の人口）の区間（`edges`）ごとに、店のある町の割合、町あたりの店の数、
+/// 店のある町のうち二軒以上ある割合を、コスモスと模擬データで比べる（#115、ADR 018）。店は最も近い格子の町に入れる。
+/// ログだけを返し、何も書かない。
+pub fn town_occupancy(
+    root: &Path,
+    p: &CellParams,
+    models: &[(&str, &str)],
+    r_km: f64,
+    d_peak_km: f64,
+    edges: &[f64],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let Setup { grid, cosmos, .. } = setup(root, p)?;
+    let mut centres = Vec::new();
+    let mut pops = Vec::new();
+    for (i, &v) in grid.values.iter().enumerate() {
+        let w = Weight::Population.of(v as f64);
+        if w > 0.0 {
+            centres.push(Unit::from(&grid.geometry.point(i, 0.5, 0.5)));
+            pops.push(w);
+        }
+    }
+    let field = PopField::new(centres, pops, r_km);
+    let town = towns(field.centres(), &field.at_centres(), d_peak_km);
+    let n_towns = town.iter().copied().max().map_or(0, |m| m + 1);
+    let mut t_pop = vec![0.0; n_towns];
+    for (i, &t) in town.iter().enumerate() {
+        t_pop[t] += field.pops()[i];
+    }
+    let total: f64 = t_pop.iter().sum();
+    let nb = edges.len() + 1;
+    let bin_of = |e: f64| edges.iter().filter(|x| e >= **x).count();
+    // カタログ一つの、区間ごとの（町の数、店のある町、店の数、二軒以上の町）
+    let one = |pts: &[LatLon]| -> Vec<(f64, f64, f64, f64)> {
+        let mut n_t = vec![0u32; n_towns];
+        for q in pts {
+            if let Some(j) = field.nearest(&Unit::from(q)) {
+                n_t[town[j]] += 1;
+            }
+        }
+        let big_n = pts.len() as f64;
+        let mut out = vec![(0.0, 0.0, 0.0, 0.0); nb];
+        for t in 0..n_towns {
+            let b = &mut out[bin_of(big_n * t_pop[t] / total)];
+            b.0 += 1.0;
+            if n_t[t] >= 1 {
+                b.1 += 1.0;
+            }
+            b.2 += n_t[t] as f64;
+            if n_t[t] >= 2 {
+                b.3 += 1.0;
+            }
+        }
+        out
+    };
+    // 区間ごとの統計：[店のある町の割合, 町あたりの店, 店のある町のうち二軒以上の割合]
+    let stats = |v: &(f64, f64, f64, f64)| -> [f64; 3] {
+        [
+            v.1 / v.0,
+            v.2 / v.0,
+            if v.1 > 0.0 { v.3 / v.1 } else { f64::NAN },
+        ]
+    };
+    let label = |b: usize| -> String {
+        let lo = if b == 0 { 0.0 } else { edges[b - 1] };
+        if b + 1 < nb {
+            format!("{lo}–{}", edges[b])
+        } else {
+            format!("≥{lo}")
+        }
+    };
+    let c = one(&cosmos);
+    let mut log = format!(
+        "町 {n_towns} 個（P の半径 {r_km} km、中心どうし {d_peak_km} km 以上）、人口の和 ΣT = {total:.0}、店 N = {}\n\
+         E_t の区間  町の数  COSMOS：店のある町の割合、町あたりの店、店のある町のうち二軒以上の割合\n",
+        cosmos.len()
+    );
+    for (b, s) in c.iter().enumerate() {
+        let [a, m, two] = stats(s);
+        writeln!(log, "{:>10}  {:6.0}  {a:.3}  {m:.3}  {two:.3}", label(b), s.0)?;
+    }
+    for (name, stem) in models {
+        let runs = read_points(root, stem)?;
+        let per_run: Vec<_> = runs.values().map(|pts| one(pts)).collect();
+        writeln!(log, "{name}（{} 回）：平均 ± 標準偏差（コスモスとの差 / 標準偏差）", per_run.len())?;
+        for (b, cs) in c.iter().enumerate() {
+            write!(log, "{:>10}", label(b))?;
+            let cv = stats(cs);
+            for k in 0..3 {
+                let v: Vec<f64> = per_run
+                    .iter()
+                    .map(|r| stats(&r[b])[k])
+                    .filter(|x| x.is_finite())
+                    .collect();
+                if v.len() < 2 {
+                    write!(log, "  —")?;
+                    continue;
+                }
+                let (m, sd) = mean_sd(&v);
+                write!(log, "  {m:.3} ± {sd:.3}（{:+.1}σ）", (cv[k] - m) / sd)?;
             }
             writeln!(log)?;
         }
