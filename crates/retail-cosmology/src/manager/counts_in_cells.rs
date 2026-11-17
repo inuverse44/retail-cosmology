@@ -406,12 +406,14 @@ pub fn local_scan(
 
 /// マスの人口（`edges` で区切った区間）ごとに、店の数と期待数の和の比 ΣN/Σλ と、空のマスの比
 /// #(N = 0)/Σe^{−λ} を、コスモスと模擬データで比べる（#115）。λ_c > 0 のマスをすべて使う。
-/// 何も書かず、ログだけを返す。人口は `CoarseCells` の和（`Weight::Population`）。
+/// 人口は `CoarseCells` の和（`Weight::Population`）。`table` が Some なら、ΣN/Σλ の表（模擬データは平均 ± 標準偏差と、
+/// コスモスとの差が標準偏差の何倍か）をそのパスに書く。None ならログだけ。
 pub fn pop_response(
     root: &Path,
     p: &CellParams,
     models: &[(&str, &str)],
     edges: &[f64],
+    table: Option<&str>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let Setup {
         grid,
@@ -468,6 +470,8 @@ pub fn pop_response(
             s.3 / s.4
         )?;
     }
+    // 表の行（人口の区間）ごとの、模型の列
+    let mut tex_rows: Vec<Vec<String>> = vec![Vec::new(); nb];
     for (name, stem) in models {
         let runs = read_points(root, stem)?;
         let per_run: Vec<_> = runs.values().map(|pts| one(pts)).collect();
@@ -477,6 +481,9 @@ pub fn pop_response(
             let v: Vec<f64> = per_run.iter().map(|x| x[b].3 / x[b].4).collect();
             let (rm, rsd) = mean_sd(&r);
             let (vm, vsd) = mean_sd(&v);
+            // 小数 1 桁に丸めてから 0.0 を足し、−0.0 を +0.0 にする
+            let z = ((cs.1 / cs.2 - rm) / rsd * 10.0).round() / 10.0 + 0.0;
+            tex_rows[b].push(format!("${rm:.2} \\pm {rsd:.2}$ (${z:+.1}$)"));
             writeln!(
                 log,
                 "{:>16}  {:.3} ± {:.3}（{:+.1}σ）、{:.3} ± {:.3}（{:+.1}σ）",
@@ -489,6 +496,34 @@ pub fn pop_response(
                 (cs.3 / cs.4 - vm) / vsd
             )?;
         }
+    }
+    if let Some(path) = table {
+        let tex_label = |b: usize| -> String {
+            let lo = if b == 0 { 0.0 } else { edges[b - 1] };
+            if b + 1 < nb {
+                format!("${lo:.0}$--${:.0}$", edges[b])
+            } else {
+                format!("$\\ge {lo:.0}$")
+            }
+        };
+        let mut t = format!(
+            "% cargo run --release --bin pop_response が書いた表（ΣN/Σλ）\n\
+             \\begin{{tabular}}{{lrr{}}}\n\\toprule\n$P_c$ & マス & コスモス & {} \\\\\n\\midrule\n",
+            "r".repeat(models.len()),
+            models.iter().map(|m| m.0).collect::<Vec<_>>().join(" & ")
+        );
+        for (b, s) in c.iter().enumerate() {
+            writeln!(
+                t,
+                "{} & ${}$ & ${:.2}$ & {} \\\\",
+                tex_label(b),
+                s.0,
+                s.1 / s.2,
+                tex_rows[b].join(" & ")
+            )?;
+        }
+        t.push_str("\\bottomrule\n\\end{tabular}\n");
+        results::write_text(&root.join(path), &t)?;
     }
     Ok(log)
 }

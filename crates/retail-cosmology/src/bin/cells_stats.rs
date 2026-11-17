@@ -58,6 +58,12 @@ fn main() {
             "$G_{10}^{-}I_{1}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
         ),
+        // 場を持たず、人口への反応（ADR 015）と近づかない条件だけの模型（--amp 0 --inhibit 1:0.5
+        // --pop-response 5:12000:3:500000:1 --seed 13、測る実行に --save-points on）
+        (
+            "$hI_{1}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_inh1x0.5_pr5x12000x3x500000x1_w25_swidth",
+        ),
     ];
     match cells_table(&root, &p, &models) {
         Ok(log) => print!("{log}"),

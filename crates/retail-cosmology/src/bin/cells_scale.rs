@@ -51,6 +51,11 @@ fn main() {
             "$G_{10}^{-}I_{1}$",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
         ),
+        // 場を持たず、人口への反応（ADR 015）と近づかない条件だけの模型（種 13）
+        (
+            "$hI_{1}$",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_inh1x0.5_pr5x12000x3x500000x1_w25_swidth",
+        ),
     ];
     match scale_table(&root, &p, &models, &settings) {
         Ok(log) => print!("{log}"),

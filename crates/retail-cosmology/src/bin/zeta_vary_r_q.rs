@@ -71,6 +71,12 @@ fn main() {
             "$G_{10}^{-}I_{1}$ (25)",
             "data/zeta/field_jp_2026-11-12_cosmos_a0.7_s10_tnegchi_inh1x0.5_w25_swidth",
         ),
+        // 場を持たず、店のまわりの人口への反応（ADR 015、R_p = 5 km、(12000, 3, 5e5, 1)）と近づかない条件だけの模型
+        // （--amp 0 --inhibit 1:0.5 --pop-response 5:12000:3:500000:1 --seed 13）
+        (
+            "$hI_{1}$ (25)",
+            "data/zeta/field_jp_2026-11-12_cosmos_a0_s10_inh1x0.5_pr5x12000x3x500000x1_w25_swidth",
+        ),
     ];
     match vary_s_mocks_q(&root, &models) {
         Ok(log) => print!("{log}"),
